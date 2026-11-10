@@ -13,7 +13,6 @@ import { Logger } from '../common/Logger';
 import { AppColor, AppFont, AppSize } from '../components/AppTheme';
 import { ScheduleDayHeader, ScheduleHeaderModel, ScheduleTermChip, ScheduleWeekChips } from '../components/ScheduleHeader';
 import { routeBuilder } from './RouteBuilder';
-import { WIDE_PLACEHOLDER_ROUTE } from '../common/AppRouter';
 import { HomePage } from './home/HomePage';
 import { SchedulePage } from './academic/SchedulePage';
 import { FeaturePage } from './home/FeaturePage';
@@ -130,11 +129,51 @@ export struct MainPage {
   private featureStack: NavPathStack = new NavPathStack();
   private mineStack: NavPathStack = new NavPathStack();
 
+  /**
+   * 四个页签的导航栈深度（0 = 停留在一级页）。
+   *
+   * 分栏模式由它驱动：>0 才切 Split，因此「没点进去」时是一整页，
+   * 「点进去」才出现左列表 + 右详情，配合 `enableModeChangeAnimation` 自然过渡。
+   * 由 `bindStackDepth()` 里的 `setInterception().didShow` 维护。
+   */
+  @State private stackDepth: number[] = [0, 0, 0, 0];
+
   aboutToAppear(): void {
     // 冷启动路径：AppStorage 里已有值时，这里把它吃掉
     this.applyRoute(this.pendingRoute);
-    // Split 右栏栈空时补一个占位页（仅宽屏执行）
-    this.ensureWidePlaceholder();
+    // 订阅四个栈的进出，维护「当前页签是否已进入二级页」
+    this.bindStackDepth();
+  }
+
+  /**
+   * 让四个页签的导航栈在 push / pop 时把栈深写进状态。
+   *
+   * 分栏模式由**栈深**决定（见 `splitFor`）：没点进去时整页显示，点进去才切成
+   * 「左列表 + 右详情」。`NavPathStack` 本身不是可观察对象，只能靠
+   * `setInterception().didShow` 这个「页面已切换完成」回调来同步深度，
+   * 返回键、手势返回、代码 pop 都会经过它。
+   */
+  private bindStackDepth(): void {
+    const stacks: NavPathStack[] = [this.homeStack, this.scheduleStack, this.featureStack, this.mineStack];
+    for (let i = 0; i < stacks.length; i++) {
+      const index: number = i;
+      stacks[i].setInterception({
+        didShow: () => {
+          this.updateStackDepth(index, stacks[index].size());
+        }
+      });
+    }
+  }
+
+  /** 只在深度真的变化时整体替换数组 —— @State 才会通知重建（进而触发 mode 切换动画）。 */
+  private updateStackDepth(index: number, depth: number): void {
+    if (this.stackDepth[index] === depth) {
+      return;
+    }
+    const next: number[] = this.stackDepth.slice();
+    next[index] = depth;
+    this.stackDepth = next;
+    Logger.info('LAYOUT 页签' + index + ' 栈深=' + depth);
   }
 
   private onPendingRoute(): void {
@@ -235,9 +274,8 @@ export struct MainPage {
   /** 宽屏侧栏点选：等价 HdsTabs 的 onChange + onTabBarClick 两个回调。 */
   private onWideSelect(index: number): void {
     if (index === this.currentIndex) {
-      // 「再点当前项回主页」：清栈后再补占位
+      // 「再点当前项回主页」：清栈后自动退回单栏（栈深归零）
       this.stackOf(index).clear();
-      this.ensureWidePlaceholder();
       return;
     }
     this.currentIndex = index;
@@ -245,7 +283,6 @@ export struct MainPage {
     if (index === 1) {
       this.scheduleHeader.onRefresh();
     }
-    this.ensureWidePlaceholder();
   }
 
   /** 是否用侧边导航形态（平板横屏 / 2in1 / 宽自由窗口）。平板竖屏仍走底部页签。 */
@@ -254,43 +291,28 @@ export struct MainPage {
   }
 
   /**
-   * 该页签在宽屏下是否分栏。
+   * 该页签当前是否分栏。
    *
-   * 只有「列表 → 详情」语义的页签才分栏（「我的」= 资料卡 + 菜单 + 详情）。
-   * 主页是仪表盘、课表是周网格、功能页是宫格导航 —— 分栏只会把它们挤进 360vp 的
-   * 列表栏（实测功能页 6 列磁贴被压到标题全变省略号），反而更难用。
-   * 官方同样建议仅在存在层级关系时使用分栏布局。
+   * 两个条件：① 窗口具备分栏能力（lg / xxl）；② 该页签已经点进二级页（栈深 > 0）。
+   * 所以「没点进去」时是一整页，「点进去」才出现左列表 + 右详情 —— 过渡由
+   * `enableModeChangeAnimation` 负责。
+   *
+   * 只对「列表型」页签生效（功能 / 我的）：主页是仪表盘、课表是周网格，
+   * 两者都要靠宽度吃饭，压进 360vp 的列表栏只会把内容挤烂。
    */
   private splitFor(tabIndex: number): boolean {
-    return this.navSplitMode && tabIndex === 3;
-  }
-
-  /** Split 右栏栈空时占位；不分栏的页签不执行，不污染导航栈。 */
-  private ensureWidePlaceholder(): void {
-    if (!this.splitFor(this.currentIndex)) {
-      return;
-    }
-    const stack: NavPathStack = this.stackOf(this.currentIndex);
-    if (stack.size() === 0) {
-      stack.pushPath({ name: WIDE_PLACEHOLDER_ROUTE });
-    }
+    const listLike: boolean = tabIndex === 2 || tabIndex === 3;
+    return this.navSplitMode && listLike && this.stackDepth[tabIndex] > 0;
   }
 
   /**
-   * 断点跨过 840vp 时维护占位页：
-   * - 进 Split（lg/xxl）→ 栈空则补占位，右栏不留白；
-   * - 退回单栏（md）→ 把 4 个栈里的占位全移除，否则 Stack 模式会把占位页当成
-   *   栈顶全屏显示（用户转回竖屏会看到「从左侧选择一个功能」而不是一级页）。
+   * 断点退回窄屏（md/sm）时清理导航栈：
+   * 分栏消失后，栈里若只剩「二级页」会让用户离开时停在详情页而不是一级页，
+   * 这里不做额外处理 —— 单栏下停在详情页正是用户点进去的位置，符合预期。
    */
   private onNavSplitModeChange(): void {
-    if (this.navSplitMode) {
-      this.ensureWidePlaceholder();
-      return;
-    }
-    this.homeStack.removeByName(WIDE_PLACEHOLDER_ROUTE);
-    this.scheduleStack.removeByName(WIDE_PLACEHOLDER_ROUTE);
-    this.featureStack.removeByName(WIDE_PLACEHOLDER_ROUTE);
-    this.mineStack.removeByName(WIDE_PLACEHOLDER_ROUTE);
+    // 状态由 stackDepth 驱动，断点切换本身不需要改栈；保留回调以便将来埋点。
+    Logger.info('LAYOUT 分栏能力=' + this.navSplitMode);
   }
 
   /**

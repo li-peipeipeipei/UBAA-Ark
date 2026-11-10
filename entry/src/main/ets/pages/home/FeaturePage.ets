@@ -4,7 +4,13 @@ import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { FeatureTile, SectionCard } from '../../components/CommonViews';
 import { FeatureItem, advancedFeatures, basicFeatures } from '../../components/FeatureRegistry';
-import { KEY_BREAKPOINT, tileColumnsTemplateFor } from '../../common/Breakpoint';
+import { KEY_BREAKPOINT, columnsTemplateByWidth, tileColumnsTemplateFor } from '../../common/Breakpoint';
+
+/** 单个磁贴的最小宽度（vp）：低于它 4 字标题就会被省略号吃掉。 */
+const MIN_TILE_WIDTH: number = 84;
+/** 磁贴列数上下限。 */
+const MIN_COLUMNS: number = 3;
+const MAX_COLUMNS: number = 8;
 
 /**
  * 功能聚合页。
@@ -12,13 +18,20 @@ import { KEY_BREAKPOINT, tileColumnsTemplateFor } from '../../common/Breakpoint'
  * 沿用 UBAA 的「普通功能 / 高级功能」两级分组，
  * 每个入口以网格磁贴呈现，图标与配色与 UBAA 保持一致。
  *
- * 列数随窗口断点变化（4 / 6 / 8），避免大屏下 4 列被拉成巨型方块。
+ * ## 列数按「自身宽度」算，不按窗口断点
+ *
+ * 分栏后本页会活在 320~400vp 的列表栏里，此时窗口断点是 lg（6 列），但可用宽度
+ * 只有手机那么多 —— 按窗口断点取列会把标题全挤成省略号（真机实测）。
+ * 官方做法就是用 `BreakpointsReference.ComponentSize`，这里用 `onAreaChange`
+ * 拿到自身的实测宽度，按「单格不小于 84vp」反推列数。
  */
 @Component
 export struct FeaturePage {
   stack: NavPathStack = new NavPathStack();
 
   @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
+  /** 本页实测可用宽度（vp），0 表示还没量到，退回按断点取列。 */
+  @State private measuredWidth: number = 0;
 
   private open(item: FeatureItem): void {
     if (item.route.length === 0) {
@@ -26,6 +39,14 @@ export struct FeaturePage {
       return;
     }
     AppRouter.push(this.stack, item.route);
+  }
+
+  /** 按实测宽度取列；宽度没量到时退回按窗口断点。 */
+  private columnsTemplate(items: FeatureItem[]): string {
+    if (this.measuredWidth <= 0) {
+      return tileColumnsTemplateFor(this.bp, items.length);
+    }
+    return columnsTemplateByWidth(this.measuredWidth, MIN_TILE_WIDTH, MIN_COLUMNS, MAX_COLUMNS, items.length);
   }
 
   @Builder
@@ -44,7 +65,7 @@ export struct FeaturePage {
         }
       }, (item: FeatureItem) => item.title)
     }
-    .columnsTemplate(tileColumnsTemplateFor(this.bp, items.length))
+    .columnsTemplate(this.columnsTemplate(items))
     .columnsGap(AppSize.gapSmall)
     .rowsGap(AppSize.gap)
     .width('100%')
@@ -75,6 +96,16 @@ export struct FeaturePage {
         bottom: 0
       })
       .constraintSize({ minHeight: '100%' })
+      // 量自己的可用宽度（扣掉左右内边距），据此算列数。宽度变化阈值 1vp，
+      // 避免分栏拖拽时每帧都写状态触发重建。
+      .onAreaChange((oldArea: Area, newArea: Area) => {
+        const raw: Length = newArea.width;
+        const total: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
+        const usable: number = total - AppSize.pagePadding * 2;
+        if (Math.abs(usable - this.measuredWidth) > 1) {
+          this.measuredWidth = usable;
+        }
+      })
       // 一级页内容整体上移一点（纯视觉位移，见 AppSize.contentTopLift）
       .translate({ y: -AppSize.contentTopLift })
     }

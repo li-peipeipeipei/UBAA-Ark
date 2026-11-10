@@ -28,25 +28,20 @@ export struct WideSideNav {
         .width(24)
         .height(24)
         .fillColor(this.currentIndex === index ? AppColor.brand : AppColor.textSecondary)
-      // md 档只放图标（72vp），lg / xxl 才带文字
-      if (this.bp !== 'md') {
-        Text(label)
-          .fontSize(AppFont.subtitle)
-          .fontColor(this.currentIndex === index ? AppColor.brand : AppColor.textPrimary)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-      }
+      // 侧栏只在 lg / xxl 出现，恒定「图标 + 文字」
+      Text(label)
+        .fontSize(AppFont.subtitle)
+        .fontColor(this.currentIndex === index ? AppColor.brand : AppColor.textPrimary)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
     .width('100%')
     .height(48)
-    .padding({
-      left: this.bp === 'md' ? 0 : 12,
-      right: this.bp === 'md' ? 0 : 8
-    })
-    .justifyContent(this.bp === 'md' ? FlexAlign.Center : FlexAlign.Start)
+    .padding({ left: 12, right: 8 })
     .alignItems(VerticalAlign.Center)
     .borderRadius(AppSize.cardRadius)
     .backgroundColor(this.currentIndex === index ? AppColor.brandContainerGlass : Color.Transparent)
+    .hoverEffect(HoverEffect.Highlight)
     .onClick(() => {
       this.onSelect(index);
     })

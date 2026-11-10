@@ -22,7 +22,7 @@ import {
   CourseDetailDialog
 } from '../../components/CourseDetailDialog';
 import { CourseClass, Exam, Term, TodayClass, Week, WeeklySchedule } from '../../model/ApiTypes';
-import { KEY_BREAKPOINT, tileColumnsTemplate } from '../../common/Breakpoint';
+import { KEY_BREAKPOINT, columnsTemplateByWidth, tileColumnsTemplate } from '../../common/Breakpoint';
 
 /** 取今日课程时间串 `15:50-17:25` 里的开始时间（取不到返回空串）。 */
 function startTimeOf(item: TodayClass): string {
@@ -103,6 +103,8 @@ export struct HomePage {
 
   /** 当前宽度断点：决定磁贴列数与是否双列并排。 */
   @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
+  /** 本页实测可用宽度（vp）：分栏后会明显小于窗口宽度，布局按它算。 */
+  @State private measuredWidth: number = 0;
 
   @State private loadState: LoadState = LoadState.LOADING;
   @State private errorMessage: string = '';
@@ -461,16 +463,28 @@ export struct HomePage {
   }
 
   /**
-   * 宽屏双列（侧边导航形态）才并排：平板竖屏仍单列 —— 否则两栏各只有约 300vp，
-   * 再塞 6 列磁贴会把单格压到 50vp 以下，不符合最小触控目标。
+   * 是否双列并排。
+   *
+   * 判据是本页**实测宽度**而不是窗口断点：分栏时本页会活在 320~400vp 的列表栏里，
+   * 窗口断点仍报 lg，按断点走双列会把两栏各压到 160vp（真机上文字全成省略号、
+   * 右侧还空一片）。720vp 以下一律单列，正好是「两栏各 340vp」的下限。
    */
   private twoColumnLayout(): boolean {
-    return this.bp === 'lg' || this.bp === 'xxl';
+    if (this.measuredWidth <= 0) {
+      return this.bp === 'lg' || this.bp === 'xxl';
+    }
+    return this.measuredWidth >= 720;
   }
 
-  /** 双列时每栏只有半宽，磁贴回退 4 列；单列按断点取 4 / 6 / 8 列。 */
+  /** 快捷入口的列数：单格不小于 84vp；双列时每栏按半宽算。 */
   private quickColumnsTemplate(): string {
-    return this.twoColumnLayout() ? '1fr 1fr 1fr 1fr' : tileColumnsTemplate(this.bp);
+    const items: number = quickFeatures(this.featureUsage).length;
+    if (this.measuredWidth <= 0) {
+      return this.twoColumnLayout() ? '1fr 1fr 1fr 1fr' : tileColumnsTemplate(this.bp);
+    }
+    const lane: number = this.twoColumnLayout() ? this.measuredWidth / 2 : this.measuredWidth;
+    // SectionCard 自带 16vp 内边距 ×2，先扣掉再算单格
+    return columnsTemplateByWidth(lane - 32, 84, 3, 8, items);
   }
 
   @Builder
@@ -601,6 +615,16 @@ export struct HomePage {
           bottom: 0
         })
         .constraintSize({ minHeight: '100%' })
+        // 量自身可用宽度（扣左右内边距），据此决定单列/双列与磁贴列数。
+        // 阈值 1vp，避免分栏拖拽时每帧写状态。
+        .onAreaChange((oldArea: Area, newArea: Area) => {
+          const raw: Length = newArea.width;
+          const total: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
+          const usable: number = total - AppSize.pagePadding * 2;
+          if (Math.abs(usable - this.measuredWidth) > 1) {
+            this.measuredWidth = usable;
+          }
+        })
       }
       .scrollBar(BarState.Off)
       // 顶/底拖到边界时回弹（内容不足一屏也生效）

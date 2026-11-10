@@ -92,10 +92,13 @@ Scroll(this.scroller) { /* 内容 */ }
 | --- | --- | --- | --- |
 | `sm` | < 600vp | `HdsTabs` 底部悬浮页签 | 104vp |
 | `md` | 600–840vp | 底部悬浮页签（大屏竖屏规范：页签栏放底部） | 104vp |
-| `lg` | 840–1200vp | 232vp 侧边导航 + `NavigationMode.Split`（仅「我的」页签） | 24vp |
-| `xxl` | ≥ 1200vp | 256vp 侧边导航 + 400vp 列表栏 + 双栏 | 24vp |
+| `lg` | 840–1200vp | 128vp 侧边导航，列表型页签点进去才分栏 | 24vp |
+| `xxl` | ≥ 1200vp | 144vp 侧边导航 + 400vp 列表栏 | 24vp |
 
 手机（`sm`）分支的 `HdsTabs` 代码保持原样不动，宽屏走独立分支，保证手机零回归。
+
+分栏不是常驻的：栈空时整页显示，点进二级页才切 `NavigationMode.Split`，
+返回即退回整页（见 [平板 / 大屏适配](tablet-adaptation.md) 第 3 节）。
 
 > 方向策略：`module.json5` 用 `auto_rotation_restricted`（允许平板横竖屏），
 > 手机端的竖屏锁定由 `ImmersiveUtil.applyOrientationPolicy()` 在运行期下发。

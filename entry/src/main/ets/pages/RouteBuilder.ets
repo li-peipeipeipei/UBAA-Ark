@@ -95,6 +95,12 @@ struct GradeDestination {
       }
     }
     .titleBar(this.titleBarOptions())
+    // 显式接管返回：分栏下 HDS 自己画的返回按钮不一定能弹栈（实测无效），
+    // 由目的地主动 pop 才可靠；返回 true 表示事件已消费、不再冒泡到系统。
+    .onBackPressed(() => {
+      this.stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   }
 }
@@ -194,6 +200,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('考试安排'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.GRADE) {
     GradeDestination({ stack: stack })
@@ -204,6 +214,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('空闲教室'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.IHOME) {
     HdsNavDestination() {
@@ -212,6 +226,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('iHome'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.IHOME_DETAIL) {
     HdsNavDestination() {
@@ -220,6 +238,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('诉求详情'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.JUDGE) {
     HdsNavDestination() {
@@ -228,6 +250,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('希冀作业'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.JUDGE_DETAIL) {
     HdsNavDestination() {
@@ -236,6 +262,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('作业详情'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.EVALUATION) {
     HdsNavDestination() {
@@ -244,6 +274,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('自动评教'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.SIGNIN) {
     HdsNavDestination() {
@@ -252,6 +286,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('课堂签到'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.SPOC) {
     HdsNavDestination() {
@@ -260,6 +298,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('SPOC 作业'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.YGDK) {
     HdsNavDestination() {
@@ -268,6 +310,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('阳光打卡'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.BYKC) {
     HdsNavDestination() {
@@ -276,6 +322,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('博雅课程'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.BYKC_COURSES) {
     HdsNavDestination() {
@@ -284,6 +334,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('选择课程'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.BYKC_CHOSEN) {
     HdsNavDestination() {
@@ -292,6 +346,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('我的课程'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.BYKC_STATISTICS) {
     HdsNavDestination() {
@@ -300,6 +358,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('课程统计'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.BYKC_DETAIL) {
     HdsNavDestination() {
@@ -308,6 +370,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('课程详情'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.LIBBOOK_HOME) {
     HdsNavDestination() {
@@ -316,6 +382,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('图书馆座位'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.LIBBOOK_RESERVE) {
     HdsNavDestination() {
@@ -324,6 +394,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('预约座位'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.LIBBOOK_BOOKINGS) {
     HdsNavDestination() {
@@ -332,6 +406,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('我的座位预约'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.USER_INFO) {
     HdsNavDestination() {
@@ -340,6 +418,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('个人资料'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.SETTINGS) {
     HdsNavDestination() {
@@ -348,6 +430,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('设置'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === RouteName.ABOUT) {
     HdsNavDestination() {
@@ -356,6 +442,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('关于'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   } else if (name === WIDE_PLACEHOLDER_ROUTE) {
     // Split 右栏栈空时的占位页；非分栏形态从不 push 这个名字。
@@ -367,6 +457,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar(''))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .hideBackButton(true)
     .backgroundColor($r('app.color.page_background'))
   } else {
@@ -383,6 +477,10 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('出错了'))
+    .onBackPressed(() => {
+      stack.pop();
+      return true;
+    })
     .backgroundColor($r('app.color.page_background'))
   }
 }

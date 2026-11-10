@@ -96,9 +96,15 @@ export function isSplitBreakpoint(bp: string): boolean {
   return bp === 'lg' || bp === 'xxl';
 }
 
-/** 侧边导航宽度（vp）。 */
+/**
+ * 侧边导航宽度（vp）。
+ *
+ * 按内容实测反推：导航左右内边距 8×2 + 菜单项内边距 12 + 图标 24 + 间距 12 +
+ * 两字标签约 32 + 右侧留 8 ≈ 104vp。原实现取 232/256，文字右侧空出一大片，
+ * 既显松又白吃正文宽度；现在取「内容 + 一圈呼吸」的 128 / 144。
+ */
 export function sideNavWidthOf(bp: string): number {
-  return bp === 'xxl' ? 256 : 232;
+  return bp === 'xxl' ? 144 : 128;
 }
 
 /** 列表栏（navBar）宽度（vp）。 */
@@ -150,6 +156,42 @@ export function tileColumnsTemplateFor(bp: string, itemCount: number): string {
   const count: number = itemCount > 0 && itemCount < byBp ? itemCount : byBp;
   const cells: string[] = [];
   for (let i = 0; i < count; i++) {
+    cells.push('1fr');
+  }
+  return cells.join(' ');
+}
+
+/**
+ * 按「容器实测宽度」生成 columnsTemplate —— 官方 `BreakpointsReference.ComponentSize`
+ * 的手写等价物。
+ *
+ * 为什么必须有它：分栏后左栏只有 320~400vp，窗口断点却仍报 lg（6 列），
+ * 按窗口断点取列会把标题全挤成省略号；反过来平板竖屏里某些区域又会突然变宽。
+ * 只有用自身宽度反推列数才稳。
+ *
+ * @param widthVp   容器可用宽度（vp）
+ * @param minTile   单格最小宽度（vp）
+ * @param minCols   列数下限
+ * @param maxCols   列数上限
+ * @param itemCount 条目数（少于列数时按条目数均分，避免右侧空出一排）
+ */
+export function columnsTemplateByWidth(widthVp: number, minTile: number, minCols: number,
+  maxCols: number, itemCount: number): string {
+  let columns: number = Math.floor(widthVp / minTile);
+  if (!(columns > 0)) {
+    columns = minCols;
+  }
+  if (columns < minCols) {
+    columns = minCols;
+  }
+  if (columns > maxCols) {
+    columns = maxCols;
+  }
+  if (itemCount > 0 && itemCount < columns) {
+    columns = itemCount;
+  }
+  const cells: string[] = [];
+  for (let i = 0; i < columns; i++) {
     cells.push('1fr');
   }
   return cells.join(' ');
