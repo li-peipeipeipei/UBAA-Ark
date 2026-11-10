@@ -11,6 +11,7 @@
 
 - [架构总览](tech/architecture.md) —— 分层、请求链路、模块职责
 - [UI 设计](tech/ui-design.md) —— 悬浮底栏、沉浸光感、设计令牌、平板分栏
+- [平板 / 大屏适配](tech/tablet-adaptation.md) —— 官方一多规范、断点模型、分栏策略、真机验证
 - [构建与签名](tech/build.md) —— 首次构建、自动签名、API 26 编译坑
 - [排障指南](tech/troubleshooting.md) —— 常见报错与判据
 

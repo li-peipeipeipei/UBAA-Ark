@@ -14,7 +14,7 @@ export struct WidePlaceholder {
         .width(56)
         .height(56)
         .fillColor(AppColor.textTertiary)
-      Text('从左侧选择一个功能')
+      Text('从左侧选择一项')
         .fontSize(AppFont.subtitle)
         .fontColor(AppColor.textSecondary)
       Text('详情会显示在这里')

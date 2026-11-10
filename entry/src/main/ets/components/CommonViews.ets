@@ -182,6 +182,8 @@ export struct FeatureTile {
     }
     .width('100%')
     .padding({ top: 6, bottom: 6 })
+    // 平板外接键鼠 / 2in1 触控板上，磁贴需要悬停反馈才「像个按钮」（官方多设备交互建议）
+    .hoverEffect(HoverEffect.Highlight)
     .onClick(() => {
       this.onTileClick();
     })

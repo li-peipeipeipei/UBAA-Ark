@@ -9,6 +9,8 @@ import {
   KEY_WINDOW_WIDTH_VP,
   KEY_WINDOW_HEIGHT_VP,
   KEY_BREAKPOINT,
+  KEY_HEIGHT_BP,
+  KEY_IS_LANDSCAPE,
   KEY_IS_WIDE_SCREEN,
   KEY_NAV_SPLIT_MODE
 } from '../common/Breakpoint';
@@ -44,6 +46,8 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate<number>(KEY_WINDOW_WIDTH_VP, 0);
     AppStorage.setOrCreate<number>(KEY_WINDOW_HEIGHT_VP, 0);
     AppStorage.setOrCreate<string>(KEY_BREAKPOINT, 'sm');
+    AppStorage.setOrCreate<string>(KEY_HEIGHT_BP, 'sm');
+    AppStorage.setOrCreate<boolean>(KEY_IS_LANDSCAPE, false);
     AppStorage.setOrCreate<boolean>(KEY_IS_WIDE_SCREEN, false);
     AppStorage.setOrCreate<boolean>(KEY_NAV_SPLIT_MODE, false);
     // 「回到前台」的翻转计数（SchedulePage 订阅它做静默刷新）
@@ -105,8 +109,10 @@ export default class EntryAbility extends UIAbility {
       : rawColorMode;
     AppStorage.setOrCreate('isDarkMode', colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
 
-    // 平板 / 2in1：必须在 loadContent 之前放开旋转，否则横屏下会被塞进竖向兼容窗口
-    ImmersiveUtil.releaseOrientationForWideDevices(windowStage);
+    // 方向策略（必须在 loadContent 之前）：
+    // - 平板 / 2in1：跟随握持方向，横屏不再被塞进竖屏兼容窗口；
+    // - 手机：运行期锁竖屏（静态 orientation 已改为 auto_rotation_restricted）。
+    ImmersiveUtil.applyOrientationPolicy(windowStage);
 
     windowStage.loadContent('pages/Index', (err: BusinessError) => {
       if (err.code !== 0) {

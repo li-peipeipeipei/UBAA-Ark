@@ -5,7 +5,7 @@
 页面 → 本地服务 → 上游客户端 → 校内系统。没有中间层服务端，ArkTS 侧承担全部编排。
 
 ```text
-pages/*Page.ets          视图与交互（ArkUI）
+pages/<域>/*Page.ets      视图与交互（ArkUI），按业务域分组
    │
 components/              通用组件、设计令牌、材质层
    │
@@ -17,6 +17,15 @@ network/LocalWebVpn      逻辑地址 ↔ 网关加密地址
    │
 @kit.RemoteCommunicationKit (RCP)  →  sso / uc / byxt / bykc / SPOC / 图书馆 …
 ```
+
+## 目录约定
+
+| 目录 | 放什么 | 判定标准 |
+| --- | --- | --- |
+| `pages/` 根 | `Index` / `MainPage` / `RouteBuilder` | 全局唯一的入口、外壳与路由表 |
+| `pages/<域>/` | 同一业务域的页面 | `auth` / `home` / `mine` / `academic` / `bykc` / `spoc` / `library` / `activity` / `evaluation` / `ihome` |
+| `components/` | 跨页面复用组件与令牌 | 被 2 个以上页面引用 |
+| `network/` | 一个上游系统一个 `Local*Service` | 页面里不出现 URL 与 HTML 解析 |
 
 ## 分层职责
 

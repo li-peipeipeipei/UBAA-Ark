@@ -6,28 +6,28 @@ import {
 } from '@kit.UIDesignKit';
 import { RouteName } from '../common/AppRouter';
 import { GradeHeaderModel, GradeTermTitle } from '../components/GradeHeader';
-import { ExamPage } from './ExamPage';
-import { GradePage } from './GradePage';
-import { ClassroomPage } from './ClassroomPage';
-import { SigninPage } from './SigninPage';
-import { EvaluationPage } from './EvaluationPage';
-import { JudgePage } from './JudgePage';
-import { JudgeDetailPage } from './JudgeDetailPage';
-import { IhomePage } from './IhomePage';
-import { IhomeDetailPage } from './IhomeDetailPage';
-import { SpocPage } from './SpocPage';
-import { YgdkPage } from './YgdkPage';
-import { BykcPage } from './BykcPage';
-import { BykcCoursesPage } from './BykcCoursesPage';
-import { BykcChosenPage } from './BykcChosenPage';
-import { BykcStatisticsPage } from './BykcStatisticsPage';
-import { BykcDetailPage } from './BykcDetailPage';
-import { LibBookHomePage } from './LibBookHomePage';
-import { LibBookReservePage } from './LibBookReservePage';
-import { LibBookBookingsPage } from './LibBookBookingsPage';
-import { UserInfoPage } from './UserInfoPage';
-import { SettingsPage } from './SettingsPage';
-import { AboutPage } from './AboutPage';
+import { ExamPage } from './academic/ExamPage';
+import { GradePage } from './academic/GradePage';
+import { ClassroomPage } from './academic/ClassroomPage';
+import { SigninPage } from './activity/SigninPage';
+import { EvaluationPage } from './evaluation/EvaluationPage';
+import { JudgePage } from './evaluation/JudgePage';
+import { JudgeDetailPage } from './evaluation/JudgeDetailPage';
+import { IhomePage } from './ihome/IhomePage';
+import { IhomeDetailPage } from './ihome/IhomeDetailPage';
+import { SpocPage } from './spoc/SpocPage';
+import { YgdkPage } from './activity/YgdkPage';
+import { BykcPage } from './bykc/BykcPage';
+import { BykcCoursesPage } from './bykc/BykcCoursesPage';
+import { BykcChosenPage } from './bykc/BykcChosenPage';
+import { BykcStatisticsPage } from './bykc/BykcStatisticsPage';
+import { BykcDetailPage } from './bykc/BykcDetailPage';
+import { LibBookHomePage } from './library/LibBookHomePage';
+import { LibBookReservePage } from './library/LibBookReservePage';
+import { LibBookBookingsPage } from './library/LibBookBookingsPage';
+import { UserInfoPage } from './mine/UserInfoPage';
+import { SettingsPage } from './mine/SettingsPage';
+import { AboutPage } from './mine/AboutPage';
 import { WidePlaceholder } from '../components/WidePlaceholder';
 import { WIDE_PLACEHOLDER_ROUTE } from '../common/AppRouter';
 
@@ -358,13 +358,16 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('关于'))
     .backgroundColor($r('app.color.page_background'))
   } else if (name === WIDE_PLACEHOLDER_ROUTE) {
-    // Split 右栏栈空时的占位页；手机端 / md 单栏档从不 push 这个名字。
+    // Split 右栏栈空时的占位页；非分栏形态从不 push 这个名字。
+    // hideBackButton：占位页不是真实页面，给它一个「返回」按钮没有语义，
+    // 而且在分栏下会浮在右栏左上角，看着像误入了一个死页面。
     HdsNavDestination() {
       DestShell({ stack: stack }) {
         WidePlaceholder()
       }
     }
     .titleBar(destTitleBar(''))
+    .hideBackButton(true)
     .backgroundColor($r('app.color.page_background'))
   } else {
     HdsNavDestination() {

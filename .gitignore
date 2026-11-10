@@ -1,3 +1,4 @@
+# ===== 构建产物与本地环境 =====
 /node_modules
 /oh_modules
 /local.properties
@@ -11,3 +12,25 @@
 /.clang-tidy
 **/.test
 /.appanalyzer
+
+# ===== 签名与密钥材料：绝不入库 =====
+*.p12
+*.cer
+*.p7b
+*.pem
+*.keystore
+
+# ===== 系统与编辑器噪声 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+
+# ===== 调试临时文件：不要在仓库里堆积 =====
+# 根目录只放工程文件，调试截图/日志一律不进仓库（文档配图请放 docs/assets/）
+/*.jpeg
+/*.jpg
+/*.png
+/*.webp
+/*.log
+/*.txt

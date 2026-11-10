@@ -46,11 +46,14 @@ SPOC、图书馆等），ArkTS 侧完成请求编排与页面解析。UI 按鸿�
 - **沉浸式全屏**：内容延伸到状态栏与导航条之下，只靠安全区避让，跟随旋转与折叠屏刷新。
 - **一套令牌**：`AppColor` / `AppSize` / `AppFont` / `AppMaterial`，颜色走
   `resources/*/element/color.json`，原生支持深色模式。
-- **平板分栏**：600 / 840 / 1200vp 断点（sm / md / lg / xxl），手机走底部页签，
-  平板走侧栏 + 双栏 `NavigationMode.Split`，手机分支代码零改动。
+- **平板分栏**：按**窗口宽度断点**适配（sm / md / lg / xxl），不对设备类型写分支。
+  手机与平板竖屏走底部页签（官方「大屏竖屏」规范），平板横屏与 2in1 走侧边导航，
+  「我的」页签在 lg / xxl 下额外分栏（侧栏 + 菜单 + 详情三层）。
+  方向策略：`auto_rotation_restricted`，手机端运行期锁竖屏。
 
 细节与踩坑（材质不渲染、半模态高度、跟手翻周阈值、动效回环）见
-[UI 设计](docs/tech/ui-design.md)。
+[UI 设计](docs/tech/ui-design.md)；平板规范与真机验证见
+[平板 / 大屏适配](docs/tech/tablet-adaptation.md)。
 
 ## 开发文档
 
@@ -72,10 +75,24 @@ UBAA-HarmonyOS/
 │   ├── network/              上游直连：CAS / 教务 / 博雅 / SPOC / 图书馆 / iHome …
 │   ├── components/           通用组件、设计令牌、材质层、功能注册表
 │   ├── entryability/         UIAbility 入口
-│   └── pages/                页面与全局路由表
-├── docs/                     开发文档
+│   └── pages/                页面，按业务域分组
+│       ├── Index / MainPage / RouteBuilder   入口、外壳与全局路由表
+│       ├── auth/             登录
+│       ├── home/             主页、功能聚合
+│       ├── mine/             我的、设置、个人资料、关于
+│       ├── academic/         课表、成绩、考试、空闲教室
+│       ├── bykc/             博雅课程（列表 / 详情 / 已选 / 统计）
+│       ├── spoc/             SPOC 作业
+│       ├── library/          图书馆座位
+│       ├── activity/         课堂签到、阳光打卡
+│       ├── evaluation/       自动评教、希冀作业（未挂入口）
+│       └── ihome/            iHome 诉求
+├── docs/                     开发文档（features / tech）
 └── build-profile.example.json5
 ```
+
+新增页面请落到对应业务域目录；跨域复用放 `components/`，上游数据契约放 `model/`，
+请求与解析放 `network/` —— 页面里不写 URL、不解析 HTML。
 
 ## 构建
 

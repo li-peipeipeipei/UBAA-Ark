@@ -22,7 +22,15 @@
         "startWindowIcon": "$media:app_icon",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
-        "orientation": "portrait",
+        /*
+         * 方向策略：
+         * - 静态必须是“允许旋转”，否则平板横屏下系统只给一个竖向兼容窗口
+         *   （左右露壁纸、宽度恒为竖屏宽度），运行期 setPreferredOrientation 无法纠正；
+         * - 手机端的竖屏锁定由 EntryAbility.onWindowStageCreate 运行期下发
+         *   （ImmersiveUtil.applyOrientationPolicy）。
+         * auto_rotation_restricted = 跟随传感器，仅正向（不含倒置）。
+         */
+        "orientation": "auto_rotation_restricted",
         "skills": [
           {
             "entities": [

@@ -6,12 +6,14 @@ import {
   KEY_WINDOW_WIDTH_VP,
   KEY_WINDOW_HEIGHT_VP,
   KEY_BREAKPOINT,
+  KEY_HEIGHT_BP,
+  KEY_IS_LANDSCAPE,
   KEY_IS_WIDE_SCREEN,
   KEY_NAV_SPLIT_MODE,
   widthToBreakpoint,
+  heightToBreakpoint,
   isWideBreakpoint,
-  isSplitBreakpoint,
-  BP_SM_MAX
+  isSplitBreakpoint
 } from './Breakpoint';
 
 /** AppStorage 键：顶部状态栏避让高度（vp）。 */
@@ -43,29 +45,37 @@ export function topSafeInsetVp(): number {
  */
 export class ImmersiveUtil {
   private static mainWindow: window.Window | null = null;
-  /** 是否已对宽窗口放开自动旋转（只设置一次，避免每次窗口变化都重设）。 */
-  private static orientationReleased: boolean = false;
 
   /**
-   * 必须在 `windowStage.loadContent()` **之前**调用。
+   * 方向策略：**必须在 `windowStage.loadContent()` 之前**调用。
    *
-   * module.json5 静态锁了 portrait，窗口一旦按竖屏定型，横屏下系统会把 App
-   * 塞进窄的竖向兼容窗口（左右留壁纸，窗口宽永远 < 600vp）；此时再调
-   * setPreferredOrientation 也改不回来（实测 ReqOrientation 仍为 0）。
-   * 只对平板 / 2in1 执行，手机形态完全不进入，零回归。
+   * 历史坑（2026-11-09 ~ 11-10 实测）：module.json5 里静态写 `orientation: portrait`
+   * 时，平板横屏下系统会把 App 塞进窄的竖向兼容窗口（左右露出壁纸，窗口宽恒等于
+   * 竖屏宽度 387vp），**运行期 `setPreferredOrientation` 改不回来**——静态声明优先级更高。
+   * 因此 module.json5 已改为 `auto_rotation_restricted`（允许平板横竖屏），
+   * 手机端的竖屏锁定改由这里在运行期下发。
    *
-   * 实测（MatePad Mini / API 26）：API 返回成功但 `ReqOrientation` 仍为 0，
-   * 横屏下系统依旧给竖屏兼容窗口 —— 静态声明优先级更高。保留调用以覆盖其它设备形态。
+   * 依据：平板 / 折叠屏必须支持握持方向跟随，手机端保持竖屏是产品决策，
+   * 属于「方向策略」，与「布局按窗口宽度断点适配」是两条独立规则。
    */
-  static releaseOrientationForWideDevices(windowStage: window.WindowStage): void {
-    if (deviceInfo.deviceType === deviceInfo.DeviceTypes.TYPE_TABLET ||
-        deviceInfo.deviceType === deviceInfo.DeviceTypes.TYPE_2IN1) {
-      ImmersiveUtil.orientationReleased = true;
-      windowStage.getMainWindowSync().setPreferredOrientation(window.Orientation.AUTO_ROTATION)
+  static applyOrientationPolicy(windowStage: window.WindowStage): void {
+    const deviceType: string = deviceInfo.deviceType;
+    const isLargeScreen: boolean = deviceType === deviceInfo.DeviceTypes.TYPE_TABLET ||
+      deviceType === deviceInfo.DeviceTypes.TYPE_2IN1;
+    const win: window.Window = windowStage.getMainWindowSync();
+    if (isLargeScreen) {
+      // 大屏：跟随传感器，仅正向（不含倒置）
+      win.setPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED)
         .catch((error: Error) => {
           Logger.warn('放开自动旋转失败：' + error.message);
         });
+      return;
     }
+    // 手机 / 手表等窄屏形态：锁定竖屏，与改造前行为一致
+    win.setPreferredOrientation(window.Orientation.PORTRAIT)
+      .catch((error: Error) => {
+        Logger.warn('锁定竖屏失败：' + error.message);
+      });
   }
 
   /** 在 EntryAbility.onWindowStageCreate 中调用。 */
@@ -120,20 +130,17 @@ export class ImmersiveUtil {
       const wVp: number = ui.px2vp(wPx);
       const hVp: number = ui.px2vp(hPx);
       const bp: string = widthToBreakpoint(wVp);
+      const hBp: string = heightToBreakpoint(hVp);
       AppStorage.setOrCreate<number>(KEY_WINDOW_WIDTH_VP, wVp);
       AppStorage.setOrCreate<number>(KEY_WINDOW_HEIGHT_VP, hVp);
       AppStorage.setOrCreate<string>(KEY_BREAKPOINT, bp);
+      AppStorage.setOrCreate<string>(KEY_HEIGHT_BP, hBp);
+      AppStorage.setOrCreate<boolean>(KEY_IS_LANDSCAPE, wVp > hVp);
       AppStorage.setOrCreate<boolean>(KEY_IS_WIDE_SCREEN, isWideBreakpoint(bp));
       AppStorage.setOrCreate<boolean>(KEY_NAV_SPLIT_MODE, isSplitBreakpoint(bp));
-      Logger.info('LAYOUT w=' + wVp + 'vp h=' + hVp + 'vp bp=' + bp);
-      // 宽窗口才放开自动旋转：平板横屏 / 折叠展开 / 2in1 / 大自由窗口。
-      // 手机窗口恒 < 600vp，永远不会执行 → module.json5 的 portrait 锁定保持不变（零回归）。
-      if (wVp >= BP_SM_MAX && !ImmersiveUtil.orientationReleased) {
-        ImmersiveUtil.orientationReleased = true;
-        win.setPreferredOrientation(window.Orientation.AUTO_ROTATION).catch((error: Error) => {
-          Logger.warn('放开自动旋转失败：' + error.message);
-        });
-      }
+      Logger.info('LAYOUT w=' + wVp + 'vp h=' + hVp + 'vp bp=' + bp + '/' + hBp);
+      // 方向策略不在这里做：静态 orientation 已放开（auto_rotation_restricted），
+      // 手机端的竖屏锁定由 EntryAbility 按设备形态决定（见 releaseOrientationForWideDevices）。
     } catch (error) {
       Logger.error('窗口尺寸发布失败：' + (error as Error).message);
     }

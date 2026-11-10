@@ -14,15 +14,15 @@ import { AppColor, AppFont, AppSize } from '../components/AppTheme';
 import { ScheduleDayHeader, ScheduleHeaderModel, ScheduleTermChip, ScheduleWeekChips } from '../components/ScheduleHeader';
 import { routeBuilder } from './RouteBuilder';
 import { WIDE_PLACEHOLDER_ROUTE } from '../common/AppRouter';
-import { HomePage } from './HomePage';
-import { SchedulePage } from './SchedulePage';
-import { FeaturePage } from './FeaturePage';
-import { MinePage } from './MinePage';
+import { HomePage } from './home/HomePage';
+import { SchedulePage } from './academic/SchedulePage';
+import { FeaturePage } from './home/FeaturePage';
+import { MinePage } from './mine/MinePage';
 import {
-  KEY_IS_WIDE_SCREEN,
   KEY_BREAKPOINT,
   KEY_NAV_SPLIT_MODE,
-  navBarWidthOf
+  navBarWidthOf,
+  useSideNav
 } from '../common/Breakpoint';
 import { WideLayoutTokens } from '../components/WideLayoutTokens';
 import { WideSideNav } from '../components/WideSideNav';
@@ -89,8 +89,7 @@ struct PageShell {
 export struct MainPage {
   @StorageProp(KEY_BOTTOM_SAFE_HEIGHT) bottomSafeHeight: number = 0;
   @State private currentIndex: number = 0;
-  /** 宽屏分支开关（AppStorage 由 ImmersiveUtil 的 windowSizeChange 写入）。 */
-  @StorageProp(KEY_IS_WIDE_SCREEN) private isWide: boolean = false;
+  /** 宽度断点（AppStorage 由 ImmersiveUtil 的 windowSizeChange 写入）。 */
   @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
   @StorageProp(KEY_NAV_SPLIT_MODE) @Watch('onNavSplitModeChange') private navSplitMode: boolean = false;
 
@@ -249,9 +248,26 @@ export struct MainPage {
     this.ensureWidePlaceholder();
   }
 
-  /** Split 右栏栈空时占位；手机端 / md 单栏档不执行，不污染导航栈。 */
+  /** 是否用侧边导航形态（平板横屏 / 2in1 / 宽自由窗口）。平板竖屏仍走底部页签。 */
+  private sideNavLayout(): boolean {
+    return useSideNav(this.bp);
+  }
+
+  /**
+   * 该页签在宽屏下是否分栏。
+   *
+   * 只有「列表 → 详情」语义的页签才分栏（「我的」= 资料卡 + 菜单 + 详情）。
+   * 主页是仪表盘、课表是周网格、功能页是宫格导航 —— 分栏只会把它们挤进 360vp 的
+   * 列表栏（实测功能页 6 列磁贴被压到标题全变省略号），反而更难用。
+   * 官方同样建议仅在存在层级关系时使用分栏布局。
+   */
+  private splitFor(tabIndex: number): boolean {
+    return this.navSplitMode && tabIndex === 3;
+  }
+
+  /** Split 右栏栈空时占位；不分栏的页签不执行，不污染导航栈。 */
   private ensureWidePlaceholder(): void {
-    if (!this.isWide || !this.navSplitMode) {
+    if (!this.splitFor(this.currentIndex)) {
       return;
     }
     const stack: NavPathStack = this.stackOf(this.currentIndex);
@@ -588,7 +604,7 @@ export struct MainPage {
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
-        .mode(this.navSplitMode ? NavigationMode.Split : NavigationMode.Stack)
+        .mode(this.splitFor(0) ? NavigationMode.Split : NavigationMode.Stack)
         .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: WideLayoutTokens.navBarMinWidth,
@@ -608,7 +624,7 @@ export struct MainPage {
         .titleBar(this.scheduleTitleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
-        .mode(this.navSplitMode ? NavigationMode.Split : NavigationMode.Stack)
+        .mode(this.splitFor(1) ? NavigationMode.Split : NavigationMode.Stack)
         .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: WideLayoutTokens.navBarMinWidth,
@@ -628,7 +644,7 @@ export struct MainPage {
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
-        .mode(this.navSplitMode ? NavigationMode.Split : NavigationMode.Stack)
+        .mode(this.splitFor(2) ? NavigationMode.Split : NavigationMode.Stack)
         .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: WideLayoutTokens.navBarMinWidth,
@@ -653,7 +669,7 @@ export struct MainPage {
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
-        .mode(this.navSplitMode ? NavigationMode.Split : NavigationMode.Stack)
+        .mode(this.splitFor(3) ? NavigationMode.Split : NavigationMode.Stack)
         .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: WideLayoutTokens.navBarMinWidth,
@@ -671,7 +687,7 @@ export struct MainPage {
 
   build() {
     Stack() {
-      if (this.isWide) {
+      if (this.sideNavLayout()) {
         this.wideLayout()
       } else {
         this.narrowTabs()

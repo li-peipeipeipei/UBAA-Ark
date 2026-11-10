@@ -7,6 +7,8 @@
  * - 字号：跟随 fp 单位，支持系统字体缩放
  * 颜色统一走资源引用，天然支持深色模式（resources/dark）。
  */
+import { KEY_BREAKPOINT, useBottomTabBar } from '../common/Breakpoint';
+
 export class AppColor {
   static readonly brand: Resource = $r('app.color.brand');
   static readonly brandDark: Resource = $r('app.color.brand_dark');
@@ -90,13 +92,23 @@ export class AppColor {
 }
 
 export class AppSize {
+  /** 当前宽度断点（AppStorage 由 ImmersiveUtil 写入，首帧前已就绪）。 */
+  private static breakpoint(): string {
+    const bp: string | undefined = AppStorage.get<string>(KEY_BREAKPOINT);
+    return bp === undefined ? 'sm' : bp;
+  }
+
   /**
-   * 页面左右内边距。手机端 16vp（逐像素实测值，不能改）；宽屏 24vp。
+   * 页面左右内边距。手机端 16vp（逐像素实测值，不能改）；
+   * 平板竖屏 20vp；侧边导航形态（lg / xxl）24vp。
    * 用 getter 而不是常量：调用点 `AppSize.pagePadding` 语法不变，30+ 页面无需改动。
-   * 键名与 common/Breakpoint.ets 的 KEY_IS_WIDE_SCREEN 一致。
    */
   static get pagePadding(): number {
-    return AppStorage.get<boolean>('isWideScreen') === true ? 24 : 16;
+    const bp: string = AppSize.breakpoint();
+    if (bp === 'sm') {
+      return 16;
+    }
+    return bp === 'md' ? 20 : 24;
   }
   static readonly cardRadius: number = 16;
   static readonly cardRadiusLarge: number = 24;
@@ -124,9 +136,15 @@ export class AppSize {
    *   置 0 后底边落在 30.6vp，与系统应用对齐 —— 底栏即「贴着手势区上沿」。
    */
   static readonly tabBarBottomMargin: number = 0;
-  /** 页面底部留白：手机端 104vp（为悬浮底栏预留）；宽屏无底栏，24vp 即可。 */
+  /**
+   * 页面底部留白。
+   *
+   * 判据是「有没有悬浮底栏」而不是「是不是宽屏」：平板竖屏（md）虽然算宽屏，
+   * 但按官方大屏竖屏规范仍走底部页签，所以照样要留 104vp；只有侧边导航形态
+   * （lg / xxl）不需要。
+   */
   static get contentBottomInset(): number {
-    return AppStorage.get<boolean>('isWideScreen') === true ? 24 : 104;
+    return useBottomTabBar(AppSize.breakpoint()) ? 104 : 24;
   }
 
   /**
@@ -140,7 +158,7 @@ export class AppSize {
    * （expandSafeArea 照旧）与下拉刷新（Refresh 位移的是 Scroll，不是内容列）。
    */
   static get contentTopLift(): number {
-    return AppStorage.get<boolean>('isWideScreen') === true ? 0 : 8;
+    return AppSize.breakpoint() === 'sm' ? 8 : 0;
   }
 
   /**

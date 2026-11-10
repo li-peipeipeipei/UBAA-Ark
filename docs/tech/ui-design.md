@@ -82,22 +82,24 @@ Scroll(this.scroller) { /* 内容 */ }
 配合 `titleBar({ avoidLayoutSafeArea: true, enableComponentSafeArea: true })`，
 内容才能滚到标题栏与底栏之下而不被裁。一级页用 `titleMode(MINI)` + `hideBackButton(true)`。
 
-## 平板分栏
+## 平板 / 大屏
 
-`ImmersiveUtil` 监听 `windowSizeChange`，把断点写进 AppStorage
-（常量在 `common/Breakpoint.ets`）：
+`ImmersiveUtil` 监听 `windowSizeChange`，把宽度断点、高度断点、横竖标志写进 AppStorage
+（常量与纯函数在 `common/Breakpoint.ets`）。完整规范、官方依据与真机验证记录见
+[平板 / 大屏适配](tablet-adaptation.md)。
 
-| 断点 | 宽度 | 布局 |
-| --- | --- | --- |
-| `sm` | < 600vp | 手机：`HdsTabs` 底部页签 |
-| `md` | 600–840vp | 72vp 图标侧栏 + 全宽 NavBar |
-| `lg` | 840–1200vp | 240vp 侧栏 + 双栏拆分（`NavigationMode.Split`） |
-| `xxl` | ≥ 1200vp | 240vp 侧栏 + 400vp 列表栏 + 双栏拆分 |
+| 断点 | 宽度 | 导航形态 | 内容底部留白 |
+| --- | --- | --- | --- |
+| `sm` | < 600vp | `HdsTabs` 底部悬浮页签 | 104vp |
+| `md` | 600–840vp | 底部悬浮页签（大屏竖屏规范：页签栏放底部） | 104vp |
+| `lg` | 840–1200vp | 232vp 侧边导航 + `NavigationMode.Split`（仅「我的」页签） | 24vp |
+| `xxl` | ≥ 1200vp | 256vp 侧边导航 + 400vp 列表栏 + 双栏 | 24vp |
 
 手机（`sm`）分支的 `HdsTabs` 代码保持原样不动，宽屏走独立分支，保证手机零回归。
 
-> 注意：`module.json5` 的静态 `orientation: portrait` **优先于**运行时
-> `setPreferredOrientation`。要真正横屏全屏需改静态方向，会影响手机竖屏锁定。
+> 方向策略：`module.json5` 用 `auto_rotation_restricted`（允许平板横竖屏），
+> 手机端的竖屏锁定由 `ImmersiveUtil.applyOrientationPolicy()` 在运行期下发。
+> 历史坑：静态写 `portrait` 时平板横屏只会得到竖屏兼容窗口，运行期改不回来。
 
 ## 动效
 

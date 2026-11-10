@@ -4,7 +4,7 @@ import { Logger } from '../common/Logger';
 import { ApiError } from '../network/ApiError';
 import { ApiService } from '../network/ApiService';
 import { TokenStore } from '../network/TokenStore';
-import { LoginPage } from './LoginPage';
+import { LoginPage } from './auth/LoginPage';
 import { MainPage } from './MainPage';
 import { UserData } from '../model/ApiTypes';
 
