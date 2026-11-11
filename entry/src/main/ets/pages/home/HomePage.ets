@@ -22,7 +22,12 @@ import {
   CourseDetailDialog
 } from '../../components/CourseDetailDialog';
 import { CourseClass, Exam, Term, TodayClass, Week, WeeklySchedule } from '../../model/ApiTypes';
-import { KEY_BREAKPOINT, columnsTemplateByWidth, tileColumnsTemplate } from '../../common/Breakpoint';
+import {
+  KEY_BREAKPOINT,
+  fitColumnsToItems,
+  templateOfColumns,
+  tileColumnsTemplate
+} from '../../common/Breakpoint';
 
 /** 取今日课程时间串 `15:50-17:25` 里的开始时间（取不到返回空串）。 */
 function startTimeOf(item: TodayClass): string {
@@ -100,11 +105,22 @@ function findCourseByName(list: CourseClass[], name: string): CourseClass | null
 @Component
 export struct HomePage {
   stack: NavPathStack = new NavPathStack();
+  /** 当前是否分栏（由 MainPage 传入）：分栏时点条目是替换右栏而不是压栈。 */
+  @Prop splitMode: boolean = false;
 
   /** 当前宽度断点：决定磁贴列数与是否双列并排。 */
   @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
-  /** 本页实测可用宽度（vp）：分栏后会明显小于窗口宽度，布局按它算。 */
-  @State private measuredWidth: number = 0;
+  /**
+   * 按自身宽度量出来的布局参数（只在**变化**时写状态）。
+   *
+   * 分栏切换时宽度是动画过渡的，onAreaChange 会连续回调几十次；若用宽度驱动重建，
+   * 卡片会在动画里持续重排。这里只缓存「够不够双列」和「单格 84vp 能放几列」，
+   * 动画期间只有跨边界时重建一次。
+   */
+  @State private wideEnough: boolean = false;
+  @State private quickColumns: number = 0;
+  /** 是否已经量过自身宽度（false 时按窗口断点兜底）。非 @State：只做分支判断。 */
+  private measured: boolean = false;
 
   @State private loadState: LoadState = LoadState.LOADING;
   @State private errorMessage: string = '';
@@ -307,7 +323,7 @@ export struct HomePage {
     // 记一次使用：快捷入口按使用次数排序，回来时顺序已经是新的
     TokenStore.recordFeatureUse(item.title);
     this.featureUsage = TokenStore.getFeatureUsage();
-    AppRouter.push(this.stack, item.route);
+    AppRouter.open(this.stack, item.route, this.splitMode);
   }
 
   /**
@@ -387,7 +403,7 @@ export struct HomePage {
       ]
     })
     .onClick(() => {
-      AppRouter.push(this.stack, RouteName.EXAM);
+      AppRouter.open(this.stack, RouteName.EXAM, this.splitMode);
     })
   }
 
@@ -470,21 +486,19 @@ export struct HomePage {
    * 右侧还空一片）。720vp 以下一律单列，正好是「两栏各 340vp」的下限。
    */
   private twoColumnLayout(): boolean {
-    if (this.measuredWidth <= 0) {
+    if (!this.measured) {
       return this.bp === 'lg' || this.bp === 'xxl';
     }
-    return this.measuredWidth >= 720;
+    return this.wideEnough;
   }
 
   /** 快捷入口的列数：单格不小于 84vp；双列时每栏按半宽算。 */
   private quickColumnsTemplate(): string {
     const items: number = quickFeatures(this.featureUsage).length;
-    if (this.measuredWidth <= 0) {
+    if (!this.measured || this.quickColumns <= 0) {
       return this.twoColumnLayout() ? '1fr 1fr 1fr 1fr' : tileColumnsTemplate(this.bp);
     }
-    const lane: number = this.twoColumnLayout() ? this.measuredWidth / 2 : this.measuredWidth;
-    // SectionCard 自带 16vp 内边距 ×2，先扣掉再算单格
-    return columnsTemplateByWidth(lane - 32, 84, 3, 8, items);
+    return templateOfColumns(fitColumnsToItems(this.quickColumns, items, 2));
   }
 
   @Builder
@@ -615,14 +629,28 @@ export struct HomePage {
           bottom: 0
         })
         .constraintSize({ minHeight: '100%' })
-        // 量自身可用宽度（扣左右内边距），据此决定单列/双列与磁贴列数。
-        // 阈值 1vp，避免分栏拖拽时每帧写状态。
+        // 量自身可用宽度，换算成两个量化值：够不够双列、快捷入口放几列。
+        // 只在量化值变化时写状态，避免分栏动画期间反复重排。
         .onAreaChange((oldArea: Area, newArea: Area) => {
           const raw: Length = newArea.width;
           const total: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
           const usable: number = total - AppSize.pagePadding * 2;
-          if (Math.abs(usable - this.measuredWidth) > 1) {
-            this.measuredWidth = usable;
+          this.measured = true;
+          const wide: boolean = usable >= 720;
+          if (wide !== this.wideEnough) {
+            this.wideEnough = wide;
+          }
+          // 双列时每栏只有半宽；SectionCard 另有 16vp 内边距 ×2
+          const lane: number = (wide ? usable / 2 : usable) - 32;
+          let columns: number = Math.floor(lane / 84);
+          if (columns < 2) {
+            columns = 2;
+          }
+          if (columns > 8) {
+            columns = 8;
+          }
+          if (columns !== this.quickColumns) {
+            this.quickColumns = columns;
           }
         })
       }

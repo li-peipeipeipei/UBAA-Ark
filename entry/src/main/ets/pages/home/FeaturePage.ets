@@ -4,12 +4,12 @@ import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { FeatureTile, SectionCard } from '../../components/CommonViews';
 import { FeatureItem, advancedFeatures, basicFeatures } from '../../components/FeatureRegistry';
-import { KEY_BREAKPOINT, columnsTemplateByWidth, tileColumnsTemplateFor } from '../../common/Breakpoint';
+import { KEY_BREAKPOINT, fitColumnsToItems, templateOfColumns, tileColumnsTemplateFor } from '../../common/Breakpoint';
 
 /** 单个磁贴的最小宽度（vp）：低于它 4 字标题就会被省略号吃掉。 */
 const MIN_TILE_WIDTH: number = 84;
 /** 磁贴列数上下限。 */
-const MIN_COLUMNS: number = 3;
+const MIN_COLUMNS: number = 2;
 const MAX_COLUMNS: number = 8;
 
 /**
@@ -20,33 +20,41 @@ const MAX_COLUMNS: number = 8;
  *
  * ## 列数按「自身宽度」算，不按窗口断点
  *
- * 分栏后本页会活在 320~400vp 的列表栏里，此时窗口断点是 lg（6 列），但可用宽度
- * 只有手机那么多 —— 按窗口断点取列会把标题全挤成省略号（真机实测）。
- * 官方做法就是用 `BreakpointsReference.ComponentSize`，这里用 `onAreaChange`
- * 拿到自身的实测宽度，按「单格不小于 84vp」反推列数。
+ * 分栏后本页会活在 300~400vp 的列表栏里，此时窗口断点是 md / lg（6 列），但可用
+ * 宽度只有手机那么多 —— 按窗口断点取列会把标题全挤成省略号（真机实测）。
+ * 官方做法是 `BreakpointsReference.ComponentSize`，这里用 `onAreaChange` 拿实测宽度，
+ * 按「单格不小于 84vp」反推列数。
  */
 @Component
 export struct FeaturePage {
   stack: NavPathStack = new NavPathStack();
+  /** 当前是否分栏（由 MainPage 传入）：分栏时点条目是替换右栏而不是压栈。 */
+  @Prop splitMode: boolean = false;
 
   @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
-  /** 本页实测可用宽度（vp），0 表示还没量到，退回按断点取列。 */
-  @State private measuredWidth: number = 0;
+  /**
+   * 缓存的「按单格 84vp 能放几列」：只在**跨列边界**时写状态。
+   *
+   * 分栏切换时宽度是动画过渡的，onAreaChange 会连续回调几十次；若每次都用宽度驱动
+   * 重建，网格会在动画里反复重排（肉眼可见的抖动）。缓存列数后动画期间只有跨边界
+   * 的那一次重建，观感才顺。条目数的适配（整除 / 不超条目）在渲染时再算。
+   */
+  @State private columns: number = 0;
 
   private open(item: FeatureItem): void {
     if (item.route.length === 0) {
       Toast.show(item.title + ' · 敬请期待');
       return;
     }
-    AppRouter.push(this.stack, item.route);
+    AppRouter.open(this.stack, item.route, this.splitMode);
   }
 
-  /** 按实测宽度取列；宽度没量到时退回按窗口断点。 */
+  /** 已有缓存就用它；还没量到（columns=0）时按窗口断点估。 */
   private columnsTemplate(items: FeatureItem[]): string {
-    if (this.measuredWidth <= 0) {
-      return tileColumnsTemplateFor(this.bp, items.length);
+    if (this.columns > 0) {
+      return templateOfColumns(fitColumnsToItems(this.columns, items.length, MIN_COLUMNS));
     }
-    return columnsTemplateByWidth(this.measuredWidth, MIN_TILE_WIDTH, MIN_COLUMNS, MAX_COLUMNS, items.length);
+    return tileColumnsTemplateFor(this.bp, items.length);
   }
 
   @Builder
@@ -96,14 +104,21 @@ export struct FeaturePage {
         bottom: 0
       })
       .constraintSize({ minHeight: '100%' })
-      // 量自己的可用宽度（扣掉左右内边距），据此算列数。宽度变化阈值 1vp，
-      // 避免分栏拖拽时每帧都写状态触发重建。
+      // 量自身可用宽度（扣掉左右内边距），换算成「单格 84vp 能放几列」；
+      // 只有列数真的变了才写状态，避免分栏动画期间反复重建。
       .onAreaChange((oldArea: Area, newArea: Area) => {
         const raw: Length = newArea.width;
         const total: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
         const usable: number = total - AppSize.pagePadding * 2;
-        if (Math.abs(usable - this.measuredWidth) > 1) {
-          this.measuredWidth = usable;
+        let columns: number = Math.floor(usable / MIN_TILE_WIDTH);
+        if (columns < MIN_COLUMNS) {
+          columns = MIN_COLUMNS;
+        }
+        if (columns > MAX_COLUMNS) {
+          columns = MAX_COLUMNS;
+        }
+        if (columns !== this.columns) {
+          this.columns = columns;
         }
       })
       // 一级页内容整体上移一点（纯视觉位移，见 AppSize.contentTopLift）

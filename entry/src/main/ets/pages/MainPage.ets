@@ -21,9 +21,11 @@ import {
   KEY_BREAKPOINT,
   KEY_NAV_SPLIT_MODE,
   navBarWidthOf,
+  navBarMinWidthOf,
+  navBarMaxWidthOf,
+  minContentWidthOf,
   useSideNav
 } from '../common/Breakpoint';
-import { WideLayoutTokens } from '../components/WideLayoutTokens';
 import { WideSideNav } from '../components/WideSideNav';
 
 /**
@@ -157,6 +159,7 @@ export struct MainPage {
     const stacks: NavPathStack[] = [this.homeStack, this.scheduleStack, this.featureStack, this.mineStack];
     for (let i = 0; i < stacks.length; i++) {
       const index: number = i;
+      // 只挂 didShow：push / pop / 手势返回都会经过它，能覆盖所有进出栈路径。
       stacks[i].setInterception({
         didShow: () => {
           this.updateStackDepth(index, stacks[index].size());
@@ -293,16 +296,17 @@ export struct MainPage {
   /**
    * 该页签当前是否分栏。
    *
-   * 两个条件：① 窗口具备分栏能力（lg / xxl）；② 该页签已经点进二级页（栈深 > 0）。
-   * 所以「没点进去」时是一整页，「点进去」才出现左列表 + 右详情 —— 过渡由
+   * 两个条件：① 窗口具备分栏能力（md / lg / xxl）；② 该页签已经点进二级页（栈深 > 0）。
+   * 所以「没点进去」时是一整页，「点进去」才变成左右双列 —— 过渡由
    * `enableModeChangeAnimation` 负责。
    *
-   * 只对「列表型」页签生效（功能 / 我的）：主页是仪表盘、课表是周网格，
-   * 两者都要靠宽度吃饭，压进 360vp 的列表栏只会把内容挤烂。
+   * 课表（页签 1）不参与：7 天周网格是固定列宽的表格，劈成一半没法看。
    */
   private splitFor(tabIndex: number): boolean {
-    const listLike: boolean = tabIndex === 2 || tabIndex === 3;
-    return this.navSplitMode && listLike && this.stackDepth[tabIndex] > 0;
+    if (!this.navSplitMode || this.stackDepth[tabIndex] <= 0) {
+      return false;
+    }
+    return tabIndex === 0 || tabIndex === 2 || tabIndex === 3;
   }
 
   /**
@@ -504,14 +508,20 @@ export struct MainPage {
       TabContent() {
         HdsNavigation(this.homeStack) {
           PageShell() {
-            HomePage({ stack: this.homeStack })
+            HomePage({ stack: this.homeStack, splitMode: this.splitFor(0) })
           }
         }
         .navDestination(this.routeMap)
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
-        .mode(NavigationMode.Stack)
+        .mode(this.splitFor(0) ? NavigationMode.Split : NavigationMode.Stack)
+        .navBarWidth(navBarWidthOf(this.bp))
+        .navBarWidthRange({
+          minWidth: navBarMinWidthOf(this.bp),
+          maxWidth: navBarMaxWidthOf(this.bp)
+        })
+        .minContentWidth(minContentWidthOf(this.bp))
       }
       .tabBar(new BottomTabBarStyle($r('app.media.ic_home'), $r('app.string.tab_home')))
 
@@ -525,21 +535,33 @@ export struct MainPage {
         .titleBar(this.scheduleTitleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
-        .mode(NavigationMode.Stack)
+        .mode(this.splitFor(1) ? NavigationMode.Split : NavigationMode.Stack)
+        .navBarWidth(navBarWidthOf(this.bp))
+        .navBarWidthRange({
+          minWidth: navBarMinWidthOf(this.bp),
+          maxWidth: navBarMaxWidthOf(this.bp)
+        })
+        .minContentWidth(minContentWidthOf(this.bp))
       }
       .tabBar(new BottomTabBarStyle($r('app.media.ic_schedule'), $r('app.string.tab_schedule')))
 
       TabContent() {
         HdsNavigation(this.featureStack) {
           PageShell() {
-            FeaturePage({ stack: this.featureStack })
+            FeaturePage({ stack: this.featureStack, splitMode: this.splitFor(2) })
           }
         }
         .navDestination(this.routeMap)
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
-        .mode(NavigationMode.Stack)
+        .mode(this.splitFor(2) ? NavigationMode.Split : NavigationMode.Stack)
+        .navBarWidth(navBarWidthOf(this.bp))
+        .navBarWidthRange({
+          minWidth: navBarMinWidthOf(this.bp),
+          maxWidth: navBarMaxWidthOf(this.bp)
+        })
+        .minContentWidth(minContentWidthOf(this.bp))
       }
       .tabBar(new BottomTabBarStyle($r('app.media.ic_apps'), $r('app.string.tab_feature')))
 
@@ -548,6 +570,7 @@ export struct MainPage {
           PageShell() {
             MinePage({
               stack: this.mineStack,
+              splitMode: this.splitFor(3),
               onLogout: () => {
                 this.onLogout();
               }
@@ -558,7 +581,13 @@ export struct MainPage {
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
-        .mode(NavigationMode.Stack)
+        .mode(this.splitFor(3) ? NavigationMode.Split : NavigationMode.Stack)
+        .navBarWidth(navBarWidthOf(this.bp))
+        .navBarWidthRange({
+          minWidth: navBarMinWidthOf(this.bp),
+          maxWidth: navBarMaxWidthOf(this.bp)
+        })
+        .minContentWidth(minContentWidthOf(this.bp))
       }
       .tabBar(new BottomTabBarStyle($r('app.media.ic_person'), $r('app.string.tab_mine')))
     }
@@ -623,7 +652,7 @@ export struct MainPage {
       if (this.currentIndex === 0) {
         HdsNavigation(this.homeStack) {
           PageShell() {
-            HomePage({ stack: this.homeStack })
+            HomePage({ stack: this.homeStack, splitMode: this.splitFor(0) })
           }
         }
         .navDestination(this.routeMap)
@@ -633,10 +662,10 @@ export struct MainPage {
         .mode(this.splitFor(0) ? NavigationMode.Split : NavigationMode.Stack)
         .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
-          minWidth: WideLayoutTokens.navBarMinWidth,
-          maxWidth: WideLayoutTokens.navBarMaxWidth
+          minWidth: navBarMinWidthOf(this.bp),
+          maxWidth: navBarMaxWidthOf(this.bp)
         })
-        .minContentWidth(WideLayoutTokens.minContentWidth)
+        .minContentWidth(minContentWidthOf(this.bp))
         .navBarPosition(NavBarPosition.Start)
         .enableModeChangeAnimation(true)
         .layoutWeight(1)
@@ -653,17 +682,17 @@ export struct MainPage {
         .mode(this.splitFor(1) ? NavigationMode.Split : NavigationMode.Stack)
         .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
-          minWidth: WideLayoutTokens.navBarMinWidth,
-          maxWidth: WideLayoutTokens.navBarMaxWidth
+          minWidth: navBarMinWidthOf(this.bp),
+          maxWidth: navBarMaxWidthOf(this.bp)
         })
-        .minContentWidth(WideLayoutTokens.minContentWidth)
+        .minContentWidth(minContentWidthOf(this.bp))
         .navBarPosition(NavBarPosition.Start)
         .enableModeChangeAnimation(true)
         .layoutWeight(1)
       } else if (this.currentIndex === 2) {
         HdsNavigation(this.featureStack) {
           PageShell() {
-            FeaturePage({ stack: this.featureStack })
+            FeaturePage({ stack: this.featureStack, splitMode: this.splitFor(2) })
           }
         }
         .navDestination(this.routeMap)
@@ -673,10 +702,10 @@ export struct MainPage {
         .mode(this.splitFor(2) ? NavigationMode.Split : NavigationMode.Stack)
         .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
-          minWidth: WideLayoutTokens.navBarMinWidth,
-          maxWidth: WideLayoutTokens.navBarMaxWidth
+          minWidth: navBarMinWidthOf(this.bp),
+          maxWidth: navBarMaxWidthOf(this.bp)
         })
-        .minContentWidth(WideLayoutTokens.minContentWidth)
+        .minContentWidth(minContentWidthOf(this.bp))
         .navBarPosition(NavBarPosition.Start)
         .enableModeChangeAnimation(true)
         .layoutWeight(1)
@@ -685,6 +714,7 @@ export struct MainPage {
           PageShell() {
             MinePage({
               stack: this.mineStack,
+              splitMode: this.splitFor(3),
               onLogout: () => {
                 this.onLogout();
               }
@@ -698,10 +728,10 @@ export struct MainPage {
         .mode(this.splitFor(3) ? NavigationMode.Split : NavigationMode.Stack)
         .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
-          minWidth: WideLayoutTokens.navBarMinWidth,
-          maxWidth: WideLayoutTokens.navBarMaxWidth
+          minWidth: navBarMinWidthOf(this.bp),
+          maxWidth: navBarMaxWidthOf(this.bp)
         })
-        .minContentWidth(WideLayoutTokens.minContentWidth)
+        .minContentWidth(minContentWidthOf(this.bp))
         .navBarPosition(NavBarPosition.Start)
         .enableModeChangeAnimation(true)
         .layoutWeight(1)

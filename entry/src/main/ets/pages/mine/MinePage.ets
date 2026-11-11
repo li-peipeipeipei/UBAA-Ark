@@ -16,6 +16,8 @@ import { SectionCard } from '../../components/CommonViews';
 @Component
 export struct MinePage {
   stack: NavPathStack = new NavPathStack();
+  /** 当前是否分栏（由 MainPage 传入）：分栏时点菜单是替换右栏而不是压栈。 */
+  @Prop splitMode: boolean = false;
 
   @State private userName: string = '';
   @State private schoolId: string = '';
@@ -145,12 +147,12 @@ export struct MinePage {
         SectionCard({ title: '账户', subtitle: '学籍与连接配置' }) {
           Column() {
             this.menuRow('个人资料', '查看学籍信息与联系方式', $r('sys.symbol.person'), () => {
-              AppRouter.push(this.stack, RouteName.USER_INFO);
+              AppRouter.open(this.stack, RouteName.USER_INFO, this.splitMode);
             })
             Divider().color(AppColor.divider).strokeWidth(0.5)
             this.menuRow('连接设置', '当前：' + connectionModeName(TokenStore.getConnectionMode()),
               $r('sys.symbol.wifi'), () => {
-                AppRouter.push(this.stack, RouteName.SETTINGS);
+                AppRouter.open(this.stack, RouteName.SETTINGS, this.splitMode);
               })
           }
           .width('100%')
@@ -159,7 +161,7 @@ export struct MinePage {
         SectionCard({ title: '关于', subtitle: '版本与开源信息' }) {
           Column() {
             this.menuRow('关于 UBAA', '版本 ' + AppConfig.APP_VERSION, $r('sys.symbol.info_circle'), () => {
-              AppRouter.push(this.stack, RouteName.ABOUT);
+              AppRouter.open(this.stack, RouteName.ABOUT, this.splitMode);
             })
           }
           .width('100%')

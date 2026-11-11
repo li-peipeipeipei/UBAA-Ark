@@ -54,6 +54,25 @@ export class AppRouter {
     }
   }
 
+  /**
+   * 打开二级页（区分单栏 / 分栏）。
+   *
+   * 分栏时「左列表 → 右详情」是一对一关系：已经在看某个详情时再点另一个条目，
+   * 应该是**替换**右栏内容，而不是继续压栈（否则返回一次只退到上一个详情，
+   * 语义上说不通，用户会觉得返回键失灵）。单栏时仍然正常压栈。
+   */
+  static open(stack: NavPathStack, name: string, splitMode: boolean, param?: object): void {
+    if (splitMode && stack.size() > 0) {
+      if (param === undefined) {
+        stack.replacePath({ name: name });
+      } else {
+        stack.replacePath({ name: name, param: param });
+      }
+      return;
+    }
+    AppRouter.push(stack, name, param);
+  }
+
   static back(stack: NavPathStack): void {
     stack.pop();
   }

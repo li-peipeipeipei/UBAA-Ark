@@ -91,9 +91,14 @@ export function useBottomTabBar(bp: string): boolean {
   return !useSideNav(bp);
 }
 
-/** 是否具备「列表 + 详情」分栏能力（还要结合页面语义，见 MainPage.splitFor）。 */
+/**
+ * 是否具备分栏能力。
+ *
+ * md 也算：平板竖屏点进二级页后同样走「左列表 + 右详情」。
+ * 分栏是否真的出现由 MainPage.splitFor 结合栈深决定（栈空时不分栏）。
+ */
 export function isSplitBreakpoint(bp: string): boolean {
-  return bp === 'lg' || bp === 'xxl';
+  return bp !== 'sm';
 }
 
 /**
@@ -107,9 +112,32 @@ export function sideNavWidthOf(bp: string): number {
   return bp === 'xxl' ? 144 : 128;
 }
 
-/** 列表栏（navBar）宽度（vp）。 */
+/** 列表栏（navBar）宽度（vp）。md 竖屏只有 673vp，列表栏必须收窄才留得下详情。 */
 export function navBarWidthOf(bp: string): number {
+  if (bp === 'md') {
+    return 300;
+  }
   return bp === 'xxl' ? 400 : 360;
+}
+
+/** 列表栏宽度下限 / 上限（vp）。 */
+export function navBarMinWidthOf(bp: string): number {
+  if (bp === 'md') {
+    return 264;
+  }
+  return bp === 'xxl' ? 340 : 320;
+}
+
+export function navBarMaxWidthOf(bp: string): number {
+  if (bp === 'md') {
+    return 320;
+  }
+  return bp === 'xxl' ? 440 : 400;
+}
+
+/** 详情栏最小宽度（vp）：低于它 HDS 会退回单栏。md 下必须放到 300，否则 673vp 分不开。 */
+export function minContentWidthOf(bp: string): number {
+  return bp === 'md' ? 300 : 360;
 }
 
 /**
@@ -175,40 +203,64 @@ export function tileColumnsTemplateFor(bp: string, itemCount: number): string {
  * @param maxCols   列数上限
  * @param itemCount 条目数（少于列数时按条目数均分，避免右侧空出一排）
  */
-export function columnsTemplateByWidth(widthVp: number, minTile: number, minCols: number,
-  maxCols: number, itemCount: number): string {
-  let columns: number = Math.floor(widthVp / minTile);
-  if (!(columns > 0)) {
-    columns = minCols;
+/**
+ * 按容器宽度算列数（纯数值）。
+ *
+ * 与 `columnsTemplateByWidth` 分开，是为了让页面把结果存进 `@State`、只在**列数变化**
+ * 时重建：分栏切换时宽度是动画过渡的，`onAreaChange` 会连续回调几十次，
+ * 若每次都写宽度状态，网格会在动画过程中反复重排（肉眼可见的抖动）。
+ */
+export function fitColumnsToItems(columns: number, itemCount: number, minCols: number): number {
+  let result: number = columns;
+  if (result < minCols) {
+    result = minCols;
   }
-  if (columns < minCols) {
-    columns = minCols;
-  }
-  if (columns > maxCols) {
-    columns = maxCols;
-  }
-  if (itemCount > 0 && itemCount < columns) {
-    columns = itemCount;
+  if (itemCount > 0 && itemCount < result) {
+    result = itemCount;
   }
   // 优先选「能整除」的列数，让最后一行不留残行：8 个快捷入口在 673vp 下按 7 列排是
   // 7+1、按 6 列是 6+2，退到 4 列才是整齐的 4+4。只在会排出第二行时才这么做。
-  if (itemCount > columns) {
-    for (let candidate: number = columns; candidate >= minCols; candidate--) {
+  if (itemCount > result) {
+    for (let candidate: number = result; candidate >= minCols; candidate--) {
       if (itemCount % candidate === 0) {
-        columns = candidate;
+        result = candidate;
         break;
       }
     }
   }
   // 兜底：仍会余 1 时再降一列（余 1 是最难看的形态）
-  while (columns > minCols && itemCount > columns && itemCount % columns === 1) {
-    columns = columns - 1;
+  while (result > minCols && itemCount > result && itemCount % result === 1) {
+    result = result - 1;
   }
+  return result;
+}
+
+export function columnsCountByWidth(widthVp: number, minTile: number, minCols: number,
+  maxCols: number, itemCount: number): number {
+  let columns: number = Math.floor(widthVp / minTile);
+  if (!(columns > 0)) {
+    columns = minCols;
+  }
+  if (columns > maxCols) {
+    columns = maxCols;
+  }
+  return fitColumnsToItems(columns, itemCount, minCols);
+}
+
+/** 列数 → `Grid.columnsTemplate` 字符串。 */
+export function templateOfColumns(count: number): string {
   const cells: string[] = [];
-  for (let i = 0; i < columns; i++) {
+  const safe: number = count > 0 ? count : 1;
+  for (let i = 0; i < safe; i++) {
     cells.push('1fr');
   }
   return cells.join(' ');
+}
+
+/** 按容器宽度直接生成 columnsTemplate（不需要缓存列数时的便捷写法）。 */
+export function columnsTemplateByWidth(widthVp: number, minTile: number, minCols: number,
+  maxCols: number, itemCount: number): string {
+  return templateOfColumns(columnsCountByWidth(widthVp, minTile, minCols, maxCols, itemCount));
 }
 
 /**
