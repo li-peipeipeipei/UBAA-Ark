@@ -42,7 +42,9 @@ export struct FeaturePage {
       Toast.show(item.title + ' · 敬请期待');
       return;
     }
-    AppRouter.open(this.stack, item.route);
+    // 功能页的大按钮**保持硬切**（产品要求：这处的转场之后单独设计），
+    // 其余入口（主页横幅、我的菜单…）都走默认的滑入动画。
+    AppRouter.open(this.stack, item.route, undefined, false);
   }
 
   /** 列数模板：量到宽度就按实测算，否则按窗口断点估。 */

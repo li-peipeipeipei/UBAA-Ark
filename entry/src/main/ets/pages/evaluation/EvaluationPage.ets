@@ -1,3 +1,4 @@
+import { BackGuard } from '../../common/BackGuard';
 import { LoadState } from '../../common/AppRouter';
 import { Logger } from '../../common/Logger';
 import { Toast } from '../../common/Toast';
@@ -139,6 +140,9 @@ export struct EvaluationPage {
       return;
     }
     this.submitting = true;
+    // 提交过程中把返回键挡住：此时页面被 pop 掉，正在跑的 for-await 会继续往
+    // 已销毁的组件里写状态。动作返回 false = 「关不掉」，这一层留在栈里持续拦截。
+    BackGuard.register(() => false);
     this.results = [];
     this.finishedCount = 0;
     this.submitTotal = targets.length;
@@ -152,6 +156,7 @@ export struct EvaluationPage {
     }
 
     this.submitting = false;
+    BackGuard.unregister();
     const successCount = this.countSuccess(collected);
     Toast.show('评教完成：成功 ' + successCount + ' 门，失败 ' +
       (collected.length - successCount) + ' 门');

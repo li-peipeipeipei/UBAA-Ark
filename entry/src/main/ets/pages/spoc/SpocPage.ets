@@ -389,6 +389,8 @@ export struct SpocPage {
         await LocalSpocService.assignmentWebUrl(assignmentId) : '';
       AppStorage.setOrCreate('spocWebLogin', loginUrl);
       AppStorage.setOrCreate('spocWebDetail', detailUrl);
+      // 只需把状态打开；返回键优先级由真正渲染这层浮层的 MainPage 负责登记
+      // （见 MainPage.onSpocWebOpenChange）——页面这边登记会在自身销毁时悬空。
       AppStorage.setOrCreate('spocWebOpen', true);
     } catch (error) {
       Logger.warn('准备 SPOC 网页失败：' + (error as Error).message);

@@ -1,3 +1,4 @@
+import { BackGuard } from '../common/BackGuard';
 import {
   HdsNavigation,
   HdsNavigationTitleBarOptions,
@@ -112,9 +113,22 @@ export struct MainPage {
   private mainWebCtrl: webview.WebviewController = new webview.WebviewController();
   private mainWebLoaded: boolean = false;
 
+  /**
+   * 网页提交浮层（盖在整个应用上，含底部页签）的开关。
+   *
+   * **返回键优先级由这里登记，不由 SpocPage 登记**：浮层是 MainPage 渲染的，
+   * 渲染方登记才不会在页面销毁时留下指向死实例的闭包。只要 `spocWebOpen` 变 true，
+   * 不论从哪个入口打开，返回键都能先关掉这一层。
+   */
   onSpocWebOpenChange(): void {
+    // 全屏模态一定是最上面一层，先清掉可能残留的旧登记
+    BackGuard.clear();
     if (this.spocWebOpen) {
       this.mainWebLoaded = false;
+      BackGuard.register(() => {
+        AppStorage.setOrCreate('spocWebOpen', false);
+        return true;
+      });
     }
   }
   private homeStack: NavPathStack = new NavPathStack();

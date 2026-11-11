@@ -1,4 +1,6 @@
 
+import { BackGuard } from './BackGuard';
+
 /**
  * 路由表。
  *
@@ -51,34 +53,45 @@ export const WIDE_PLACEHOLDER_ROUTE: string = 'widePlaceholder';
 
 export class AppRouter {
   /**
+   * 最近一次进入二级页是否带动画。
+   *
+   * 返回时沿用同一个值，转场才对称：硬切进来的一页如果带着滑出动画退回，
+   * 看起来像是从别处冒出来又滑走。功能页的大按钮目前是**硬切**（产品要求，
+   * 那处的转场单独设计），其余入口都带动画。
+   */
+  private static lastPushAnimated: boolean = true;
+
+  /**
    * 压栈打开二级页。
    *
-   * `animated: false` —— 平板端已取消分栏，**所有转场一律硬切**（无滑入/滑出动画）。
-   * 这是产品要求：先去掉全部转场，之后再统一设计。
+   * @param animated 是否播放系统转场（默认 true：自右向左滑入）。
+   *   传 false 只用于「功能页大按钮」那一处，其余入口一律带动画。
    */
-  static push(stack: NavPathStack, name: string, param?: object): void {
+  static push(stack: NavPathStack, name: string, param?: object, animated: boolean = true): void {
+    AppRouter.lastPushAnimated = animated;
     if (param === undefined) {
-      stack.pushPath({ name: name }, false);
+      stack.pushPath({ name: name }, animated);
     } else {
-      stack.pushPath({ name: name, param: param }, false);
+      stack.pushPath({ name: name, param: param }, animated);
     }
   }
 
-  /**
-   * 打开二级页（区分单栏 / 分栏）。
-   *
-   * 分栏时「左列表 → 右详情」是一对一关系：已经在看某个详情时再点另一个条目，
-   * 应该是**替换**右栏内容，而不是继续压栈（否则返回一次只退到上一个详情，
-   * 语义上说不通，用户会觉得返回键失灵）。单栏时仍然正常压栈。
-   */
-  /** 打开二级页（分栏已取消，统一走压栈 + 硬切）。 */
-  static open(stack: NavPathStack, name: string, param?: object): void {
-    AppRouter.push(stack, name, param);
+  /** 打开二级页：统一走压栈（分栏已取消）。 */
+  static open(stack: NavPathStack, name: string, param?: object, animated: boolean = true): void {
+    AppRouter.push(stack, name, param, animated);
   }
 
-  /** 返回：同样硬切。 */
+  /**
+   * 返回。**先给页面内部的浮层一次机会**（筛选面板、作业详情弹窗、全屏网页…），
+   * 浮层都关完了才真正弹栈 —— 见 `BackGuard`。
+   *
+   * 26 个二级页的 `onBackPressed` 全部走这里，所以「浮层优先」只在这一处实现。
+   */
   static back(stack: NavPathStack): void {
-    stack.pop(false);
+    if (BackGuard.consume()) {
+      return;
+    }
+    stack.pop(AppRouter.lastPushAnimated);
   }
 }
 

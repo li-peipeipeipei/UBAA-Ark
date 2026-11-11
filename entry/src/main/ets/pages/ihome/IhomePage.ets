@@ -1,3 +1,4 @@
+import { BackGuard } from '../../common/BackGuard';
 import { AppRouter, LoadState, RouteName } from '../../common/AppRouter';
 import { IhomeNav } from '../../common/IhomeNav';
 import { Logger } from '../../common/Logger';
@@ -130,6 +131,7 @@ export struct IhomePage {
     this.filter = IhomeFilter.ALL;
     this.categoryId = 0;
     this.expandedNoticeId = 0;
+    BackGuard.unregister();
     this.load(true);
   }
 
@@ -224,6 +226,23 @@ export struct IhomePage {
   }
 
   /* ------------------------------ 组件 ------------------------------ */
+
+  /**
+   * 展开 / 收起公告正文，并同步返回键优先级：展开状态下按返回先收公告，
+   * 而不是把整个 iHome 页面退掉。
+   */
+  private toggleNotice(id: number): void {
+    const next: number = this.expandedNoticeId === id ? 0 : id;
+    this.expandedNoticeId = next;
+    if (next !== 0) {
+      BackGuard.register(() => {
+        this.expandedNoticeId = 0;
+        return true;
+      });
+    } else {
+      BackGuard.unregister();
+    }
+  }
 
   @Builder
   scopeBar() {
@@ -434,7 +453,7 @@ export struct IhomePage {
     .padding({ top: 12, bottom: 12 })
     .alignItems(HorizontalAlign.Start)
     .onClick(() => {
-      this.expandedNoticeId = this.expandedNoticeId === item.id ? 0 : item.id;
+      this.toggleNotice(item.id);
     })
   }
 

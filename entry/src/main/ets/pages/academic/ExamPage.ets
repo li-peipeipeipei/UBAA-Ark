@@ -1,3 +1,4 @@
+import { BackGuard } from '../../common/BackGuard';
 import { LoadState } from '../../common/AppRouter';
 import { CardCache, CardExam } from '../../common/CardCache';
 import { DateUtil } from '../../common/DateUtil';
@@ -87,7 +88,7 @@ export struct ExamPage {
     this.termCode = term.itemCode;
     this.termName = term.itemName;
     TokenStore.setSelectedTerm(term.itemCode, term.itemName);
-    this.showTermPicker = false;
+    this.setTermPicker(false);
     this.loadState = LoadState.LOADING;
     try {
       const data: ExamArrangementData = await ApiService.fetchExams(term.itemCode);
@@ -187,6 +188,27 @@ export struct ExamPage {
    * 点胶囊展开/收起下方竖向学期列表（`termPickerPanel`）。学期名过长时单行省略，
    * 不撑破布局。按钮复用课表页学期胶囊同款「半透明玻璃底 + 下拉箭头」观感。
    */
+  /**
+   * 展开 / 收起学期选择面板，并同步返回键优先级。
+   *
+   * 面板是页面内联展开（不是弹窗），不登记的话按返回会把整个考试页关掉，
+   * 而不是先把面板收起来。
+   */
+  private setTermPicker(open: boolean): void {
+    if (open === this.showTermPicker) {
+      return;
+    }
+    this.showTermPicker = open;
+    if (open) {
+      BackGuard.register(() => {
+        this.showTermPicker = false;
+        return true;
+      });
+    } else {
+      BackGuard.unregister();
+    }
+  }
+
   @Builder
   examHeader() {
     Row() {
@@ -208,7 +230,7 @@ export struct ExamPage {
       .backdropBlur(AppMaterial.blurSmall)
       .backgroundColor(AppColor.glassSurface)
       .onClick(() => {
-        this.showTermPicker = !this.showTermPicker;
+        this.setTermPicker(!this.showTermPicker);
       })
     }
     .width('100%')
@@ -246,7 +268,7 @@ export struct ExamPage {
             if (item.itemCode !== this.termCode) {
               this.applyTerm(item);
             } else {
-              this.showTermPicker = false;
+              this.setTermPicker(false);
             }
           })
         }, (item: Term) => item.itemCode)

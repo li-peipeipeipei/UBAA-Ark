@@ -1,4 +1,5 @@
 import { AppRouter, LoadState, RouteName } from '../../common/AppRouter';
+import { BackGuard } from '../../common/BackGuard';
 import { Logger } from '../../common/Logger';
 import { Toast } from '../../common/Toast';
 import { ApiError } from '../../network/ApiError';
@@ -380,6 +381,29 @@ export struct BykcCoursesPage {
    * 面板内容必须是一个**独立组件**并 `@Link filters` —— 直接写在 `@Builder` 里的话，
    * 胶囊的选中态取的是构建时的值，`filters` 变了不会重建（列表会变、勾选不变）。
    */
+  /**
+   * 打开筛选面板，并把「返回键」的优先级交给它。
+   *
+   * 面板是自绘遮罩（`Stack` 的兄弟节点），框架不会替它消费返回事件 ——
+   * 不注册的话，按返回会直接把整个课程列表页关掉。注册后 `AppRouter.back()`
+   * 会先关面板，第二次返回才退页面。
+   */
+  private openFilterPanel(): void {
+    this.filterPanelOpen = true;
+    // 返回键触发的关闭：`BackGuard.consume()` 已经出栈了，这里只改状态，
+    // 不能再 unregister（会把下一层误删）
+    BackGuard.register(() => {
+      this.filterPanelOpen = false;
+      return true;
+    });
+  }
+
+  /** 关闭筛选面板（用户点关闭 / 点遮罩）：与 openFilterPanel 成对注销。 */
+  private closeFilterPanel(): void {
+    this.filterPanelOpen = false;
+    BackGuard.unregister();
+  }
+
   /** 筛选浮层：遮罩 + 底部固定面板（不走 bindSheet，避免上拖露底）。 */
   @Builder
   filterOverlay() {
@@ -392,7 +416,7 @@ export struct BykcCoursesPage {
             this.filters = next;
           },
           onClose: () => {
-            this.filterPanelOpen = false;
+            this.closeFilterPanel();
           }
         })
         // 手机端补偿回视觉正中；宽屏 Split 右栏不补偿
@@ -604,7 +628,7 @@ export struct BykcCoursesPage {
           .borderRadius(16)
           .backgroundColor(AppColor.surface)
           .onClick(() => {
-            this.filterPanelOpen = true;
+            this.openFilterPanel();
           })
 
           // 已选条件摘要：与筛选弹窗里的胶囊同款（同尺寸、同交互，点一下即取消该条件）
