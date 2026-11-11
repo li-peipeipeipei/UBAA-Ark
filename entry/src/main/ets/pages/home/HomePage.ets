@@ -128,6 +128,14 @@ export struct HomePage {
    * 现在列数由宽度现场算，宽度和列数永远同源，不会再对不上。
    */
   @State private laneWidth: number = 0;
+  /**
+   * 「快捷入口」卡片**自身**的实测宽度（vp）。
+   *
+   * 必须量卡片自己、不能借用外层面板的宽度：分栏收放是原生动画，容器的宽度回调会比
+   * 子节点的百分比重排早一帧，用外层宽度算列数就会出现"卡片还窄、列数已经按宽卡片算"
+   * 的错位 —— 表现为磁贴被裁成半个（关闭分栏时最明显）。
+   */
+  @State private quickCardWidth: number = 0;
   /** 是否已经量过自身宽度（false 时按窗口断点兜底）。非 @State：只做分支判断。 */
   private measured: boolean = false;
 
@@ -523,9 +531,8 @@ export struct HomePage {
     if (!this.measured || this.laneWidth <= 0) {
       return this.twoColumnLayout() ? '1fr 1fr 1fr 1fr' : tileColumnsTemplate(this.bp);
     }
-    const gap: number = AppSize.gapLarge;
-    // 并排：单栏宽 = (总宽 - 间距) / 2；单列：整宽。再扣 SectionCard 的 16vp 内边距 ×2
-    const cardWidth: number = (this.wideEnough ? (this.laneWidth - gap) / 2 : this.laneWidth) - 32;
+    // 卡片自身宽度已含 SectionCard 的 16vp 内边距 ×2，直接扣掉
+    const cardWidth: number = this.quickCardWidth - 32;
     let columns: number = Math.floor(cardWidth / 84);
     if (columns < 2) {
       columns = 2;
@@ -648,6 +655,13 @@ export struct HomePage {
               .alignItems(HorizontalAlign.Start)
               // 堆叠时补上横向并排时由 space 承担的间距
               .margin({ top: this.wideEnough ? 0 : AppSize.gapLarge })
+              .onAreaChange((oldArea: Area, newArea: Area) => {
+                const raw: Length = newArea.width;
+                const measured: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
+                if (Math.abs(measured - this.quickCardWidth) > 0.5) {
+                  this.quickCardWidth = measured;
+                }
+              })
             }
             .width('100%')
             // 分栏收放是 HDS 的原生动画，动画期间这一层可能还拿着旧的子节点宽度，
