@@ -145,44 +145,64 @@ export struct SectionCard {
 }
 
 /** 功能入口磁贴（4 列网格中的一格）。 */
+/**
+ * 功能入口按钮：**大圆角矩形**，图标与文字都在按钮内部。
+ *
+ * 设计要点（2026-11-11 改版）：
+ * - 一整个矩形就是点击热区，不再是「小图标 + 下面一行小字」，触控面积大、误触少；
+ * - 左侧 40×40 的彩色圆角块承载重绘的单色图标（白色描边式，跟功能语义对应）；
+ * - 右侧两行文字：主标题 + 一句功能说明，扫一眼就知道点进去干什么；
+ * - 统一的底色（surface）+ 16 圆角 + 12 内边距，在网格里形成规整的节奏。
+ */
 @Component
 export struct FeatureTile {
   title: string = '';
-  icon: Resource = $r('app.media.ic_apps');
-  iconKind: IconKind = IconKind.SVG;
+  desc: string = '';
+  icon: Resource = $r('app.media.icf_spoc');
+  /** 图标块底色（每个功能一种强调色）。 */
   color: Resource = $r('app.color.brand');
   onTileClick: () => void = () => {};
 
   build() {
-    Column({ space: 6 }) {
+    Row({ space: 12 }) {
       Column() {
-        if (this.iconKind === IconKind.SVG) {
-          Image(this.icon)
-            .width(22)
-            .height(22)
-            .fillColor(Color.White)
-            .draggable(false)
-        } else {
-          SymbolGlyph(this.icon)
-            .fontSize(22)
-            .fontColor([Color.White])
-        }
+        Image(this.icon)
+          .width(22)
+          .height(22)
+          .fillColor(Color.White)
+          .draggable(false)
       }
-      .width(44)
-      .height(44)
-      .borderRadius(14)
+      .width(40)
+      .height(40)
+      .borderRadius(12)
       .backgroundColor(this.color)
       .justifyContent(FlexAlign.Center)
 
-      Text(this.title)
-        .fontSize(AppFont.caption)
-        .fontColor(AppColor.textPrimary)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      Column({ space: 3 }) {
+        Text(this.title)
+          .fontSize(AppFont.body)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(AppColor.textPrimary)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        if (this.desc.length > 0) {
+          Text(this.desc)
+            .fontSize(AppFont.caption)
+            .fontColor(AppColor.textTertiary)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
     }
     .width('100%')
-    .padding({ top: 6, bottom: 6 })
-    // 平板外接键鼠 / 2in1 触控板上，磁贴需要悬停反馈才「像个按钮」（官方多设备交互建议）
+    .constraintSize({ minHeight: 64 })
+    .padding({ left: 12, right: 12, top: 12, bottom: 12 })
+    .borderRadius(16)
+    .backgroundColor(AppColor.surface)
+    .alignItems(VerticalAlign.Center)
+    // 平板外接键鼠 / 2in1 触控板上，按钮需要悬停反馈才「像个按钮」（官方多设备交互建议）
     .hoverEffect(HoverEffect.Highlight)
     .onClick(() => {
       this.onTileClick();

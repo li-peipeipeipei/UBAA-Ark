@@ -10,8 +10,7 @@ import {
 import { KEY_BOTTOM_SAFE_HEIGHT, topSafeInsetVp } from '../common/ImmersiveUtil';
 import { webview } from '@kit.ArkWeb';
 import { Logger } from '../common/Logger';
-import { Tween } from '../common/Tween';
-import { AppColor, AppFont, AppMotion, AppSize } from '../components/AppTheme';
+import { AppColor, AppFont, AppSize } from '../components/AppTheme';
 import { ScheduleDayHeader, ScheduleHeaderModel, ScheduleTermChip, ScheduleWeekChips } from '../components/ScheduleHeader';
 import { routeBuilder } from './RouteBuilder';
 import { HomePage } from './home/HomePage';
@@ -21,7 +20,6 @@ import { MinePage } from './mine/MinePage';
 import {
   KEY_BREAKPOINT,
   KEY_NAV_SPLIT_MODE,
-  KEY_WINDOW_WIDTH_VP,
   navBarWidthOf,
   navBarMinWidthOf,
   navBarMaxWidthOf,
@@ -143,33 +141,13 @@ export struct MainPage {
   @State private stackDepth: number[] = [0, 0, 0, 0];
 
   /**
-   * 四个页签的「即将分栏」标记。
+   * 四个页签的「即将进入分栏」标记。
    *
-   * 点条目时先把它置真，让 `mode` 在这一帧就切到 Split（模式切换动画已关闭，瞬切），
-   * **下一帧**才 push 详情 —— 这样详情是作为「分栏里的内容」进来的，播放的是 push 的
-   * 默认右滑入动画。否则先 push 再切模式，看到的是 HDS 的模式切换动画：
-   * 左侧列表收窄、内容区从**左**展开，和「点开一项、详情从右边推进来」的直觉相反。
-   *
-   * 栈深一旦 > 0 就会被清掉（`updateStackDepth`），不留残余。
+   * 点条目时先置真，让 `mode` 在**这一帧**就切到 Split，下一帧才 push —— 否则先 push
+   * 再切 mode，HDS 会不接受（实测：在有目的页的情况下切 mode 会把目的页弹掉，
+   * 日志表现为入栈后 1 秒左右又出现一次「栈深=0」）。这不是过渡动画，是分栏能用的前提。
    */
-  @State private awaitSplit: boolean[] = [false, false, false, false];
-  /**
-   * 二级页点返回时发来的「收起分栏」信号（AppRouter.requestSplitCollapse）。
-   *
-   * 由目的地主动发，比等 HDS 的 pop 结束再切 mode 早约 180ms —— 视觉上左栏跟着
-   * 详情一起向右展开，而不是"详情先走、面板后展"两段式。
-   */
-  @StorageLink('ubaaSplitCollapse') @Watch('onCollapseRequest') private collapseSignal: number = 0;
-  /**
-   * navBar 的覆盖宽度（0 = 用断点默认值）。
-   *
-   * 为什么需要它：HDS 在 pop 进行期间**不接受 mode 切换**（实测：收回指令在点击当帧就发出，
-   * 但面板要等 pop 结束才展开 → 中间露出约 150ms 的空档）。而 `navBarWidth` 是布局属性，
-   * 可以在 pop 期间逐帧改 —— 所以返回时先把 navBar 补间到全宽，左栏就跟着详情一起向右展开，
-   * 等 pop 结束再切 mode（此时宽度已经等于全屏，没有二次跳动）。
-   */
-  @State private navBarW: number = 0;
-  private navBarTween: Tween = new Tween();
+  @State private pendingSplit: boolean[] = [false, false, false, false];
   /** 「收回分栏」的防抖定时器（每个页签一个，-1 表示没有在等待）。 */
   private collapseTimer: number[] = [-1, -1, -1, -1];
   /**
@@ -199,19 +177,6 @@ export struct MainPage {
     for (let i = 0; i < stacks.length; i++) {
       const index: number = i;
       stacks[i].setInterception({
-        // willShow 在目的页出现**之前**触发。返回时若栈已空，就**立刻**收回分栏 ——
-        // 不能等 didShow（那里为防 push 抖动加了 160ms 防抖）：否则详情已经退出、
-        // 面板还停在分栏状态，右侧留一块空白，等防抖结束才"啪"地展开 —— 就是那一下闪。
-        // willShow 会带 operation：POP 就是在返回。这时立刻收回分栏，
-        // 不等 didShow（那里为防 push 抖动有 160ms 防抖）—— 否则详情已经退出、
-        // 面板还停在分栏态，右侧留一块空白，等防抖结束才"啪"地展开（看到的那一下闪）。
-        willShow: (from, to, operation) => {
-          if (operation === NavigationOperation.POP && this.stackDepth[index] > 0) {
-            this.liveDepth[index] = 0;
-            this.cancelCollapse(index);
-            this.applyDepth(index, 0);
-          }
-        },
         didShow: () => {
           this.updateStackDepth(index, stacks[index].size());
         }
@@ -224,10 +189,10 @@ export struct MainPage {
     this.liveDepth[index] = depth;
     if (depth > 0) {
       this.cancelCollapse(index);
-      if (this.awaitSplit[index]) {
-        const cleared: boolean[] = this.awaitSplit.slice();
+      if (this.pendingSplit[index]) {
+        const cleared: boolean[] = this.pendingSplit.slice();
         cleared[index] = false;
-        this.awaitSplit = cleared;
+        this.pendingSplit = cleared;
       }
       this.applyDepth(index, depth);
       return;
@@ -256,31 +221,21 @@ export struct MainPage {
     Logger.info('LAYOUT 页签' + index + ' 栈深=' + depth);
   }
 
-  /** 收到二级页的返回信号：先把 navBar 补间到全宽（与 pop 同时向右展开），再收起分栏。 */
-  private onCollapseRequest(): void {
-    const index: number = this.currentIndex;
-    if (this.stackDepth[index] <= 0) {
-      return;
+  /**
+   * 一级页点条目前的回调：能分栏就先把 mode 切到 Split 并返回 true（调用方下一帧再 push），
+   * 不能分栏（手机 / 课表）返回 false，调用方直接 push。
+   */
+  private requestSplitBeforePush(tabIndex: number): boolean {
+    if (!this.navSplitMode || !this.isSplitTab(tabIndex)) {
+      return false;
     }
-    const windowW: number = AppStorage.get<number>(KEY_WINDOW_WIDTH_VP) ?? 0;
-    const from: number = this.navBarW > 0 ? this.navBarW : navBarWidthOf(this.bp);
-    if (windowW > from) {
-      // 逐帧补间，和 pop 抢时间；结束后再真正切回 Stack
-      this.navBarTween.run(this.getUIContext(), from, windowW,
-        AppMotion.SPLIT_CLOSE_DURATION, 0, (value: number) => {
-          this.navBarW = value;
-        });
-      setTimeout(() => {
-        this.navBarW = 0;
-        this.liveDepth[index] = 0;
-        this.cancelCollapse(index);
-        this.applyDepth(index, 0);
-      }, AppMotion.SPLIT_CLOSE_DURATION);
-      return;
+    if (this.stackDepth[tabIndex] > 0 || this.pendingSplit[tabIndex]) {
+      return true;
     }
-    this.liveDepth[index] = 0;
-    this.cancelCollapse(index);
-    this.applyDepth(index, 0);
+    const next: boolean[] = this.pendingSplit.slice();
+    next[tabIndex] = true;
+    this.pendingSplit = next;
+    return true;
   }
 
   private cancelCollapse(index: number): void {
@@ -294,24 +249,6 @@ export struct MainPage {
   /** 该页签是否参与分栏（课表不参与：周网格劈一半没法看）。 */
   private isSplitTab(tabIndex: number): boolean {
     return tabIndex === 0 || tabIndex === 2 || tabIndex === 3;
-  }
-
-  /**
-   * 一级页点条目时的回调：若当前能分栏且还没分，先切到 Split 再返回 true，
-   * 由调用方在下一帧 push —— 详情才会以「从右侧滑入」的方式出现。
-   * 不能分栏（手机 / 课表）时返回 false，调用方直接 push，零延迟。
-   */
-  private beginSplit(tabIndex: number): boolean {
-    if (!this.navSplitMode || !this.isSplitTab(tabIndex)) {
-      return false;
-    }
-    if (this.stackDepth[tabIndex] > 0 || this.awaitSplit[tabIndex]) {
-      return true;
-    }
-    const next: boolean[] = this.awaitSplit.slice();
-    next[tabIndex] = true;
-    this.awaitSplit = next;
-    return true;
   }
 
   private onPendingRoute(): void {
@@ -441,7 +378,7 @@ export struct MainPage {
     if (!this.navSplitMode || !this.isSplitTab(tabIndex)) {
       return false;
     }
-    return this.stackDepth[tabIndex] > 0 || this.awaitSplit[tabIndex];
+    return this.stackDepth[tabIndex] > 0 || this.pendingSplit[tabIndex];
   }
 
   /**
@@ -646,7 +583,7 @@ export struct MainPage {
             HomePage({
               stack: this.homeStack,
               splitMode: this.splitFor(0),
-              onWillOpen: () => this.beginSplit(0)
+              onWillOpen: () => this.requestSplitBeforePush(0)
             })
           }
         }
@@ -656,7 +593,7 @@ export struct MainPage {
         .hideBackButton(true)
         .mode(this.splitFor(0) ? NavigationMode.Split : NavigationMode.Stack)
         .enableModeChangeAnimation(true)
-        .navBarWidth(this.navBarW > 0 ? this.navBarW : navBarWidthOf(this.bp))
+        .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
           maxWidth: navBarMaxWidthOf(this.bp)
@@ -677,7 +614,7 @@ export struct MainPage {
         .hideBackButton(true)
         .mode(this.splitFor(1) ? NavigationMode.Split : NavigationMode.Stack)
         .enableModeChangeAnimation(true)
-        .navBarWidth(this.navBarW > 0 ? this.navBarW : navBarWidthOf(this.bp))
+        .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
           maxWidth: navBarMaxWidthOf(this.bp)
@@ -692,7 +629,7 @@ export struct MainPage {
             FeaturePage({
               stack: this.featureStack,
               splitMode: this.splitFor(2),
-              onWillOpen: () => this.beginSplit(2)
+              onWillOpen: () => this.requestSplitBeforePush(2)
             })
           }
         }
@@ -702,7 +639,7 @@ export struct MainPage {
         .hideBackButton(true)
         .mode(this.splitFor(2) ? NavigationMode.Split : NavigationMode.Stack)
         .enableModeChangeAnimation(true)
-        .navBarWidth(this.navBarW > 0 ? this.navBarW : navBarWidthOf(this.bp))
+        .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
           maxWidth: navBarMaxWidthOf(this.bp)
@@ -717,7 +654,7 @@ export struct MainPage {
             MinePage({
               stack: this.mineStack,
               splitMode: this.splitFor(3),
-              onWillOpen: () => this.beginSplit(3),
+              onWillOpen: () => this.requestSplitBeforePush(3),
               onLogout: () => {
                 this.onLogout();
               }
@@ -730,7 +667,7 @@ export struct MainPage {
         .hideBackButton(true)
         .mode(this.splitFor(3) ? NavigationMode.Split : NavigationMode.Stack)
         .enableModeChangeAnimation(true)
-        .navBarWidth(this.navBarW > 0 ? this.navBarW : navBarWidthOf(this.bp))
+        .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
           maxWidth: navBarMaxWidthOf(this.bp)
@@ -803,7 +740,7 @@ export struct MainPage {
             HomePage({
               stack: this.homeStack,
               splitMode: this.splitFor(0),
-              onWillOpen: () => this.beginSplit(0)
+              onWillOpen: () => this.requestSplitBeforePush(0)
             })
           }
         }
@@ -812,7 +749,7 @@ export struct MainPage {
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
         .mode(this.splitFor(0) ? NavigationMode.Split : NavigationMode.Stack)
-        .navBarWidth(this.navBarW > 0 ? this.navBarW : navBarWidthOf(this.bp))
+        .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
           maxWidth: navBarMaxWidthOf(this.bp)
@@ -834,7 +771,7 @@ export struct MainPage {
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
         .mode(this.splitFor(1) ? NavigationMode.Split : NavigationMode.Stack)
-        .navBarWidth(this.navBarW > 0 ? this.navBarW : navBarWidthOf(this.bp))
+        .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
           maxWidth: navBarMaxWidthOf(this.bp)
@@ -851,7 +788,7 @@ export struct MainPage {
             FeaturePage({
               stack: this.featureStack,
               splitMode: this.splitFor(2),
-              onWillOpen: () => this.beginSplit(2)
+              onWillOpen: () => this.requestSplitBeforePush(2)
             })
           }
         }
@@ -860,7 +797,7 @@ export struct MainPage {
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
         .mode(this.splitFor(2) ? NavigationMode.Split : NavigationMode.Stack)
-        .navBarWidth(this.navBarW > 0 ? this.navBarW : navBarWidthOf(this.bp))
+        .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
           maxWidth: navBarMaxWidthOf(this.bp)
@@ -877,7 +814,7 @@ export struct MainPage {
             MinePage({
               stack: this.mineStack,
               splitMode: this.splitFor(3),
-              onWillOpen: () => this.beginSplit(3),
+              onWillOpen: () => this.requestSplitBeforePush(3),
               onLogout: () => {
                 this.onLogout();
               }
@@ -889,7 +826,7 @@ export struct MainPage {
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
         .mode(this.splitFor(3) ? NavigationMode.Split : NavigationMode.Stack)
-        .navBarWidth(this.navBarW > 0 ? this.navBarW : navBarWidthOf(this.bp))
+        .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
           maxWidth: navBarMaxWidthOf(this.bp)

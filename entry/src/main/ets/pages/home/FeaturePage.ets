@@ -1,30 +1,33 @@
 import { AppRouter } from '../../common/AppRouter';
 import { Toast } from '../../common/Toast';
-import { AppColor, AppFont, AppMotion, AppSize } from '../../components/AppTheme';
-import { Tween } from '../../common/Tween';
+import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
-import { FeatureTile, SectionCard } from '../../components/CommonViews';
-import { FeatureItem, advancedFeatures, basicFeatures } from '../../components/FeatureRegistry';
+import { FeatureTile } from '../../components/CommonViews';
+import { FeatureItem, allFeatures } from '../../components/FeatureRegistry';
 import { KEY_BREAKPOINT, fitColumnsToItems, templateOfColumns, tileColumnsTemplateFor } from '../../common/Breakpoint';
 
-/** 单个磁贴的最小宽度（vp）：低于它 4 字标题就会被省略号吃掉。 */
-const MIN_TILE_WIDTH: number = 84;
-/** 磁贴列数上下限。 */
-const MIN_COLUMNS: number = 2;
-const MAX_COLUMNS: number = 8;
+/** 单个按钮的最小宽度（vp）：低于它「标题 + 说明」两行会被挤成省略号。 */
+const MIN_TILE_WIDTH: number = 168;
+/** 列数上下限。 */
+const MIN_COLUMNS: number = 1;
+const MAX_COLUMNS: number = 4;
 
 /**
- * 功能聚合页。
+ * 功能页：一层平铺的功能按钮网格。
  *
- * 沿用 UBAA 的「普通功能 / 高级功能」两级分组，
- * 每个入口以网格磁贴呈现，图标与配色与 UBAA 保持一致。
+ * ## 2026-11-11 改版
+ *
+ * - **去掉「普通 / 高级」分组与外面的大卡片**：按钮直接铺在页面上，靠间距分组，
+ *   少一层容器、少一层边框，视线更集中在按钮本身。
+ * - **按钮改为大圆角矩形**（图标 + 标题 + 说明都在按钮内部），触控面积更大。
+ * - **删掉了全部分栏过渡动画**：分栏收放交给 HDS 自己走，页面不再逐帧补间宽度
+ *   （那段补间是前面所有"抖 / 跳 / 挤"的来源，本次一并移除）。
  *
  * ## 列数按「自身宽度」算，不按窗口断点
  *
- * 分栏后本页会活在 300~400vp 的列表栏里，此时窗口断点是 md / lg（6 列），但可用
- * 宽度只有手机那么多 —— 按窗口断点取列会把标题全挤成省略号（真机实测）。
- * 官方做法是 `BreakpointsReference.ComponentSize`，这里用 `onAreaChange` 拿实测宽度，
- * 按「单格不小于 84vp」反推列数。
+ * 分栏后本页活在 300~400vp 的列表栏里，此时窗口断点是 md / lg，但可用宽度只有手机那么多 ——
+ * 按窗口断点取列会把按钮挤扁（真机实测）。这里用 `onAreaChange` 拿实测宽度，
+ * 按「单个不小于 168vp」反推列数。
  */
 @Component
 export struct FeaturePage {
@@ -32,30 +35,16 @@ export struct FeaturePage {
   /** 当前是否分栏（由 MainPage 传入）：分栏时点条目是替换右栏而不是压栈。 */
   @Prop splitMode: boolean = false;
   /**
-   * 点条目前的回调。返回 true = 外层会立刻切成双列，此时要**延后一帧**再 push：
-   * 分栏先就位，详情才以 push 动画从右侧滑入；否则先 push 后切模式，看到的是
-   * 模式切换动画（内容区自左向右展开，像从左边挤出来）。
+   * 点条目前的回调：返回 true 表示外层会先切到分栏，此时要**延后一帧**再 push。
+   *
+   * 这不是动画，是分栏能用的前提：HDS 在已有目的页的情况下切 mode 会把它弹掉，
+   * 所以必须「先分栏、后 push」。
    */
   onWillOpen: () => boolean = () => false;
 
   @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
-  /**
-   * 缓存的「按单格 84vp 能放几列」：只在**跨列边界**时写状态。
-   *
-   * 分栏切换时宽度是动画过渡的，onAreaChange 会连续回调几十次；若每次都用宽度驱动
-   * 重建，网格会在动画里反复重排（肉眼可见的抖动）。缓存列数后动画期间只有跨边界
-   * 的那一次重建，观感才顺。条目数的适配（整除 / 不超条目）在渲染时再算。
-   */
-  /**
-   * 内容容器的**像素宽度**（我们自己驱动，0 表示还没量到、用 100%）。
-   *
-   * 为什么要这一层：分栏收放是 HDS 的原生动画，动画期间子节点不会逐帧重排，
-   * 栅格列数只能"动画结束瞬间"跳一档。把内容宽度做成自己的状态、用 animateTo 补间，
-   * 宽度就会逐帧真实变化 → 栅格每帧重排 → 磁贴是"连续挤窄"而不是"跳一下"。
-   */
-  @State private paneWidth: number = 0;
-  /** 逐帧补间器：分栏收放时驱动 paneWidth（属性动画不会重跑 build，列数会冻住）。 */
-  private paneTween: Tween = new Tween();
+  /** 实测可用宽度换算出的列数（0 = 还没量到，按窗口断点兜底）。 */
+  @State private columns: number = 0;
 
   private open(item: FeatureItem): void {
     if (item.route.length === 0) {
@@ -66,72 +55,47 @@ export struct FeaturePage {
       AppRouter.open(this.stack, item.route, this.splitMode);
       return;
     }
-    // 外层即将切分栏：等这一帧布局落定再 push，详情才会从右侧滑入
-    AppRouter.openAfterLayout(this.stack, item.route, this.splitMode);
+    // 外层即将切分栏：等布局落定再 push
+    setTimeout(() => {
+      AppRouter.open(this.stack, item.route, this.splitMode);
+    }, 32);
   }
 
-  /** 列数由 paneWidth 现算；还没量到（paneWidth=0）时按窗口断点估。 */
+  /** 列数模板：量到宽度就按实测算，否则按窗口断点估。 */
   private columnsTemplate(items: FeatureItem[]): string {
-    if (this.paneWidth <= 0) {
+    if (this.columns <= 0) {
       return tileColumnsTemplateFor(this.bp, items.length);
     }
-    // 列数**直接由 paneWidth 推导**，与内容列宽度同一个状态：
-    // 若改从"实测宽度"读，动画期间会慢一拍（面板已经 675，栅格还按 7 列排窄格子，
-    // 收尾时再一次性归位 —— 就是看到的那下"向左跳"）。
-    const usable: number = this.paneWidth - AppSize.pagePadding * 2;
-    let columns: number = Math.floor(usable / MIN_TILE_WIDTH);
-    if (columns < MIN_COLUMNS) {
-      columns = MIN_COLUMNS;
-    }
-    if (columns > MAX_COLUMNS) {
-      columns = MAX_COLUMNS;
-    }
-    return templateOfColumns(fitColumnsToItems(columns, items.length, MIN_COLUMNS));
-  }
-
-  @Builder
-  featureGrid(items: FeatureItem[]) {
-    Grid() {
-      ForEach(items, (item: FeatureItem) => {
-        GridItem() {
-          FeatureTile({
-            title: item.title,
-            icon: item.icon,
-            color: item.color,
-            onTileClick: () => {
-              this.open(item);
-            }
-          })
-        }
-      }, (item: FeatureItem) => item.title)
-    }
-    .columnsTemplate(this.columnsTemplate(items))
-    .columnsGap(AppSize.gapSmall)
-    .rowsGap(AppSize.gap)
-    .width('100%')
+    return templateOfColumns(fitColumnsToItems(this.columns, items.length, MIN_COLUMNS));
   }
 
   build() {
     Scroll() {
-      // 外面包一层满宽 Row：内容列在动画期间会比面板窄，直接放进 Scroll 会被**居中**，
-      // 于是收尾那一刻内容整体跳一下（实测左内边距从 20 变 55 再弹回 20）。
-      // Row 撑满宽度 + Start 对齐，内容列就永远贴左边。
-      Row() {
-        Column({ space: AppSize.gapLarge }) {
-        SectionCard({ title: '普通功能', subtitle: '课业相关的高频服务' }) {
-          this.featureGrid(basicFeatures())
+      Column({ space: AppSize.gap }) {
+        Grid() {
+          ForEach(allFeatures(), (item: FeatureItem) => {
+            GridItem() {
+              FeatureTile({
+                title: item.title,
+                desc: item.desc,
+                icon: item.icon,
+                color: item.color,
+                onTileClick: () => {
+                  this.open(item);
+                }
+              })
+            }
+          }, (item: FeatureItem) => item.title)
         }
-
-        SectionCard({ title: '高级功能', subtitle: '按需开放' }) {
-          this.featureGrid(advancedFeatures())
-        }
+        .columnsTemplate(this.columnsTemplate(allFeatures()))
+        .columnsGap(AppSize.gap)
+        .rowsGap(AppSize.gap)
+        .width('100%')
 
         Blank()
           .height(AppSize.contentBottomInset)
       }
-      // 宽度用像素、由我们自己补间（见下方 Scroll 的 onAreaChange）。
-      // 未量到（paneWidth=0）时先退回 100%，首帧不会塌成 0。
-      .width(this.paneWidth > 0 ? this.paneWidth : '100%')
+      .width('100%')
       .padding({
         left: AppSize.pagePadding,
         right: AppSize.pagePadding,
@@ -141,45 +105,33 @@ export struct FeaturePage {
         top: AppSize.destTopInset(topSafeInsetVp()),
         bottom: 0
       })
-      // maxWidth 兜底：动画期间内容列**不许宽过面板**。
-      .constraintSize({ minHeight: '100%', maxWidth: '100%' })
+      .constraintSize({ minHeight: '100%' })
       // 一级页内容整体上移一点（纯视觉位移，见 AppSize.contentTopLift）
       .translate({ y: -AppSize.contentTopLift })
-      }
-      .width('100%')
-      .justifyContent(FlexAlign.Start)
-      .alignItems(VerticalAlign.Top)
-      .constraintSize({ minHeight: '100%' })
+      // 量自身宽度换算列数（不做动画；分栏收放期间由 HDS 自己走，页面只跟随最终宽度）
+      .onAreaChange((oldArea: Area, newArea: Area) => {
+        const raw: Length = newArea.width;
+        const total: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
+        const usable: number = total - AppSize.pagePadding * 2;
+        let columns: number = Math.floor(usable / MIN_TILE_WIDTH);
+        if (columns < MIN_COLUMNS) {
+          columns = MIN_COLUMNS;
+        }
+        if (columns > MAX_COLUMNS) {
+          columns = MAX_COLUMNS;
+        }
+        if (columns !== this.columns) {
+          this.columns = columns;
+        }
+      })
     }
     .scrollBar(BarState.Off)
-    // 量**面板**宽度（Scroll 是 100% 宽），并用 animateTo 把内容列宽补间过去：
-    // HDS 的分栏收放是原生动画、子节点不逐帧重排，只有让内容宽度自己动起来，
-    // 栅格才会逐帧重排、磁贴"连续挤窄"而不是"跳一档"。
-    .onAreaChange((oldArea: Area, newArea: Area) => {
-      const raw: Length = newArea.width;
-      const total: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
-      if (Math.abs(total - this.paneWidth) > 0.5) {
-        // 与主页同一套时序，且**逐帧写状态**：这样栅格列数每帧都跟着宽度重算，
-        // 不会出现"宽度在变、列数冻住 → 磁贴挤在一起 → 收尾归位"的抽动。
-        const closing: boolean = total > this.paneWidth;
-        this.paneTween.run(
-          this.getUIContext(),
-          this.paneWidth,
-          total,
-          closing ? AppMotion.SPLIT_CLOSE_DURATION : AppMotion.SPLIT_DURATION,
-          closing ? AppMotion.SPLIT_CLOSE_DELAY : 0,
-          (value: number) => {
-            this.paneWidth = value;
-          }
-        );
-      }
-    })
     // 顶/底拖到边界时回弹（内容不足一屏也生效）
     .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     // 沉浸光感「三件套」之二 / 之三（配合 titleBar 的 enableComponentSafeArea）：
     //   clip(false)      —— 允许内容画到自身布局矩形之外；
     //   expandSafeArea() —— 绘制区延伸进标题栏声明的组件安全区。
-    // 缺了这两个，磁贴上滑时不会从标题栏底下钻进去，渐变模糊「没东西可糊」。
+    // 缺了这两个，按钮上滑时不会从标题栏底下钻进去，渐变模糊「没东西可糊」。
     .clip(false)
     .expandSafeArea()
     .width('100%')

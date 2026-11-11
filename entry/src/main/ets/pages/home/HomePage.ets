@@ -5,17 +5,14 @@ import { Toast } from '../../common/Toast';
 import { ApiError } from '../../network/ApiError';
 import { ApiService } from '../../network/ApiService';
 import { TokenStore } from '../../network/TokenStore';
-import { AppColor, AppFont, AppMotion, AppSize } from '../../components/AppTheme';
-import { Tween } from '../../common/Tween';
+import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import {
   EmptyView,
   ErrorView,
-  FeatureTile,
   LoadingView,
   SectionCard
 } from '../../components/CommonViews';
-import { FeatureItem, quickFeatures } from '../../components/FeatureRegistry';
 import {
   buildCourseDetail,
   buildSimpleDetail,
@@ -23,12 +20,7 @@ import {
   CourseDetailDialog
 } from '../../components/CourseDetailDialog';
 import { CourseClass, Exam, Term, TodayClass, Week, WeeklySchedule } from '../../model/ApiTypes';
-import {
-  KEY_BREAKPOINT,
-  fitColumnsToItems,
-  templateOfColumns,
-  tileColumnsTemplate
-} from '../../common/Breakpoint';
+import { KEY_BREAKPOINT } from '../../common/Breakpoint';
 
 /** 取今日课程时间串 `15:50-17:25` 里的开始时间（取不到返回空串）。 */
 function startTimeOf(item: TodayClass): string {
@@ -108,27 +100,10 @@ export struct HomePage {
   stack: NavPathStack = new NavPathStack();
   /** 当前是否分栏（由 MainPage 传入）：分栏时点条目是替换右栏而不是压栈。 */
   @Prop splitMode: boolean = false;
-  /** 点条目前的回调。返回 true = 外层会立刻切双列，此时延后一帧再 push，详情才从右侧滑入。 */
+  /** 点条目前的回调：返回 true 表示外层会先切到分栏，此时延后一帧再 push（分栏前提，非动画）。 */
   onWillOpen: () => boolean = () => false;
-
   /** 当前宽度断点：决定磁贴列数与是否双列并排。 */
   @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
-  /**
-   * 宽度够不够并排（≥720vp 才并排）。
-   *
-   * 竖屏（673vp）恒为 false —— 两块永远上下堆叠，只有宽度随分栏收放。
-   */
-  @State private wideEnough: boolean = false;
-  /** 两块区域的像素布局（都挂在同一个 .animation() 上补间）。 */
-  @State private blockLane: number = 0;
-  @State private todayHeightVp: number = 0;
-  @State private quickHeightVp: number = 0;
-  /** 是否已经量过自身宽度（false 时按窗口断点兜底）。非 @State：只做分支判断。 */
-  private measured: boolean = false;
-  /** 逐帧补间器（分栏收放时驱动 blockLane）。 */
-  private laneTween: Tween = new Tween();
-
-
   @State private loadState: LoadState = LoadState.LOADING;
   @State private errorMessage: string = '';
   @State private todayClasses: TodayClass[] = [];
@@ -151,11 +126,8 @@ export struct HomePage {
   private preloadedCourses: CourseClass[] = [];
   private preloadDone: boolean = false;
 
-  /** 各功能入口的使用次数；快捷入口按它排序（见 quickFeatures）。 */
-  @State private featureUsage: Record<string, number> = {};
 
   aboutToAppear(): void {
-    this.featureUsage = TokenStore.getFeatureUsage();
     this.loadHome(true);
     // 后台预加载本周课表（不阻塞首页渲染）—— 点课程时才有完整的详情可用
     this.preloadCourses();
@@ -317,34 +289,20 @@ export struct HomePage {
     return '晚上好';
   }
 
-  private userName(): string {
-    const session = TokenStore.getSession();
-    return session.userName.length > 0 ? session.userName : '同学';
-  }
-
-  private openFeature(item: FeatureItem): void {
-    if (item.route.length === 0) {
-      Toast.show(item.title + ' · 敬请期待');
-      return;
-    }
-    // 记一次使用：快捷入口按使用次数排序，回来时顺序已经是新的
-    TokenStore.recordFeatureUse(item.title);
-    this.featureUsage = TokenStore.getFeatureUsage();
-    this.openRoute(item.route);
-  }
-
-  /**
-   * 打开二级页。
-   *
-   * 未分栏且外层能分栏时，先让外层切到 Split、**下一帧**再 push ——
-   * 详情才是「分栏里的内容从右侧滑入」，而不是模式切换动画里的「自左向右展开」。
-   */
+  /** 打开二级页：能分栏就先让外层切分栏，再 push（HDS 不接受"先 push 后切 mode"）。 */
   private openRoute(route: string): void {
     if (this.splitMode || !this.onWillOpen()) {
       AppRouter.open(this.stack, route, this.splitMode);
       return;
     }
-    AppRouter.openAfterLayout(this.stack, route, this.splitMode);
+    setTimeout(() => {
+      AppRouter.open(this.stack, route, this.splitMode);
+    }, 32);
+  }
+
+  private userName(): string {
+    const session = TokenStore.getSession();
+    return session.userName.length > 0 ? session.userName : '同学';
   }
 
   /**
@@ -499,69 +457,6 @@ export struct HomePage {
     })
   }
 
-  /**
-   * 是否双列并排。
-   *
-   * 判据是本页**实测宽度**而不是窗口断点：分栏时本页会活在 320~400vp 的列表栏里，
-   * 窗口断点仍报 lg，按断点走双列会把两栏各压到 160vp（真机上文字全成省略号、
-   * 右侧还空一片）。720vp 以下一律单列，正好是「两栏各 340vp」的下限。
-   */
-  private twoColumnLayout(): boolean {
-    if (!this.measured) {
-      return this.bp === 'lg' || this.bp === 'xxl';
-    }
-    return this.wideEnough;
-  }
-
-  /** 快捷入口的列数：单格不小于 84vp；并排时按半栏算。列数由当前宽度现场推导。 */
-  private quickColumnsTemplate(): string {
-    const items: number = quickFeatures(this.featureUsage).length;
-    if (!this.measured || this.blockLane <= 0) {
-      return this.twoColumnLayout() ? '1fr 1fr 1fr 1fr' : tileColumnsTemplate(this.bp);
-    }
-    // 列数直接用**布局状态**算（blockLane 推出的卡片宽度），不读实测值：
-    // 读实测值会慢一拍 —— 宽度在动画、列数还停在上一步，收尾时一次性归位会"跳"一下。
-    // SectionCard 自带 16vp 内边距 ×2，先扣掉。
-    const cardWidth: number = this.blockWidth() - 32;
-    let columns: number = Math.floor(cardWidth / 84);
-    if (columns < 2) {
-      columns = 2;
-    }
-    if (columns > 8) {
-      columns = 8;
-    }
-    return templateOfColumns(fitColumnsToItems(columns, items, 2));
-  }
-
-  /** 单块宽度：并排各占一半（扣 16vp 间距），堆叠整宽。 */
-  private blockWidth(): number {
-    const gap: number = AppSize.gapLarge;
-    return this.wideEnough ? (this.blockLane - gap) / 2 : this.blockLane;
-  }
-
-  /** 「快捷入口」左边缘：并排接在「今日课程」右侧 + 间距，堆叠为 0。 */
-  private quickBlockX(): number {
-    return this.wideEnough ? (this.blockLane + AppSize.gapLarge) / 2 : 0;
-  }
-
-  /** 「快捷入口」上边缘：并排与「今日课程」齐平，堆叠落到其下方 + 间距。 */
-  private quickBlockY(): number {
-    return this.wideEnough ? 0 : this.todayHeightVp + AppSize.gapLarge;
-  }
-
-  /**
-   * 堆叠形态下，Stack 自适应高度（= 较高者）与真实需要（h1 + gap + h2）的差额。
-   *
-   * Stack 里第二块是绝对定位，不撑高父容器，所以差额用外层一个 Blank 补上；
-   * 并排时不需要补（两块等高对齐）。
-   */
-  private blocksExtraHeight(): number {
-    if (this.wideEnough || this.blockLane <= 0) {
-      return 0;
-    }
-    return Math.min(this.todayHeightVp, this.quickHeightVp) + AppSize.gapLarge;
-  }
-
   @Builder
   todaySection() {
     SectionCard({
@@ -583,30 +478,6 @@ export struct HomePage {
         }
         .width('100%')
       }
-    }
-  }
-
-  @Builder
-  quickSection() {
-    SectionCard({ title: '快捷入口', subtitle: '按最近使用排序' }) {
-      Grid() {
-        ForEach(quickFeatures(this.featureUsage), (item: FeatureItem) => {
-          GridItem() {
-            FeatureTile({
-              title: item.title,
-              icon: item.icon,
-              color: item.color,
-              onTileClick: () => {
-                this.openFeature(item);
-              }
-            })
-          }
-        }, (item: FeatureItem) => item.title)
-      }
-      .columnsTemplate(this.quickColumnsTemplate())
-      .columnsGap(AppSize.gapSmall)
-      .rowsGap(AppSize.gap)
-      .width('100%')
     }
   }
 
@@ -650,53 +521,8 @@ export struct HomePage {
               this.examBanner()
             }
 
-            // 「今日课程 | 快捷入口」：用**绝对定位 + 像素尺寸**自己排两块。
-            //
-            // 为什么不用 Flex/Row 收放：分栏收放是 HDS 的原生动画，动画期间页面拿不到
-            // 逐帧宽度、子节点也不会逐帧重排 —— 交给换行布局，底板就会"先出现在中间、
-            // 再跳到目标位"（关闭分栏时最明显）。
-            // 这里把宽度/位置/容器高全部算成像素，挂在同一个 `.animation()` 上：
-            // 数值属性可以插值，底板与内容就会连续地"从左边展开成并排"，不依赖面板重排。
-            Stack({ alignContent: Alignment.TopStart }) {
-              Column() {
-                this.todaySection()
-              }
-              .width(this.blockWidth())
-              .alignItems(HorizontalAlign.Start)
-              .onAreaChange((oldArea: Area, newArea: Area) => {
-                const raw: Length = newArea.height;
-                const measured: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
-                if (Math.abs(measured - this.todayHeightVp) > 0.5) {
-                  this.todayHeightVp = measured;
-                }
-              })
-
-              Column() {
-                this.quickSection()
-              }
-              .width(this.blockWidth())
-              .alignItems(HorizontalAlign.Start)
-              // 用 margin 而不是 translate：translate 只改绘制位置、**布局盒留在原处**，
-              // 命中区域跟着布局盒走 → 磁贴画在下面却点不到（真机踩过，竖屏完全点不动）。
-              // margin 是布局属性：命中区域、滚动范围、动画补间三者都对得上。
-              .margin({ left: this.quickBlockX(), top: this.quickBlockY() })
-              .onAreaChange((oldArea: Area, newArea: Area) => {
-                const rawH: Length = newArea.height;
-                const h: number = typeof rawH === 'number' ? rawH : parseFloat(rawH.toString());
-                if (Math.abs(h - this.quickHeightVp) > 0.5) {
-                  this.quickHeightVp = h;
-                }
-              })
-            }
-            .width('100%')
-            // 高度必须自适应（取较高那块），不能由状态反推 —— 否则"高度依赖子节点测量、
-            // 子节点又依赖高度"会死锁成 0 高（实测整页只剩一个图标）。
-            // 堆叠时第二块在下方，超出的那部分尺寸由下面的 Blank 补。
-
-            // 堆叠时补足"两块高度之和 + 间距"与 Stack 自适应高度之间的差额
-            Blank()
-              .width('100%')
-              .height(this.blocksExtraHeight())
+            // 今日课程（快捷入口已移除：功能集中在功能页，主页只留「今天要上什么课」）
+            this.todaySection()
           }
 
           // 为悬浮底栏预留高度（barOverlap 模式下内容会被底栏覆盖）
@@ -714,38 +540,6 @@ export struct HomePage {
           bottom: 0
         })
         .constraintSize({ minHeight: '100%' })
-        // 量自身可用宽度，换算成两个量化值：够不够双列、快捷入口放几列。
-        // 只在量化值变化时写状态，避免分栏动画期间反复重排。
-        .onAreaChange((oldArea: Area, newArea: Area) => {
-          const raw: Length = newArea.width;
-          const total: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
-          const usable: number = total - AppSize.pagePadding * 2;
-          this.measured = true;
-          const wide: boolean = usable >= 720;
-          const wideChanged: boolean = wide !== this.wideEnough;
-          const laneChanged: boolean = Math.abs(usable - this.blockLane) > 0.5;
-          // 两块几何**只在宽度真的变了时补间**，且一律走显式 animateTo：
-          //  - 隐式 `.animation()` 对"布局回调里触发的属性变更"不生效（实测 1200ms 仍瞬切）；
-          //  - 直接赋值（旧代码在宽度变化时就是直接赋）会让底板在竖屏收放时"跳一下"。
-          if (wideChanged || laneChanged) {
-            // 必须**逐帧写状态**（Tween），不能用 animateTo 补间属性：
-            // 属性动画不重跑 build()，栅格列数这类派生值会冻在旧值 → 磁贴挤在一起、
-            // 收尾一次性归位（真机看到的"抖一下"）。Tween 每帧写 blockLane，
-            // wideEnough 也由同一个值派生，宽度与列数永远同帧同源。
-            const closing: boolean = usable > this.blockLane;
-            this.laneTween.run(
-              this.getUIContext(),
-              this.blockLane,
-              usable,
-              closing ? AppMotion.SPLIT_CLOSE_DURATION : AppMotion.SPLIT_DURATION,
-              closing ? AppMotion.SPLIT_CLOSE_DELAY : 0,
-              (value: number) => {
-                this.blockLane = value;
-                this.wideEnough = value >= 720;
-              }
-            );
-          }
-        })
       }
       .scrollBar(BarState.Off)
       // 顶/底拖到边界时回弹（内容不足一屏也生效）

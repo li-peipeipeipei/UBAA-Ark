@@ -77,27 +77,6 @@ export class AppRouter {
     AppRouter.push(stack, name, param);
   }
 
-  /**
-   * 延后一帧多一点再打开二级页（分栏切换专用）。
-   *
-   * 为什么要延后：分栏是父组件切 `mode` 得来的，同一帧既切 mode 又 push，内容栏会和详情
-   * 一起新建，push 动画被吞掉（横屏大窗口下必然瞬显）。
-   *
-   * ⚠️ 用定时器而**不是** `postFrameCallback`：帧回调只在"真的排了新帧"时才触发，
-   * 平板竖屏下点一下未必有下一帧在排队，于是回调永不触发、页面表现成"点了没反应"
-   * （真机踩过）。定时器是确定性的，32ms 约等于两帧，足够让分栏那次布局与渲染落地。
-   */
-  static openAfterLayout(stack: NavPathStack, name: string, splitMode: boolean): void {
-    setTimeout(() => {
-      AppRouter.open(stack, name, splitMode);
-    }, 32);
-  }
-
-  /** 二级页返回前通知外层：立刻收起分栏（让左栏在 pop 的同时向右展开，而不是等 pop 结束）。 */
-  static requestSplitCollapse(): void {
-    AppStorage.setOrCreate('ubaaSplitCollapse', Date.now());
-  }
-
   static back(stack: NavPathStack): void {
     stack.pop();
   }

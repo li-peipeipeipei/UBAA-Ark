@@ -282,30 +282,3 @@ export class ModuleColor {
     return AppColor.accentPink;
   }
 }
-
-/**
- * 动效令牌。
- *
- * 分栏收放时页面内部的"重排动画"统一用同一套时长/曲线 —— 主页（两块宽度与位移）和
- * 功能页（栅格随宽度重排）必须一致，否则两个页签切换的观感会打架。
- */
-export class AppMotion {
-  /**
-   * 分栏切换时**页面内部重排**的时长（ms）。
-   *
-   * 必须明显短于 HDS 面板动画（实测约 300ms）：页面内容比面板更早收窄/展宽，
-   * 中间帧里内容永远"比面板窄"，不会横溢到隔壁详情栏上（等长或更长必然溢出）。
-   * 短一点在观感上也更利落 —— 面板在动，内容先落位。
-   */
-  static readonly SPLIT_DURATION: number = 180;
-
-  /**
-   * 关闭分栏（返回）时页面内部归位的时长与延迟（ms）。
-   *
-   * 目标：**主页两块归位完成的时刻 = 详情页消失的时刻**。
-   * 实测（竖屏逐帧）：HDS 的 pop + 面板展开约 180ms 就走完（100ms 时还在滑出，180ms 已空），
-   * 所以取 20 + 160 ≈ 180 收尾；先等一小段是为了让内容不要比面板先长、横溢到正在退出的详情上。
-   */
-  static readonly SPLIT_CLOSE_DELAY: number = 20;
-  static readonly SPLIT_CLOSE_DURATION: number = 160;
-}
