@@ -153,12 +153,21 @@ export struct FeaturePage {
       const raw: Length = newArea.width;
       const total: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
       if (Math.abs(total - this.paneWidth) > 0.5) {
-        this.getUIContext().animateTo({
-          duration: AppMotion.SPLIT_DURATION,
-          curve: Curve.Friction
-        }, () => {
-          this.paneWidth = total;
-        });
+        // 与主页同一套时序：变宽 = 关闭分栏，等一小段再补间，让栅格归位和详情消失同时收尾。
+        const closing: boolean = total > this.paneWidth;
+        const run = (): void => {
+          this.getUIContext().animateTo({
+            duration: closing ? AppMotion.SPLIT_CLOSE_DURATION : AppMotion.SPLIT_DURATION,
+            curve: Curve.Friction
+          }, () => {
+            this.paneWidth = total;
+          });
+        };
+        if (closing) {
+          setTimeout(run, AppMotion.SPLIT_CLOSE_DELAY);
+        } else {
+          run();
+        }
       }
     })
     // 顶/底拖到边界时回弹（内容不足一屏也生效）

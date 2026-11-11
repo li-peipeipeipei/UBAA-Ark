@@ -747,15 +747,25 @@ export struct HomePage {
           //  - 隐式 `.animation()` 对"布局回调里触发的属性变更"不生效（实测 1200ms 仍瞬切）；
           //  - 直接赋值（旧代码在宽度变化时就是直接赋）会让底板在竖屏收放时"跳一下"。
           if (wideChanged || laneChanged) {
-            this.getUIContext().animateTo({
-              duration: AppMotion.SPLIT_DURATION,
-              curve: Curve.Friction
-            }, () => {
-              if (wideChanged) {
-                this.wideEnough = wide;
-              }
-              this.blockLane = usable;
-            });
+            // 方向决定时序：变宽 = 关闭分栏。关闭时要**等一小段再补间**，
+            // 让"两块归位完成"和"详情页消失"落在同一时刻（见 AppMotion 的注释）。
+            const closing: boolean = usable > this.blockLane;
+            const run = (): void => {
+              this.getUIContext().animateTo({
+                duration: closing ? AppMotion.SPLIT_CLOSE_DURATION : AppMotion.SPLIT_DURATION,
+                curve: Curve.Friction
+              }, () => {
+                if (wideChanged) {
+                  this.wideEnough = wide;
+                }
+                this.blockLane = usable;
+              });
+            };
+            if (closing) {
+              setTimeout(run, AppMotion.SPLIT_CLOSE_DELAY);
+            } else {
+              run();
+            }
           }
           // 列数不再缓存，交给 quickColumnsTemplate() 用卡片自身宽度现算
           if (Math.abs(usable - this.laneWidth) > 0.5) {
