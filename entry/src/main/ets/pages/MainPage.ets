@@ -597,6 +597,7 @@ export struct MainPage {
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
         .mode(this.splitFor(0) ? NavigationMode.Split : NavigationMode.Stack)
+        .enableModeChangeAnimation(true)
         .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
@@ -617,6 +618,7 @@ export struct MainPage {
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
         .mode(this.splitFor(1) ? NavigationMode.Split : NavigationMode.Stack)
+        .enableModeChangeAnimation(true)
         .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
@@ -641,6 +643,7 @@ export struct MainPage {
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
         .mode(this.splitFor(2) ? NavigationMode.Split : NavigationMode.Stack)
+        .enableModeChangeAnimation(true)
         .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
@@ -668,6 +671,7 @@ export struct MainPage {
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
         .mode(this.splitFor(3) ? NavigationMode.Split : NavigationMode.Stack)
+        .enableModeChangeAnimation(true)
         .navBarWidth(navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
