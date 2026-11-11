@@ -605,29 +605,30 @@ export struct HomePage {
               this.examBanner()
             }
 
-            // 宽屏（侧边导航形态）改「今日课程 | 快捷入口」双列并排，
-            // 窄屏与平板竖屏保持单列上下堆叠（官方「重复布局」用法：
-            // 大屏把结构相似、彼此独立的模块横向铺开，减少纵向滚动）。
-            if (this.twoColumnLayout()) {
-              Row({ space: AppSize.gapLarge }) {
-                Column() {
-                  this.todaySection()
-                }
-                .layoutWeight(1)
-                .alignItems(HorizontalAlign.Start)
-
-                Column() {
-                  this.quickSection()
-                }
-                .layoutWeight(1)
-                .alignItems(HorizontalAlign.Start)
+            // 「今日课程 | 快捷入口」：宽屏并排、窄屏堆叠。
+            //
+            // 不用 if/else 切 Row↔Column —— 那是**结构切换**，旧节点被销毁、新节点直接
+            // 出现在终态位置，无论外面包不包 animateTo 都是硬切（实测：分栏切换时这两块
+            // 会瞬间跳一下）。这里改成**永远是同一批节点**，只让宽度在 100% ↔ 48.5% 之间
+            // 变，配合隐式动画，宽度被插值、换行在动画途中自然发生，观感是两块平滑收窄。
+            Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween,
+              alignItems: ItemAlign.Start }) {
+              Column() {
+                this.todaySection()
               }
-              .width('100%')
-              .alignItems(VerticalAlign.Top)
-            } else {
-              this.todaySection()
-              this.quickSection()
+              .width(this.wideEnough ? '48.5%' : '100%')
+              .alignItems(HorizontalAlign.Start)
+
+              Column() {
+                this.quickSection()
+              }
+              .width(this.wideEnough ? '48.5%' : '100%')
+              .alignItems(HorizontalAlign.Start)
+              // 堆叠时补上横向并排时由 space 承担的间距
+              .margin({ top: this.wideEnough ? 0 : AppSize.gapLarge })
             }
+            .width('100%')
+            .animation({ duration: 260, curve: Curve.Friction })
           }
 
           // 为悬浮底栏预留高度（barOverlap 模式下内容会被底栏覆盖）
@@ -654,6 +655,8 @@ export struct HomePage {
           this.measured = true;
           const wide: boolean = usable >= 720;
           if (wide !== this.wideEnough) {
+            // 只翻这个布尔：两块本身是同一批节点，宽度在 100% ↔ 48.5% 之间变，
+            // 由下方 Flex 的隐式 `.animation()` 负责补间（这里再套 animateTo 会双重动画）。
             this.wideEnough = wide;
           }
           // 双列时每栏只有半宽；SectionCard 另有 16vp 内边距 ×2
