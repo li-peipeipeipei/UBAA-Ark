@@ -1,4 +1,22 @@
 import { AppColor, AppFont, AppSize } from './AppTheme';
+import { MaterialCardLayer } from './MaterialCardLayer';
+import { immersiveMaterialActive } from '../common/SystemMaterial';
+
+/**
+ * 材质层之上那层主色的不透明度。
+ *
+ * 太低（0.62）时真机上看得出两个问题：色相被材质压暗、按钮像蒙了一层灰；
+ * 太高又看不见材质的通透感。0.82 是「色相鲜亮 + 边缘与高光仍透出材质」的折中点。
+ */
+const FEATURE_TILE_COLOR_ALPHA: number = 0.82;
+
+/**
+ * 功能按钮圆角（vp）。
+ *
+ * 按钮是大块面（横屏 172×216），沿用 16 会显得方硬；28 与「B 端大卡片」的观感一致。
+ * ⚠️ 材质承载层的 `layerRadius` 必须与它完全一致，否则会在按钮里露出内嵌的一圈小圆角边框。
+ */
+const FEATURE_TILE_RADIUS: number = 28;
 
 /**
  * 图标来源类型。
@@ -167,31 +185,63 @@ export struct SectionCard {
 export struct FeatureTile {
   title: string = '';
   icon: Resource = $r('app.media.ic_apps');
-  /** 整块底色（每个功能一种强调色）。 */
+  /** 整块主色（每个功能一种强调色）。 */
   color: Resource = $r('app.color.brand');
   onTileClick: () => void = () => {};
 
-  build() {
-    Column({ space: 10 }) {
-      Image(this.icon)
-        .width(30)
-        .height(30)
-        .fillColor(Color.White)
-        .draggable(false)
+  /** 沉浸材质是否可用（只查一次；不可用时退化为不透明纯色）。 */
+  private readonly materialActive: boolean = immersiveMaterialActive(false);
 
-      Text(this.title)
-        .fontSize(AppFont.caption)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(Color.White)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
+  build() {
+    // 三层叠放：系统材质（底） → 半透明主色层 → 图标与文字。
+    //
+    // 为什么底色必须分层、不能直接给内容容器上色：沉浸光感的视觉层级在
+    // `backgroundColor` **之下**，容器一旦有不透明底色就把材质整块盖死。这里把
+    // 「颜色」单独拎成一层、用 opacity 让它半透明，材质才透得出来 —— 观感是彩色玻璃，
+    // 而不是「彩色卡纸上贴了一层灰」。
+    Stack() {
+      if (this.materialActive) {
+        MaterialCardLayer({ layerRadius: FEATURE_TILE_RADIUS, layerShadow: false })
+      }
+
+      // ⚠️ 尺寸一律用 `LayoutPolicy.matchParent`，不能写 '100%'：
+      // Stack 子节点的百分比按**父级可用尺寸**解析，而本按钮的高度是由 aspectRatio 算出来的，
+      // 可用尺寸就是「网格那一格的剩余空间」—— 写百分比会把按钮自己顶大。
+      // 同层的 MaterialCardLayer 用的也是 matchParent，兄弟层必须同一种写法。
+      Column()
+        .width(LayoutPolicy.matchParent)
+        .height(LayoutPolicy.matchParent)
+        .borderRadius(FEATURE_TILE_RADIUS)
+        .backgroundColor(this.color)
+        // 材质可用时留出通透感；不可用（低版本 / 应用级关闭）时退成不透明纯色，
+        // 否则会直接漏出页面背景，按钮的色相就没了。
+        .opacity(this.materialActive ? FEATURE_TILE_COLOR_ALPHA : 1)
+
+      Column({ space: 12 }) {
+        Image(this.icon)
+          .width(40)
+          .height(40)
+          .fillColor(Color.White)
+          .opacity(0.9)
+          .draggable(false)
+
+        Text(this.title)
+          .fontSize(AppFont.subtitle)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(Color.White)
+          .opacity(0.95)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .width(LayoutPolicy.matchParent)
+      .height(LayoutPolicy.matchParent)
+      .justifyContent(FlexAlign.Center)
+      // 内容层不参与命中：让点击落到外层 Stack 上（材质层本身 hitTestBehavior 已是 None）
+      .hitTestBehavior(HitTestMode.None)
     }
     .width('100%')
     // 竖长：宽 / 高 = 0.8，高度比宽度大 25%
     .aspectRatio(0.8)
-    .justifyContent(FlexAlign.Center)
-    .borderRadius(AppSize.cardRadius)
-    .backgroundColor(this.color)
     // 平板外接键鼠 / 2in1 触控板上，按钮需要悬停反馈才「像个按钮」（官方多设备交互建议）
     .hoverEffect(HoverEffect.Highlight)
     .onClick(() => {

@@ -109,7 +109,9 @@ export function isSplitBreakpoint(bp: string): boolean {
  * 既显松又白吃正文宽度；现在取「内容 + 一圈呼吸」的 128 / 144。
  */
 export function sideNavWidthOf(bp: string): number {
-  return bp === 'xxl' ? 144 : 128;
+  // 侧栏宽度跟着按钮走：按钮已改成「贴合内宽的胶囊」（图标 + 文字 + 左右各 14vp ≈ 96vp），
+  // 栏宽只需再留两侧各 8vp 内边距 —— 原来固定的 128 / 144 会空出一大截。
+  return bp === 'xxl' ? 124 : 112;
 }
 
 /**
