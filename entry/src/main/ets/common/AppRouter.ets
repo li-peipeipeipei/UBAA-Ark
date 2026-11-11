@@ -1,4 +1,3 @@
-import { FrameCallback, UIContext } from '@kit.ArkUI';
 
 /**
  * 路由表。
@@ -75,17 +74,19 @@ export class AppRouter {
   }
 
   /**
-   * 等外层把「分栏布局」布好之后再打开二级页。
+   * 延后一帧多一点再打开二级页（分栏切换专用）。
    *
-   * 为什么不能让调用方直接 `push`：分栏是父组件切 `mode` 得来的，同一帧里既切 mode
-   * 又 push，内容栏会和详情一起新建，push 动画被吞掉（真机实测：横屏大窗口下必然是
-   * 瞬显，竖屏反而有动画）。隔两帧（一次布局 + 一次渲染）再 push，详情才是「已经
-   * 存在的内容栏里进来的页面」，播放自右向左的滑入动画。
+   * 为什么要延后：分栏是父组件切 `mode` 得来的，同一帧既切 mode 又 push，内容栏会和详情
+   * 一起新建，push 动画被吞掉（横屏大窗口下必然瞬显）。
    *
-   * 用帧回调而不是 setTimeout：跟着渲染节奏走，不靠毫秒数猜。
+   * ⚠️ 用定时器而**不是** `postFrameCallback`：帧回调只在"真的排了新帧"时才触发，
+   * 平板竖屏下点一下未必有下一帧在排队，于是回调永不触发、页面表现成"点了没反应"
+   * （真机踩过）。定时器是确定性的，32ms 约等于两帧，足够让分栏那次布局与渲染落地。
    */
-  static openAfterLayout(ui: UIContext, stack: NavPathStack, name: string, splitMode: boolean): void {
-    ui.postFrameCallback(new DeferredOpen(ui, stack, name, splitMode, 2));
+  static openAfterLayout(stack: NavPathStack, name: string, splitMode: boolean): void {
+    setTimeout(() => {
+      AppRouter.open(stack, name, splitMode);
+    }, 32);
   }
 
   static back(stack: NavPathStack): void {
@@ -98,36 +99,4 @@ export enum LoadState {
   LOADING = 0,
   SUCCESS = 1,
   ERROR = 2
-}
-
-/**
- * 「等 N 帧后再打开二级页」的帧回调。
- *
- * ArkUI 的 `postFrameCallback` 收的是 `FrameCallback`（抽象类），不能直接传箭头函数，
- * 所以这里包一个小类；剩余帧数为 0 时才真正打开。
- */
-class DeferredOpen extends FrameCallback {
-  private ui: UIContext;
-  private stack: NavPathStack;
-  private route: string;
-  private splitMode: boolean;
-  private remaining: number;
-
-  constructor(ui: UIContext, stack: NavPathStack, route: string, splitMode: boolean, frames: number) {
-    super();
-    this.ui = ui;
-    this.stack = stack;
-    this.route = route;
-    this.splitMode = splitMode;
-    this.remaining = frames;
-  }
-
-  onFrame(frameTimeInNano: number): void {
-    this.remaining = this.remaining - 1;
-    if (this.remaining > 0) {
-      this.ui.postFrameCallback(this);
-      return;
-    }
-    AppRouter.open(this.stack, this.route, this.splitMode);
-  }
 }

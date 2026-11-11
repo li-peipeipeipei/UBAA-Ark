@@ -65,7 +65,7 @@ export struct FeaturePage {
       return;
     }
     // 外层即将切分栏：等这一帧布局落定再 push，详情才会从右侧滑入
-    AppRouter.openAfterLayout(this.getUIContext(), this.stack, item.route, this.splitMode);
+    AppRouter.openAfterLayout(this.stack, item.route, this.splitMode);
   }
 
   /** 已有实测列数就用它；还没量到（columns=0）时按窗口断点估。 */

@@ -151,6 +151,14 @@ export struct MainPage {
    * 栈深一旦 > 0 就会被清掉（`updateStackDepth`），不留残余。
    */
   @State private awaitSplit: boolean[] = [false, false, false, false];
+  /** 「收回分栏」的防抖定时器（每个页签一个，-1 表示没有在等待）。 */
+  private collapseTimer: number[] = [-1, -1, -1, -1];
+  /**
+   * 最新的原始栈深（不做防抖）。
+   * 防抖回调里必须查它、而不是查 `stackDepth`（那是**已应用**的值，此刻还没归零，
+   * 直接查会让"仍然是 0 吗"永远为假、分栏再也不收回 —— 实测返回后左侧一直窄着）。
+   */
+  private liveDepth: number[] = [0, 0, 0, 0];
 
   aboutToAppear(): void {
     // 冷启动路径：AppStorage 里已有值时，这里把它吃掉
@@ -182,11 +190,32 @@ export struct MainPage {
 
   /** 只在深度真的变化时整体替换数组 —— @State 才会通知重建（进而触发 mode 切换动画）。 */
   private updateStackDepth(index: number, depth: number): void {
-    if (depth > 0 && this.awaitSplit[index]) {
-      const cleared: boolean[] = this.awaitSplit.slice();
-      cleared[index] = false;
-      this.awaitSplit = cleared;
+    this.liveDepth[index] = depth;
+    if (depth > 0) {
+      this.cancelCollapse(index);
+      if (this.awaitSplit[index]) {
+        const cleared: boolean[] = this.awaitSplit.slice();
+        cleared[index] = false;
+        this.awaitSplit = cleared;
+      }
+      this.applyDepth(index, depth);
+      return;
     }
+    // 归零要**防抖**：didShow 在进栈/换条目的瞬间可能报到一次瞬时的 0，若立刻收回分栏，
+    // 面板会闪回整页、连带把刚打开的目的页一起弹掉（竖屏实测：点一下入栈后马上被弹回）。
+    // 等一会儿仍是 0 再真正收回，中间的抖动直接忽略。
+    if (this.collapseTimer[index] === -1) {
+      this.collapseTimer[index] = setTimeout(() => {
+        this.collapseTimer[index] = -1;
+        if (this.liveDepth[index] !== 0) {
+          return;
+        }
+        this.applyDepth(index, 0);
+      }, 160);
+    }
+  }
+
+  private applyDepth(index: number, depth: number): void {
     if (this.stackDepth[index] === depth) {
       return;
     }
@@ -194,6 +223,14 @@ export struct MainPage {
     next[index] = depth;
     this.stackDepth = next;
     Logger.info('LAYOUT 页签' + index + ' 栈深=' + depth);
+  }
+
+  private cancelCollapse(index: number): void {
+    const timer: number = this.collapseTimer[index];
+    if (timer !== -1) {
+      clearTimeout(timer);
+      this.collapseTimer[index] = -1;
+    }
   }
 
   /** 该页签是否参与分栏（课表不参与：周网格劈一半没法看）。 */

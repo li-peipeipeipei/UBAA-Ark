@@ -150,7 +150,7 @@ export struct MinePage {
       AppRouter.open(this.stack, route, this.splitMode);
       return;
     }
-    AppRouter.openAfterLayout(this.getUIContext(), this.stack, route, this.splitMode);
+    AppRouter.openAfterLayout(this.stack, route, this.splitMode);
   }
 
   build() {

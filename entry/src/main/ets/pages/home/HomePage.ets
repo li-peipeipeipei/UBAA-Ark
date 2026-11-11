@@ -360,7 +360,7 @@ export struct HomePage {
       AppRouter.open(this.stack, route, this.splitMode);
       return;
     }
-    AppRouter.openAfterLayout(this.getUIContext(), this.stack, route, this.splitMode);
+    AppRouter.openAfterLayout(this.stack, route, this.splitMode);
   }
 
   /**
@@ -690,9 +690,10 @@ export struct HomePage {
               }
               .width(this.blockWidth())
               .alignItems(HorizontalAlign.Start)
-              // 用 translate 而不是 position：position 不参与属性动画（左边缘会瞬移），
-              // translate 是可插值属性，才能和宽度一起连续移动。
-              .translate({ x: this.quickBlockX(), y: this.quickBlockY() })
+              // 用 margin 而不是 translate：translate 只改绘制位置、**布局盒留在原处**，
+              // 命中区域跟着布局盒走 → 磁贴画在下面却点不到（真机踩过，竖屏完全点不动）。
+              // margin 是布局属性：命中区域、滚动范围、动画补间三者都对得上。
+              .margin({ left: this.quickBlockX(), top: this.quickBlockY() })
               .onAreaChange((oldArea: Area, newArea: Area) => {
                 const rawW: Length = newArea.width;
                 const w: number = typeof rawW === 'number' ? rawW : parseFloat(rawW.toString());
