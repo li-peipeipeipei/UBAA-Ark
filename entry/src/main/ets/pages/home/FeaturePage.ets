@@ -17,9 +17,17 @@ import { KEY_BREAKPOINT, templateOfColumns, tileColumnsTemplateFor } from '../..
  * 取 172 是实测值：横屏内容宽 925 → 5 列；竖屏 635 → 3 列。
  */
 const TILE_TARGET_WIDTH: number = 172;
-/** 列数上下限。 */
+/** 列数下限（再少就没法看了）。上限放开：**一排多少个由目标宽度决定**，不设死。 */
 const MIN_COLUMNS: number = 2;
-const MAX_COLUMNS: number = 6;
+const MAX_COLUMNS: number = 10;
+/**
+ * 圆角半径 ÷ 块宽 的固定比例。
+ *
+ * 块宽随设备 / 横竖屏变化（横屏 5 列 175vp、竖屏 3 列 194vp、大屏可能 8 列），
+ * 圆角固定的话视觉上大块「角锐」、小块「角圆」。按比例走才一致。
+ * 取 0.16：175vp 的块算出 28vp 圆角，就是之前定下的那个比例。
+ */
+const TILE_CORNER_SCALE: number = 0.16;
 
 /**
  * 功能页：一层平铺的功能按钮网格。
@@ -45,6 +53,8 @@ export struct FeaturePage {
   @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
   /** 实测可用宽度换算出的列数（0 = 还没量到，按窗口断点兜底）。 */
   @State private columns: number = 0;
+  /** 块的圆角（vp）：块宽 × TILE_CORNER_SCALE，与列数同一帧算出，同源。 */
+  @State private tileRadius: number = 28;
 
   private open(item: FeatureItem): void {
     if (item.route.length === 0) {
@@ -85,6 +95,7 @@ export struct FeaturePage {
                 title: item.title,
                 icon: item.icon,
                 color: item.color,
+                radius: this.tileRadius,
                 onTileClick: () => {
                   this.open(item);
                 }
@@ -126,8 +137,14 @@ export struct FeaturePage {
         if (columns > MAX_COLUMNS) {
           columns = MAX_COLUMNS;
         }
+        // 块宽与圆角同帧算出：圆角 = 块宽 × 固定比例（列数变了块宽就变了）
+        const blockWidth: number = (usable - (columns - 1) * AppSize.gap) / columns;
+        const radius: number = Math.round(blockWidth * TILE_CORNER_SCALE);
         if (columns !== this.columns) {
           this.columns = columns;
+        }
+        if (Math.abs(radius - this.tileRadius) > 1) {
+          this.tileRadius = radius;
         }
       })
     }

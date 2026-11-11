@@ -11,12 +11,10 @@ import { immersiveMaterialActive } from '../common/SystemMaterial';
 const FEATURE_TILE_COLOR_ALPHA: number = 0.82;
 
 /**
- * 功能按钮圆角（vp）。
- *
- * 按钮是大块面（横屏 172×216），沿用 16 会显得方硬；28 与「B 端大卡片」的观感一致。
- * ⚠️ 材质承载层的 `layerRadius` 必须与它完全一致，否则会在按钮里露出内嵌的一圈小圆角边框。
+ * 功能按钮圆角的默认值（vp）：还没量到块宽时的兜底。
+ * 实际圆角由 FeaturePage 按「块宽 × 固定比例」算好后传进来，保证块变大圆角也变大。
  */
-const FEATURE_TILE_RADIUS: number = 28;
+const FEATURE_TILE_RADIUS_FALLBACK: number = 28;
 
 /**
  * 图标来源类型。
@@ -187,6 +185,13 @@ export struct FeatureTile {
   icon: Resource = $r('app.media.ic_apps');
   /** 整块主色（每个功能一种强调色）。 */
   color: Resource = $r('app.color.brand');
+  /**
+   * 圆角半径（vp），由父级按「块宽 × 固定比例」算好传入。
+   *
+   * 不能写死：块的宽度随设备 / 横竖屏变化（横屏 5 列、竖屏 3 列），圆角固定的话
+   * 大块看着「角很锐」、小块看着「角很圆」。按比例走，视觉一致。
+   */
+  radius: number = FEATURE_TILE_RADIUS_FALLBACK;
   onTileClick: () => void = () => {};
 
   /** 沉浸材质是否可用（只查一次；不可用时退化为不透明纯色）。 */
@@ -201,7 +206,7 @@ export struct FeatureTile {
     // 而不是「彩色卡纸上贴了一层灰」。
     Stack() {
       if (this.materialActive) {
-        MaterialCardLayer({ layerRadius: FEATURE_TILE_RADIUS, layerShadow: false })
+        MaterialCardLayer({ layerRadius: this.radius, layerShadow: false })
       }
 
       // ⚠️ 尺寸一律用 `LayoutPolicy.matchParent`，不能写 '100%'：
@@ -211,7 +216,7 @@ export struct FeatureTile {
       Column()
         .width(LayoutPolicy.matchParent)
         .height(LayoutPolicy.matchParent)
-        .borderRadius(FEATURE_TILE_RADIUS)
+        .borderRadius(this.radius)
         .backgroundColor(this.color)
         // 材质可用时留出通透感；不可用（低版本 / 应用级关闭）时退成不透明纯色，
         // 否则会直接漏出页面背景，按钮的色相就没了。

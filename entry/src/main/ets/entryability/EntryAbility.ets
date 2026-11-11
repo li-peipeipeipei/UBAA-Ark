@@ -151,6 +151,9 @@ export default class EntryAbility extends UIAbility {
   }
 
   onConfigurationUpdate(newConfig: Configuration): void {
+    // 诊断：横竖屏切换走这里 = 能力没被重启（只是配置更新）；若这条不出现而 onCreate
+    // 重跑，说明能力层重启了，那时 AppStorage 仍保留、模块级单例仍在，页面状态不该丢。
+    Logger.info('EntryAbility onConfigurationUpdate');
     // 深浅色 / 语言变化：同步状态栏内容色与全局标记
     const newColorMode: ConfigurationConstant.ColorMode = newConfig.colorMode === undefined
       ? ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT

@@ -90,7 +90,7 @@ export struct MainPage {
    */
   @StorageLink(KEY_MAIN_TAB_INDEX) private currentIndex: number = 0;
   /** 宽度断点（AppStorage 由 ImmersiveUtil 的 windowSizeChange 写入）。 */
-  @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
+  @StorageProp(KEY_BREAKPOINT) @Watch('onBreakpointChange') private bp: string = 'sm';
 
   /**
    * 桌面卡片带过来的页签请求（`EntryAbility.onCreate` / `onNewWant` 写入 AppStorage）。
@@ -111,6 +111,24 @@ export struct MainPage {
   onLogout: () => void = () => {};
 
   private controller: HdsTabsController = new HdsTabsController();
+  /**
+   * HdsTabs 是否已经初始化过。
+   *
+   * **HdsTabs 被创建时会立刻回调一次 `onChange(0)`**（报「当前选中项是第 0 个」），
+   * 这不是用户点的。横竖屏切换正好踩在这一点上：竖屏新建 HdsTabs → onChange(0)
+   * 把 `currentIndex` 打回主页 —— 看起来就是「转个屏，APP 回到主页了」。
+   * 所以首次 onChange 不当作用户切换，而是让 Tabs 去跟随已保存的页签。
+   */
+  private tabsReady: boolean = false;
+
+  /**
+   * 断点变化 = 布局分支切换（侧边栏 ↔ 底部页签），两棵不同的组件树，
+   * 竖屏那棵里的 `HdsTabs` 是**新创建**的，会再报一次 `onChange(0)`。
+   * 把初始化标记归零，好让下一次回调被当成「初始化」而不是「用户切换」。
+   */
+  onBreakpointChange(): void {
+    this.tabsReady = false;
+  }
 
   /* 站内网页提交浮层（覆盖底栏，全屏） */
   @StorageProp('spocWebOpen') @Watch('onSpocWebOpenChange') private spocWebOpen: boolean = false;
@@ -144,6 +162,8 @@ export struct MainPage {
   private mineStack: NavPathStack = MINE_STACK;
 
   aboutToAppear(): void {
+    // 诊断：横竖屏切换后重建 MainPage 时这条会出现，栈与页签仍应保留（见 common/NavStacks）
+    Logger.info('MainPage aboutToAppear，currentIndex=' + this.currentIndex);
     // 冷启动路径：AppStorage 里已有值时，这里把它吃掉
     this.applyRoute(this.pendingRoute);
   }
@@ -536,6 +556,17 @@ export struct MainPage {
       }
     })
     .onChange((index: number) => {
+      // 首次回调是 HdsTabs 的初始化（必然是 0），不是用户点的 ——
+      // 不要据此改 currentIndex，而是让新建的 Tabs 跟随保存的页签。
+      if (!this.tabsReady) {
+        this.tabsReady = true;
+        if (index !== this.currentIndex) {
+          // changeIndex 会再回调一次 onChange（此时 tabsReady 已 true），
+          // 于是 currentIndex 被同步到正确值。
+          this.controller.changeIndex(this.currentIndex);
+        }
+        return;
+      }
       this.currentIndex = index;
       // 切到课表页时通知它刷新当前周。
       //

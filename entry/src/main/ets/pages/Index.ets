@@ -26,7 +26,42 @@ struct Index {
   @State private loggedIn: boolean = false;
 
   aboutToAppear(): void {
-    this.restoreSession();
+    // 诊断横竖屏切换后的「重载」发生在哪一层：这条打印说明 Index 组件被重建了
+    Logger.info('Index aboutToAppear');
+
+    const hasLocal: boolean = TokenStore.hasLocalSession();
+    const session = TokenStore.getSession();
+    if (!session.isValid() && !hasLocal) {
+      this.checking = false;
+      return;
+    }
+    // **有会话就直接进主页**，探测放到后台。
+    //
+    // 原来是「先探测、探测完才进主页」，探测要往返上游（最坏重试 + 600ms 等待），
+    // 于是横竖屏切换重建 Index 时会闪一段「正在恢复登录状态…」——那也是「APP 重载了」
+    // 的一部分。改成先亮界面、后台自检：401 才回登录页，其余情况不打扰用户。
+    this.loggedIn = true;
+    this.checking = false;
+    void this.verifyInBackground();
+  }
+
+  /** 后台自检会话：只有上游明确说 401 才把用户请回登录页。 */
+  private async verifyInBackground(): Promise<void> {
+    try {
+      const status = await ApiService.status();
+      ApiService.persistUser(status.user);
+    } catch (error) {
+      const apiError = error as ApiError;
+      if (apiError instanceof ApiError && apiError.status === 401) {
+        TokenStore.clear();
+        TokenStore.clearAllLocalSessions();
+        Logger.warn('会话已失效，需要重新登录');
+        this.loggedIn = false;
+      } else {
+        // 网络抖动：不打扰用户，数据页自己会重试
+        Logger.warn('会话自检失败（忽略，页面会自行重试）：' + (error as Error).message);
+      }
+    }
   }
 
   private async restoreSession(): Promise<void> {
