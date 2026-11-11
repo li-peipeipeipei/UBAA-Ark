@@ -4,10 +4,19 @@ import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { FeatureTile } from '../../components/CommonViews';
 import { FeatureItem, allFeatures } from '../../components/FeatureRegistry';
-import { KEY_BREAKPOINT, fitColumnsToItems, templateOfColumns, tileColumnsTemplateFor } from '../../common/Breakpoint';
+import { KEY_BREAKPOINT, templateOfColumns, tileColumnsTemplateFor } from '../../common/Breakpoint';
 
-/** 单个按钮的最小宽度（vp）：低于它「标题 + 说明」两行会被挤成省略号。 */
-const MIN_TILE_WIDTH: number = 112;
+/**
+ * 单个按钮的**目标宽度**（vp）。
+ *
+ * 列数不是「能塞几列塞几列」，而是按目标宽度反推：
+ * `列数 = floor((可用宽 + 间距) / (目标宽 + 间距))`，再用 Grid 把剩余宽度均分。
+ *
+ * 这样横竖屏下按钮的视觉大小基本一致（横屏 5 列、竖屏 3 列），而不是
+ * 「横屏挤 8 个、竖屏只有 2 个」那种忽大忽小。
+ * 取 172 是实测值：横屏内容宽 925 → 5 列；竖屏 635 → 3 列。
+ */
+const TILE_TARGET_WIDTH: number = 172;
 /** 列数上下限。 */
 const MIN_COLUMNS: number = 2;
 const MAX_COLUMNS: number = 6;
@@ -25,9 +34,9 @@ const MAX_COLUMNS: number = 6;
  *
  * ## 列数按「自身宽度」算，不按窗口断点
  *
- * 分栏后本页活在 300~400vp 的列表栏里，此时窗口断点是 md / lg，但可用宽度只有手机那么多 ——
- * 按窗口断点取列会把按钮挤扁（真机实测）。这里用 `onAreaChange` 拿实测宽度，
- * 按「单个不小于 168vp」反推列数。
+ * 本页可能活在很窄的容器里（窄窗口、折叠屏内屏分栏），此时窗口断点是 md / lg，但可用宽度
+ * 只有手机那么多 —— 按窗口断点取列会把按钮挤扁（真机实测）。这里用 `onAreaChange` 拿实测宽度，
+ * 按「单个约 172vp」反推列数。
  */
 @Component
 export struct FeaturePage {
@@ -47,12 +56,23 @@ export struct FeaturePage {
     AppRouter.open(this.stack, item.route, undefined, false);
   }
 
-  /** 列数模板：量到宽度就按实测算，否则按窗口断点估。 */
+  /**
+   * 列数模板：量到宽度就按实测算，否则按窗口断点估。
+   *
+   * ⚠️ 这里**不走** `fitColumnsToItems`：它会为了「最后一行不留残行」优先选能整除的
+   * 列数 —— 10 个功能块按 3 列排是 3+3+3+1，它会退到 2 列（10 % 2 == 0）。
+   * 那样一来竖屏的块就比横屏大得多，正是要避免的「视觉大小忽变」。
+   * 这里只按目标宽度取列，残行怎么都躲不掉（10 个块不可能被 3 整除）。
+   */
   private columnsTemplate(items: FeatureItem[]): string {
     if (this.columns <= 0) {
       return tileColumnsTemplateFor(this.bp, items.length);
     }
-    return templateOfColumns(fitColumnsToItems(this.columns, items.length, MIN_COLUMNS));
+    let columns: number = this.columns;
+    if (items.length > 0 && items.length < columns) {
+      columns = items.length;
+    }
+    return templateOfColumns(columns);
   }
 
   build() {
@@ -98,7 +118,8 @@ export struct FeaturePage {
         const raw: Length = newArea.width;
         const total: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
         const usable: number = total - AppSize.pagePadding * 2;
-        let columns: number = Math.floor(usable / MIN_TILE_WIDTH);
+        // 按目标宽度反推列数（+ 间距一起算，避免最后一列的缝隙误差）
+        let columns: number = Math.floor((usable + AppSize.gap) / (TILE_TARGET_WIDTH + AppSize.gap));
         if (columns < MIN_COLUMNS) {
           columns = MIN_COLUMNS;
         }

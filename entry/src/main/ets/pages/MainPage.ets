@@ -1,4 +1,5 @@
 import { BackGuard } from '../common/BackGuard';
+import { FEATURE_STACK, HOME_STACK, KEY_MAIN_TAB_INDEX, MINE_STACK, SCHEDULE_STACK } from '../common/NavStacks';
 import {
   HdsNavigation,
   HdsNavigationTitleBarOptions,
@@ -82,7 +83,12 @@ struct PageShell {
 @Component
 export struct MainPage {
   @StorageProp(KEY_BOTTOM_SAFE_HEIGHT) bottomSafeHeight: number = 0;
-  @State private currentIndex: number = 0;
+  /**
+   * 当前页签序号。**存进 AppStorage 而不是 @State** ——
+   * 横竖屏切换会重建 MainPage（两个档位是两棵完全不同的组件树），
+   * @State 会跟着归零，用户转个屏就回到主页。
+   */
+  @StorageLink(KEY_MAIN_TAB_INDEX) private currentIndex: number = 0;
   /** 宽度断点（AppStorage 由 ImmersiveUtil 的 windowSizeChange 写入）。 */
   @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
 
@@ -131,10 +137,11 @@ export struct MainPage {
       });
     }
   }
-  private homeStack: NavPathStack = new NavPathStack();
-  private scheduleStack: NavPathStack = new NavPathStack();
-  private featureStack: NavPathStack = new NavPathStack();
-  private mineStack: NavPathStack = new NavPathStack();
+  // 四个栈是模块级单例（common/NavStacks）：横竖屏切换重建组件时栈与栈里的页面都还在。
+  private homeStack: NavPathStack = HOME_STACK;
+  private scheduleStack: NavPathStack = SCHEDULE_STACK;
+  private featureStack: NavPathStack = FEATURE_STACK;
+  private mineStack: NavPathStack = MINE_STACK;
 
   aboutToAppear(): void {
     // 冷启动路径：AppStorage 里已有值时，这里把它吃掉

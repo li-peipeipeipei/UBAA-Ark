@@ -5,6 +5,7 @@ import { GlobalContext } from '../common/GlobalContext';
 import { ImmersiveUtil } from '../common/ImmersiveUtil';
 import { Logger } from '../common/Logger';
 import { TokenStore } from '../network/TokenStore';
+import { KEY_MAIN_TAB_INDEX } from '../common/NavStacks';
 import {
   KEY_WINDOW_WIDTH_VP,
   KEY_WINDOW_HEIGHT_VP,
@@ -50,6 +51,8 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate<boolean>(KEY_IS_LANDSCAPE, false);
     AppStorage.setOrCreate<boolean>(KEY_IS_WIDE_SCREEN, false);
     AppStorage.setOrCreate<boolean>(KEY_NAV_SPLIT_MODE, false);
+    // 当前页签序号（横竖屏切换后还要停在原来那一页，见 common/NavStacks.ets）
+    AppStorage.setOrCreate<number>(KEY_MAIN_TAB_INDEX, 0);
     // 「回到前台」的翻转计数（SchedulePage 订阅它做静默刷新）
     AppStorage.setOrCreate<boolean>('appForegroundTick', false);
     this.foregroundTick = false;
