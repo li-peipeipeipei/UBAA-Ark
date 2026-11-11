@@ -22,7 +22,14 @@ import { UserData } from '../model/ApiTypes';
 @Entry
 @Component
 struct Index {
-  @State private checking: boolean = true;
+  /**
+   * 初值必须是 false。
+   *
+   * `@State` 在组件重建时回到初值 —— 若这里初值是 true，重建的第一帧必然显示
+   * 「正在恢复登录状态…」，然后 aboutToAppear 才把它改掉。横竖屏切换时正是这一帧
+   * 闪出来，看起来就是「APP 重载了」。
+   */
+  @State private checking: boolean = false;
   @State private loggedIn: boolean = false;
 
   aboutToAppear(): void {

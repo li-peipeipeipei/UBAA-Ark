@@ -19,7 +19,7 @@ import { HomePage } from './home/HomePage';
 import { SchedulePage } from './academic/SchedulePage';
 import { FeaturePage } from './home/FeaturePage';
 import { MinePage } from './mine/MinePage';
-import { KEY_BREAKPOINT, useSideNav } from '../common/Breakpoint';
+import { KEY_BREAKPOINT, sideNavWidthOf, useSideNav } from '../common/Breakpoint';
 import { WideSideNav } from '../components/WideSideNav';
 
 /**
@@ -555,6 +555,10 @@ export struct MainPage {
         materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
       }
     })
+    // 横屏：底部页签栏高度收成 0（不显示，由左侧导航替代），内容让开侧栏宽度；
+    // 竖屏：恢复原样。**这正是「转屏不重建」的关键** —— HdsTabs 一直在树上。
+    .barHeight(this.sideNavLayout() ? 0 : AppSize.tabBarHeight)
+    .padding({ left: this.sideNavLayout() ? sideNavWidthOf(this.bp) : 0 })
     .onChange((index: number) => {
       // 首次回调是 HdsTabs 的初始化（必然是 0），不是用户点的 ——
       // 不要据此改 currentIndex，而是让新建的 Tabs 跟随保存的页签。
@@ -670,11 +674,23 @@ export struct MainPage {
   }
 
   build() {
-    Stack() {
+    // **HdsTabs 是唯一的内容容器，横竖屏切换时它不重建。**
+    //
+    // 之前横屏走 wideLayout（Row + 侧栏 + 另一套 HdsNavigation）、竖屏走 narrowTabs
+    // （HdsTabs + TabContent），两棵完全不同的组件树 —— 转屏时整棵换掉，于是：
+    // 页面组件全部重建（数据重新加载）、Index 闪「正在恢复登录状态」、
+    // HdsTabs 新建时报 onChange(0) 把页签打回主页。
+    //
+    // 现在只有一套 HdsTabs：横屏时把底部页签栏高度收成 0、内容让开左侧侧栏，
+    // 侧栏叠在上面；竖屏时反过来。转屏只是切换外壳的可见性，页面实例一直在树上。
+    //
+    // alignContent: Start —— 侧栏是 Stack 里唯一「不占满」的子节点，默认居中会跑到
+    // 屏幕中间（踩过：`.align()` 在 @Component 上不生效）。
+    Stack({ alignContent: Alignment.Start }) {
+      this.narrowTabs()
+
       if (this.sideNavLayout()) {
-        this.wideLayout()
-      } else {
-        this.narrowTabs()
+        this.sideNavOverlay()
       }
 
       if (this.spocWebOpen) {
@@ -682,6 +698,30 @@ export struct MainPage {
       }
     }
     .width('100%')
+    .height('100%')
+  }
+
+  /**
+   * 横屏左侧导航：叠在 HdsTabs 之上。
+   *
+   * 点击走 `controller.changeIndex` —— 与底部页签是**同一套内容**，
+   * 只是换了外壳，所以切页签 / 转屏都不会重建页面。
+   */
+  @Builder
+  sideNavOverlay() {
+    WideSideNav({
+      currentIndex: this.currentIndex,
+      bp: this.bp,
+      onSelect: (index: number) => {
+        if (index === this.currentIndex) {
+          // 「再点当前项」清栈回主页（与底部页签的 onTabBarClick 一致）
+          this.stackOf(index).clear();
+          return;
+        }
+        this.controller.changeIndex(index);
+      }
+    })
+    .width(sideNavWidthOf(this.bp))
     .height('100%')
   }
 }
