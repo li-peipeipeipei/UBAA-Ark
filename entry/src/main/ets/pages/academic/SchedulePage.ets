@@ -2049,6 +2049,8 @@ export struct SchedulePage {
           .width(SCHEDULE_COLUMN_WIDTH)
           .height(SECTION_CELL_HEIGHT)
           .justifyContent(FlexAlign.Center)
+          // 数字整体右移 4px：24vp 的窄格子里「11/12/13」几乎贴左边缘，会被裁掉一点
+          .padding({ left: 4 })
         }, (section: number) => section.toString())
       }
 
@@ -2648,6 +2650,8 @@ export struct SchedulePage {
           .width(SCHEDULE_COLUMN_WIDTH)
           .height(SECTION_CELL_HEIGHT)
           .justifyContent(FlexAlign.Center)
+          // 数字整体右移 4px：24vp 的窄格子里「11/12/13」几乎贴左边缘，会被裁掉一点
+          .padding({ left: 4 })
         }, (section: number) => section.toString())
       }
 
