@@ -113,29 +113,11 @@ export struct HomePage {
   /** 当前宽度断点：决定磁贴列数与是否双列并排。 */
   @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
   /**
-   * 按自身宽度量出来的布局参数（只在**变化**时写状态）。
+   * 宽度够不够并排（≥720vp 才并排）。
    *
-   * 分栏切换时宽度是动画过渡的，onAreaChange 会连续回调几十次；若用宽度驱动重建，
-   * 卡片会在动画里持续重排。这里只缓存「够不够双列」和「单格 84vp 能放几列」，
-   * 动画期间只有跨边界时重建一次。
+   * 竖屏（673vp）恒为 false —— 两块永远上下堆叠，只有宽度随分栏收放。
    */
   @State private wideEnough: boolean = false;
-  /**
-   * 内容区当前可用宽度（vp），**每帧都更新**。
-   *
-   * 之前缓存的是"列数"（只在跨列边界时才写），结果分栏动画的中间帧里：
-   * 卡片宽度已经跟着面板变了，列数还停在上一档 → 磁贴被挤到重叠（录屏里那几帧）。
-   * 现在列数由宽度现场算，宽度和列数永远同源，不会再对不上。
-   */
-  @State private laneWidth: number = 0;
-  /**
-   * 「快捷入口」卡片**自身**的实测宽度（vp）。
-   *
-   * 必须量卡片自己、不能借用外层面板的宽度：分栏收放是原生动画，容器的宽度回调会比
-   * 子节点的百分比重排早一帧，用外层宽度算列数就会出现"卡片还窄、列数已经按宽卡片算"
-   * 的错位 —— 表现为磁贴被裁成半个（关闭分栏时最明显）。
-   */
-  @State private quickCardWidth: number = 0;
   /** 两块区域的像素布局（都挂在同一个 .animation() 上补间）。 */
   @State private blockLane: number = 0;
   @State private todayHeightVp: number = 0;
@@ -143,7 +125,6 @@ export struct HomePage {
   /** 是否已经量过自身宽度（false 时按窗口断点兜底）。非 @State：只做分支判断。 */
   private measured: boolean = false;
 
-  /** 两块实测高度与内容区可用宽度（vp）：算位移初值用，非 @State（不参与渲染）。 */
 
   @State private loadState: LoadState = LoadState.LOADING;
   @State private errorMessage: string = '';
@@ -532,11 +513,13 @@ export struct HomePage {
   /** 快捷入口的列数：单格不小于 84vp；并排时按半栏算。列数由当前宽度现场推导。 */
   private quickColumnsTemplate(): string {
     const items: number = quickFeatures(this.featureUsage).length;
-    if (!this.measured || this.laneWidth <= 0) {
+    if (!this.measured || this.blockLane <= 0) {
       return this.twoColumnLayout() ? '1fr 1fr 1fr 1fr' : tileColumnsTemplate(this.bp);
     }
-    // 卡片自身宽度已含 SectionCard 的 16vp 内边距 ×2，直接扣掉
-    const cardWidth: number = this.quickCardWidth - 32;
+    // 列数直接用**布局状态**算（blockLane 推出的卡片宽度），不读实测值：
+    // 读实测值会慢一拍 —— 宽度在动画、列数还停在上一步，收尾时一次性归位会"跳"一下。
+    // SectionCard 自带 16vp 内边距 ×2，先扣掉。
+    const cardWidth: number = this.blockWidth() - 32;
     let columns: number = Math.floor(cardWidth / 84);
     if (columns < 2) {
       columns = 2;
@@ -695,11 +678,6 @@ export struct HomePage {
               // margin 是布局属性：命中区域、滚动范围、动画补间三者都对得上。
               .margin({ left: this.quickBlockX(), top: this.quickBlockY() })
               .onAreaChange((oldArea: Area, newArea: Area) => {
-                const rawW: Length = newArea.width;
-                const w: number = typeof rawW === 'number' ? rawW : parseFloat(rawW.toString());
-                if (Math.abs(w - this.quickCardWidth) > 0.5) {
-                  this.quickCardWidth = w;
-                }
                 const rawH: Length = newArea.height;
                 const h: number = typeof rawH === 'number' ? rawH : parseFloat(rawH.toString());
                 if (Math.abs(h - this.quickHeightVp) > 0.5) {
@@ -766,10 +744,6 @@ export struct HomePage {
             } else {
               run();
             }
-          }
-          // 列数不再缓存，交给 quickColumnsTemplate() 用卡片自身宽度现算
-          if (Math.abs(usable - this.laneWidth) > 0.5) {
-            this.laneWidth = usable;
           }
         })
       }

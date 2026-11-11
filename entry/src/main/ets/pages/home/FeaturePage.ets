@@ -45,7 +45,6 @@ export struct FeaturePage {
    * 重建，网格会在动画里反复重排（肉眼可见的抖动）。缓存列数后动画期间只有跨边界
    * 的那一次重建，观感才顺。条目数的适配（整除 / 不超条目）在渲染时再算。
    */
-  @State private columns: number = 0;
   /**
    * 内容容器的**像素宽度**（我们自己驱动，0 表示还没量到、用 100%）。
    *
@@ -68,12 +67,23 @@ export struct FeaturePage {
     AppRouter.openAfterLayout(this.stack, item.route, this.splitMode);
   }
 
-  /** 已有实测列数就用它；还没量到（columns=0）时按窗口断点估。 */
+  /** 列数由 paneWidth 现算；还没量到（paneWidth=0）时按窗口断点估。 */
   private columnsTemplate(items: FeatureItem[]): string {
-    if (this.columns > 0) {
-      return templateOfColumns(fitColumnsToItems(this.columns, items.length, MIN_COLUMNS));
+    if (this.paneWidth <= 0) {
+      return tileColumnsTemplateFor(this.bp, items.length);
     }
-    return tileColumnsTemplateFor(this.bp, items.length);
+    // 列数**直接由 paneWidth 推导**，与内容列宽度同一个状态：
+    // 若改从"实测宽度"读，动画期间会慢一拍（面板已经 675，栅格还按 7 列排窄格子，
+    // 收尾时再一次性归位 —— 就是看到的那下"向左跳"）。
+    const usable: number = this.paneWidth - AppSize.pagePadding * 2;
+    let columns: number = Math.floor(usable / MIN_TILE_WIDTH);
+    if (columns < MIN_COLUMNS) {
+      columns = MIN_COLUMNS;
+    }
+    if (columns > MAX_COLUMNS) {
+      columns = MAX_COLUMNS;
+    }
+    return templateOfColumns(fitColumnsToItems(columns, items.length, MIN_COLUMNS));
   }
 
   @Builder
@@ -124,24 +134,9 @@ export struct FeaturePage {
         top: AppSize.destTopInset(topSafeInsetVp()),
         bottom: 0
       })
-      .constraintSize({ minHeight: '100%' })
-      // 量**内容列自己**的宽度（它是被我们驱动的像素宽度，动画期间逐帧变化），
-      // 据此算列数 —— 与宽度同源，不会出现"卡片还窄、列数已按宽卡片算"的错位。
-      .onAreaChange((oldArea: Area, newArea: Area) => {
-        const raw: Length = newArea.width;
-        const total: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
-        const usable: number = total - AppSize.pagePadding * 2;
-        let columns: number = Math.floor(usable / MIN_TILE_WIDTH);
-        if (columns < MIN_COLUMNS) {
-          columns = MIN_COLUMNS;
-        }
-        if (columns > MAX_COLUMNS) {
-          columns = MAX_COLUMNS;
-        }
-        if (columns !== this.columns) {
-          this.columns = columns;
-        }
-      })
+      // maxWidth 兜底：动画期间内容列**不许宽过面板** —— 一旦宽过，Scroll 会记下横向偏移，
+      // 收窄时偏移不归零，表现成"完全收回去之后向左跳一下"（就是这样踩到的）。
+      .constraintSize({ minHeight: '100%', maxWidth: '100%' })
       // 一级页内容整体上移一点（纯视觉位移，见 AppSize.contentTopLift）
       .translate({ y: -AppSize.contentTopLift })
     }
