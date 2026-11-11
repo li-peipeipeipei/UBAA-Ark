@@ -120,23 +120,18 @@ export struct HomePage {
    * 动画期间只有跨边界时重建一次。
    */
   @State private wideEnough: boolean = false;
-  @State private quickColumns: number = 0;
+  /**
+   * 内容区当前可用宽度（vp），**每帧都更新**。
+   *
+   * 之前缓存的是"列数"（只在跨列边界时才写），结果分栏动画的中间帧里：
+   * 卡片宽度已经跟着面板变了，列数还停在上一档 → 磁贴被挤到重叠（录屏里那几帧）。
+   * 现在列数由宽度现场算，宽度和列数永远同源，不会再对不上。
+   */
+  @State private laneWidth: number = 0;
   /** 是否已经量过自身宽度（false 时按窗口断点兜底）。非 @State：只做分支判断。 */
   private measured: boolean = false;
 
-  /**
-   * 「快捷入口」块的额外位移（vp）：切换并排↔堆叠时用来把换行那一下变成滑行。
-   *
-   * 换行（wrap）是布局重排，位置无法插值，第二块会从右侧瞬间跳到下方。
-   * 这里在翻转瞬间把它**视觉上钉回切换前的位置**（初值 = 两套布局的位置差），
-   * 再用 260ms 归零 —— 看上去就是它自己从右边滑到下面。
-   */
-  @State private shiftX: number = 0;
-  @State private shiftY: number = 0;
   /** 两块实测高度与内容区可用宽度（vp）：算位移初值用，非 @State（不参与渲染）。 */
-  private todayHeightVp: number = 0;
-  private quickHeightVp: number = 0;
-  private laneWidthVp: number = 0;
 
   @State private loadState: LoadState = LoadState.LOADING;
   @State private errorMessage: string = '';
@@ -522,51 +517,23 @@ export struct HomePage {
     return this.wideEnough;
   }
 
-  /** 快捷入口的列数：单格不小于 84vp；双列时每栏按半宽算。 */
+  /** 快捷入口的列数：单格不小于 84vp；并排时按半栏算。列数由当前宽度现场推导。 */
   private quickColumnsTemplate(): string {
     const items: number = quickFeatures(this.featureUsage).length;
-    if (!this.measured || this.quickColumns <= 0) {
+    if (!this.measured || this.laneWidth <= 0) {
       return this.twoColumnLayout() ? '1fr 1fr 1fr 1fr' : tileColumnsTemplate(this.bp);
     }
-    return templateOfColumns(fitColumnsToItems(this.quickColumns, items, 2));
-  }
-
-  /** Area 的 Length → vp 数值（布局回调里给的是 vp，可能是 number 也可能是字符串）。 */
-  private static areaToVp(value: Length): number {
-    return typeof value === 'number' ? value : parseFloat(value.toString());
-  }
-
-  /**
-   * 并排 ↔ 堆叠翻转时，给「快捷入口」加位移初值再动画归零。
-   *
-   * 换行是布局重排，位置不参与插值：翻转那一刻它就已经在下方了。这里把它**视觉上
-   * 钉回切换前的位置**（位移初值 = 两套布局的位置差），再 260ms 归零 —— 看到的就是
-   * 它自己从右边滑到下面，而不是瞬移。
-   *
-   * @param toWide 翻转后的目标形态（true = 并排）
-   */
-  private startBlockShift(toWide: boolean): void {
     const gap: number = AppSize.gapLarge;
-    const half: number = (this.laneWidthVp - gap) / 2;
-    // 并排：第二块左边缘 = half + gap、顶部 = 0；堆叠：左边缘 = 0、顶部 = 第一块高 + gap
-    const nextX: number = toWide ? half + gap : 0;
-    const nextY: number = toWide ? 0 : this.todayHeightVp + gap;
-    const prevX: number = toWide ? 0 : half + gap;
-    const prevY: number = toWide ? this.todayHeightVp + gap : 0;
-
-    this.wideEnough = toWide;
-    // 第一步 duration 0：把位移设成「切换前的位置差」，瞬移、不产生动画
-    this.getUIContext().animateTo({ duration: 0 }, () => {
-      this.shiftX = prevX - nextX;
-      this.shiftY = prevY - nextY;
-    });
-    // 第二步归零：这一帧才真正播放滑行
-    setTimeout(() => {
-      this.getUIContext().animateTo({ duration: 260, curve: Curve.Friction }, () => {
-        this.shiftX = 0;
-        this.shiftY = 0;
-      });
-    }, 0);
+    // 并排：单栏宽 = (总宽 - 间距) / 2；单列：整宽。再扣 SectionCard 的 16vp 内边距 ×2
+    const cardWidth: number = (this.wideEnough ? (this.laneWidth - gap) / 2 : this.laneWidth) - 32;
+    let columns: number = Math.floor(cardWidth / 84);
+    if (columns < 2) {
+      columns = 2;
+    }
+    if (columns > 8) {
+      columns = 8;
+    }
+    return templateOfColumns(fitColumnsToItems(columns, items, 2));
   }
 
   @Builder
@@ -663,16 +630,16 @@ export struct HomePage {
             // `.animation()`：宽度是百分比，本来就随外层面板的收放每帧重算，再叠一层
             // 宽度动画会让卡片宽度和内部网格列数不同步 —— 实测表现为磁贴被裁成一条条。
             // 这里只做两件事：宽度跟着面板走，换行那一下用 translate 补偿成滑行。
-            Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween,
+            // justifyContent 必须用 Start：换成 SpaceBetween 时，换行后每行只剩一个块，
+            // SpaceBetween 会把这块「居中」，两块左边缘就差开一截（实测差 85vp）。
+            Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start,
               alignItems: ItemAlign.Start }) {
               Column() {
                 this.todaySection()
               }
               .width(this.wideEnough ? '48.5%' : '100%')
               .alignItems(HorizontalAlign.Start)
-              .onAreaChange((oldArea: Area, newArea: Area) => {
-                this.todayHeightVp = HomePage.areaToVp(newArea.height);
-              })
+              .margin({ right: this.wideEnough ? AppSize.gapLarge : 0 })
 
               Column() {
                 this.quickSection()
@@ -681,12 +648,13 @@ export struct HomePage {
               .alignItems(HorizontalAlign.Start)
               // 堆叠时补上横向并排时由 space 承担的间距
               .margin({ top: this.wideEnough ? 0 : AppSize.gapLarge })
-              .onAreaChange((oldArea: Area, newArea: Area) => {
-                this.quickHeightVp = HomePage.areaToVp(newArea.height);
-              })
-              .translate({ x: this.shiftX, y: this.shiftY })
             }
             .width('100%')
+            // 分栏收放是 HDS 的原生动画，动画期间这一层可能还拿着旧的子节点宽度，
+            // 卡片会横向溢出到右侧详情栏上 —— 在容器上裁掉，别让它盖住详情。
+            // 注意必须裁在这一层（无位移）；裁到内容列会连同 -16vp 的位移一起，
+            // 把顶部问候语切掉（踩过）。
+            .clip(true)
           }
 
           // 为悬浮底栏预留高度（barOverlap 模式下内容会被底栏覆盖）
@@ -711,23 +679,13 @@ export struct HomePage {
           const total: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
           const usable: number = total - AppSize.pagePadding * 2;
           this.measured = true;
-          this.laneWidthVp = usable;
           const wide: boolean = usable >= 720;
           if (wide !== this.wideEnough) {
-            // 宽度由 Flex 的隐式 `.animation()` 补间；换行那一下的位移由 shiftX/Y 补。
-            this.startBlockShift(wide);
+            this.wideEnough = wide;
           }
-          // 双列时每栏只有半宽；SectionCard 另有 16vp 内边距 ×2
-          const lane: number = (wide ? usable / 2 : usable) - 32;
-          let columns: number = Math.floor(lane / 84);
-          if (columns < 2) {
-            columns = 2;
-          }
-          if (columns > 8) {
-            columns = 8;
-          }
-          if (columns !== this.quickColumns) {
-            this.quickColumns = columns;
+          // 列数不再缓存，交给 quickColumnsTemplate() 用它现算，保证与宽度同源
+          if (Math.abs(usable - this.laneWidth) > 0.5) {
+            this.laneWidth = usable;
           }
         })
       }
