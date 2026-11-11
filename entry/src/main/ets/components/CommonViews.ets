@@ -154,54 +154,44 @@ export struct SectionCard {
  * - 右侧两行文字：主标题 + 一句功能说明，扫一眼就知道点进去干什么；
  * - 统一的底色（surface）+ 16 圆角 + 12 内边距，在网格里形成规整的节奏。
  */
+/**
+ * 功能入口按钮：**竖长矩形**，整块底色填充，只有图标与名称。
+ *
+ * 设计（2026-11-11 二改）：
+ * - 整块用功能主色填充（不再是「小色块 + 卡片底色」），一排按钮像一组彩色卡片；
+ * - 竖长（宽高比约 0.8），比横条更容易一眼扫过、也更适合两行以上的网格；
+ * - 内部只有居中的图标与名称，去掉说明文字，靠图标表意；
+ * - 图标用 UBAA 原版 `app.media.ic_*`（Material 风格），白色着色。
+ */
 @Component
 export struct FeatureTile {
   title: string = '';
-  desc: string = '';
-  icon: Resource = $r('app.media.icf_spoc');
-  /** 图标块底色（每个功能一种强调色）。 */
+  icon: Resource = $r('app.media.ic_apps');
+  /** 整块底色（每个功能一种强调色）。 */
   color: Resource = $r('app.color.brand');
   onTileClick: () => void = () => {};
 
   build() {
-    Row({ space: 12 }) {
-      Column() {
-        Image(this.icon)
-          .width(22)
-          .height(22)
-          .fillColor(Color.White)
-          .draggable(false)
-      }
-      .width(40)
-      .height(40)
-      .borderRadius(12)
-      .backgroundColor(this.color)
-      .justifyContent(FlexAlign.Center)
+    Column({ space: 10 }) {
+      Image(this.icon)
+        .width(30)
+        .height(30)
+        .fillColor(Color.White)
+        .draggable(false)
 
-      Column({ space: 3 }) {
-        Text(this.title)
-          .fontSize(AppFont.body)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(AppColor.textPrimary)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-        if (this.desc.length > 0) {
-          Text(this.desc)
-            .fontSize(AppFont.caption)
-            .fontColor(AppColor.textTertiary)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-      }
-      .alignItems(HorizontalAlign.Start)
-      .layoutWeight(1)
+      Text(this.title)
+        .fontSize(AppFont.caption)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(Color.White)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
     .width('100%')
-    .constraintSize({ minHeight: 64 })
-    .padding({ left: 12, right: 12, top: 12, bottom: 12 })
-    .borderRadius(16)
-    .backgroundColor(AppColor.surface)
-    .alignItems(VerticalAlign.Center)
+    // 竖长：宽 / 高 = 0.8，高度比宽度大 25%
+    .aspectRatio(0.8)
+    .justifyContent(FlexAlign.Center)
+    .borderRadius(AppSize.cardRadius)
+    .backgroundColor(this.color)
     // 平板外接键鼠 / 2in1 触控板上，按钮需要悬停反馈才「像个按钮」（官方多设备交互建议）
     .hoverEffect(HoverEffect.Highlight)
     .onClick(() => {

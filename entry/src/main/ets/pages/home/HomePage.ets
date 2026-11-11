@@ -98,10 +98,6 @@ function findCourseByName(list: CourseClass[], name: string): CourseClass | null
 @Component
 export struct HomePage {
   stack: NavPathStack = new NavPathStack();
-  /** 当前是否分栏（由 MainPage 传入）：分栏时点条目是替换右栏而不是压栈。 */
-  @Prop splitMode: boolean = false;
-  /** 点条目前的回调：返回 true 表示外层会先切到分栏，此时延后一帧再 push（分栏前提，非动画）。 */
-  onWillOpen: () => boolean = () => false;
   /** 当前宽度断点：决定磁贴列数与是否双列并排。 */
   @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
   @State private loadState: LoadState = LoadState.LOADING;
@@ -289,15 +285,9 @@ export struct HomePage {
     return '晚上好';
   }
 
-  /** 打开二级页：能分栏就先让外层切分栏，再 push（HDS 不接受"先 push 后切 mode"）。 */
+  /** 打开二级页（分栏已取消，直接硬切压栈）。 */
   private openRoute(route: string): void {
-    if (this.splitMode || !this.onWillOpen()) {
-      AppRouter.open(this.stack, route, this.splitMode);
-      return;
-    }
-    setTimeout(() => {
-      AppRouter.open(this.stack, route, this.splitMode);
-    }, 32);
+    AppRouter.open(this.stack, route);
   }
 
   private userName(): string {

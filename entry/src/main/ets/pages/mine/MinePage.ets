@@ -16,10 +16,6 @@ import { SectionCard } from '../../components/CommonViews';
 @Component
 export struct MinePage {
   stack: NavPathStack = new NavPathStack();
-  /** 当前是否分栏（由 MainPage 传入）：分栏时点菜单是替换右栏而不是压栈。 */
-  @Prop splitMode: boolean = false;
-  /** 点菜单前的回调：返回 true = 外层会先切分栏，此时延后一帧再 push（分栏前提，非动画）。 */
-  onWillOpen: () => boolean = () => false;
 
   @State private userName: string = '';
   @State private schoolId: string = '';
@@ -146,13 +142,7 @@ export struct MinePage {
    * 让详情以 push 动画从右侧滑入（而不是模式切换动画里的自左向右展开）。
    */
   private openRoute(route: string): void {
-    if (this.splitMode || !this.onWillOpen()) {
-      AppRouter.open(this.stack, route, this.splitMode);
-      return;
-    }
-    setTimeout(() => {
-      AppRouter.open(this.stack, route, this.splitMode);
-    }, 32);
+    AppRouter.open(this.stack, route);
   }
 
   build() {

@@ -50,11 +50,17 @@ export class RouteName {
 export const WIDE_PLACEHOLDER_ROUTE: string = 'widePlaceholder';
 
 export class AppRouter {
+  /**
+   * 压栈打开二级页。
+   *
+   * `animated: false` —— 平板端已取消分栏，**所有转场一律硬切**（无滑入/滑出动画）。
+   * 这是产品要求：先去掉全部转场，之后再统一设计。
+   */
   static push(stack: NavPathStack, name: string, param?: object): void {
     if (param === undefined) {
-      stack.pushPath({ name: name });
+      stack.pushPath({ name: name }, false);
     } else {
-      stack.pushPath({ name: name, param: param });
+      stack.pushPath({ name: name, param: param }, false);
     }
   }
 
@@ -65,20 +71,14 @@ export class AppRouter {
    * 应该是**替换**右栏内容，而不是继续压栈（否则返回一次只退到上一个详情，
    * 语义上说不通，用户会觉得返回键失灵）。单栏时仍然正常压栈。
    */
-  static open(stack: NavPathStack, name: string, splitMode: boolean, param?: object): void {
-    if (splitMode && stack.size() > 0) {
-      if (param === undefined) {
-        stack.replacePath({ name: name });
-      } else {
-        stack.replacePath({ name: name, param: param });
-      }
-      return;
-    }
+  /** 打开二级页（分栏已取消，统一走压栈 + 硬切）。 */
+  static open(stack: NavPathStack, name: string, param?: object): void {
     AppRouter.push(stack, name, param);
   }
 
+  /** 返回：同样硬切。 */
   static back(stack: NavPathStack): void {
-    stack.pop();
+    stack.pop(false);
   }
 }
 

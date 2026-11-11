@@ -17,15 +17,7 @@ import { HomePage } from './home/HomePage';
 import { SchedulePage } from './academic/SchedulePage';
 import { FeaturePage } from './home/FeaturePage';
 import { MinePage } from './mine/MinePage';
-import {
-  KEY_BREAKPOINT,
-  KEY_NAV_SPLIT_MODE,
-  navBarWidthOf,
-  navBarMinWidthOf,
-  navBarMaxWidthOf,
-  minContentWidthOf,
-  useSideNav
-} from '../common/Breakpoint';
+import { KEY_BREAKPOINT, useSideNav } from '../common/Breakpoint';
 import { WideSideNav } from '../components/WideSideNav';
 
 /**
@@ -92,7 +84,6 @@ export struct MainPage {
   @State private currentIndex: number = 0;
   /** 宽度断点（AppStorage 由 ImmersiveUtil 的 windowSizeChange 写入）。 */
   @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
-  @StorageProp(KEY_NAV_SPLIT_MODE) @Watch('onNavSplitModeChange') private navSplitMode: boolean = false;
 
   /**
    * 桌面卡片带过来的页签请求（`EntryAbility.onCreate` / `onNewWant` 写入 AppStorage）。
@@ -131,124 +122,9 @@ export struct MainPage {
   private featureStack: NavPathStack = new NavPathStack();
   private mineStack: NavPathStack = new NavPathStack();
 
-  /**
-   * 四个页签的导航栈深度（0 = 停留在一级页）。
-   *
-   * 分栏模式由它驱动：>0 才切 Split，因此「没点进去」时是一整页，
-   * 「点进去」才出现左列表 + 右详情，配合「先切分栏、下一帧 push」的顺序让详情从右侧滑入。
-   * 由 `bindStackDepth()` 里的 `setInterception().didShow` 维护。
-   */
-  @State private stackDepth: number[] = [0, 0, 0, 0];
-
-  /**
-   * 四个页签的「即将进入分栏」标记。
-   *
-   * 点条目时先置真，让 `mode` 在**这一帧**就切到 Split，下一帧才 push —— 否则先 push
-   * 再切 mode，HDS 会不接受（实测：在有目的页的情况下切 mode 会把目的页弹掉，
-   * 日志表现为入栈后 1 秒左右又出现一次「栈深=0」）。这不是过渡动画，是分栏能用的前提。
-   */
-  @State private pendingSplit: boolean[] = [false, false, false, false];
-  /** 「收回分栏」的防抖定时器（每个页签一个，-1 表示没有在等待）。 */
-  private collapseTimer: number[] = [-1, -1, -1, -1];
-  /**
-   * 最新的原始栈深（不做防抖）。
-   * 防抖回调里必须查它、而不是查 `stackDepth`（那是**已应用**的值，此刻还没归零，
-   * 直接查会让"仍然是 0 吗"永远为假、分栏再也不收回 —— 实测返回后左侧一直窄着）。
-   */
-  private liveDepth: number[] = [0, 0, 0, 0];
-
   aboutToAppear(): void {
     // 冷启动路径：AppStorage 里已有值时，这里把它吃掉
     this.applyRoute(this.pendingRoute);
-    // 订阅四个栈的进出，维护「当前页签是否已进入二级页」
-    this.bindStackDepth();
-  }
-
-  /**
-   * 让四个页签的导航栈在 push / pop 时把栈深写进状态。
-   *
-   * 分栏模式由**栈深**决定（见 `splitFor`）：没点进去时整页显示，点进去才切成
-   * 「左列表 + 右详情」。`NavPathStack` 本身不是可观察对象，只能靠
-   * `setInterception().didShow` 这个「页面已切换完成」回调来同步深度，
-   * 返回键、手势返回、代码 pop 都会经过它。
-   */
-  private bindStackDepth(): void {
-    const stacks: NavPathStack[] = [this.homeStack, this.scheduleStack, this.featureStack, this.mineStack];
-    for (let i = 0; i < stacks.length; i++) {
-      const index: number = i;
-      stacks[i].setInterception({
-        didShow: () => {
-          this.updateStackDepth(index, stacks[index].size());
-        }
-      });
-    }
-  }
-
-  /** 只在深度真的变化时整体替换数组 —— @State 才会通知重建（进而触发 mode 切换动画）。 */
-  private updateStackDepth(index: number, depth: number): void {
-    this.liveDepth[index] = depth;
-    if (depth > 0) {
-      this.cancelCollapse(index);
-      if (this.pendingSplit[index]) {
-        const cleared: boolean[] = this.pendingSplit.slice();
-        cleared[index] = false;
-        this.pendingSplit = cleared;
-      }
-      this.applyDepth(index, depth);
-      return;
-    }
-    // 归零要**防抖**：didShow 在进栈/换条目的瞬间可能报到一次瞬时的 0，若立刻收回分栏，
-    // 面板会闪回整页、连带把刚打开的目的页一起弹掉（竖屏实测：点一下入栈后马上被弹回）。
-    // 等一会儿仍是 0 再真正收回，中间的抖动直接忽略。
-    if (this.collapseTimer[index] === -1) {
-      this.collapseTimer[index] = setTimeout(() => {
-        this.collapseTimer[index] = -1;
-        if (this.liveDepth[index] !== 0) {
-          return;
-        }
-        this.applyDepth(index, 0);
-      }, 160);
-    }
-  }
-
-  private applyDepth(index: number, depth: number): void {
-    if (this.stackDepth[index] === depth) {
-      return;
-    }
-    const next: number[] = this.stackDepth.slice();
-    next[index] = depth;
-    this.stackDepth = next;
-    Logger.info('LAYOUT 页签' + index + ' 栈深=' + depth);
-  }
-
-  /**
-   * 一级页点条目前的回调：能分栏就先把 mode 切到 Split 并返回 true（调用方下一帧再 push），
-   * 不能分栏（手机 / 课表）返回 false，调用方直接 push。
-   */
-  private requestSplitBeforePush(tabIndex: number): boolean {
-    if (!this.navSplitMode || !this.isSplitTab(tabIndex)) {
-      return false;
-    }
-    if (this.stackDepth[tabIndex] > 0 || this.pendingSplit[tabIndex]) {
-      return true;
-    }
-    const next: boolean[] = this.pendingSplit.slice();
-    next[tabIndex] = true;
-    this.pendingSplit = next;
-    return true;
-  }
-
-  private cancelCollapse(index: number): void {
-    const timer: number = this.collapseTimer[index];
-    if (timer !== -1) {
-      clearTimeout(timer);
-      this.collapseTimer[index] = -1;
-    }
-  }
-
-  /** 该页签是否参与分栏（课表不参与：周网格劈一半没法看）。 */
-  private isSplitTab(tabIndex: number): boolean {
-    return tabIndex === 0 || tabIndex === 2 || tabIndex === 3;
   }
 
   private onPendingRoute(): void {
@@ -363,32 +239,6 @@ export struct MainPage {
   /** 是否用侧边导航形态（平板横屏 / 2in1 / 宽自由窗口）。平板竖屏仍走底部页签。 */
   private sideNavLayout(): boolean {
     return useSideNav(this.bp);
-  }
-
-  /**
-   * 该页签当前是否分栏。
-   *
-   * 两个条件：① 窗口具备分栏能力（md / lg / xxl）；② 该页签已经点进二级页（栈深 > 0）。
-   * 所以「没点进去」时是一整页，「点进去」才变成左右双列 —— 过渡由
-   * 详情自身的 push 动画（自右向左滑入）负责。
-   *
-   * 课表（页签 1）不参与：7 天周网格是固定列宽的表格，劈成一半没法看。
-   */
-  private splitFor(tabIndex: number): boolean {
-    if (!this.navSplitMode || !this.isSplitTab(tabIndex)) {
-      return false;
-    }
-    return this.stackDepth[tabIndex] > 0 || this.pendingSplit[tabIndex];
-  }
-
-  /**
-   * 断点退回窄屏（md/sm）时清理导航栈：
-   * 分栏消失后，栈里若只剩「二级页」会让用户离开时停在详情页而不是一级页，
-   * 这里不做额外处理 —— 单栏下停在详情页正是用户点进去的位置，符合预期。
-   */
-  private onNavSplitModeChange(): void {
-    // 状态由 stackDepth 驱动，断点切换本身不需要改栈；保留回调以便将来埋点。
-    Logger.info('LAYOUT 分栏能力=' + this.navSplitMode);
   }
 
   /**
@@ -582,8 +432,6 @@ export struct MainPage {
           PageShell() {
             HomePage({
               stack: this.homeStack,
-              splitMode: this.splitFor(0),
-              onWillOpen: () => this.requestSplitBeforePush(0)
             })
           }
         }
@@ -591,14 +439,7 @@ export struct MainPage {
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
-        .mode(this.splitFor(0) ? NavigationMode.Split : NavigationMode.Stack)
-        .enableModeChangeAnimation(true)
-        .navBarWidth(navBarWidthOf(this.bp))
-        .navBarWidthRange({
-          minWidth: navBarMinWidthOf(this.bp),
-          maxWidth: navBarMaxWidthOf(this.bp)
-        })
-        .minContentWidth(minContentWidthOf(this.bp))
+        .mode(NavigationMode.Stack)
       }
       .tabBar(new BottomTabBarStyle($r('app.media.ic_home'), $r('app.string.tab_home')))
 
@@ -612,14 +453,7 @@ export struct MainPage {
         .titleBar(this.scheduleTitleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
-        .mode(this.splitFor(1) ? NavigationMode.Split : NavigationMode.Stack)
-        .enableModeChangeAnimation(true)
-        .navBarWidth(navBarWidthOf(this.bp))
-        .navBarWidthRange({
-          minWidth: navBarMinWidthOf(this.bp),
-          maxWidth: navBarMaxWidthOf(this.bp)
-        })
-        .minContentWidth(minContentWidthOf(this.bp))
+        .mode(NavigationMode.Stack)
       }
       .tabBar(new BottomTabBarStyle($r('app.media.ic_schedule'), $r('app.string.tab_schedule')))
 
@@ -628,8 +462,6 @@ export struct MainPage {
           PageShell() {
             FeaturePage({
               stack: this.featureStack,
-              splitMode: this.splitFor(2),
-              onWillOpen: () => this.requestSplitBeforePush(2)
             })
           }
         }
@@ -637,14 +469,7 @@ export struct MainPage {
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
-        .mode(this.splitFor(2) ? NavigationMode.Split : NavigationMode.Stack)
-        .enableModeChangeAnimation(true)
-        .navBarWidth(navBarWidthOf(this.bp))
-        .navBarWidthRange({
-          minWidth: navBarMinWidthOf(this.bp),
-          maxWidth: navBarMaxWidthOf(this.bp)
-        })
-        .minContentWidth(minContentWidthOf(this.bp))
+        .mode(NavigationMode.Stack)
       }
       .tabBar(new BottomTabBarStyle($r('app.media.ic_apps'), $r('app.string.tab_feature')))
 
@@ -653,8 +478,6 @@ export struct MainPage {
           PageShell() {
             MinePage({
               stack: this.mineStack,
-              splitMode: this.splitFor(3),
-              onWillOpen: () => this.requestSplitBeforePush(3),
               onLogout: () => {
                 this.onLogout();
               }
@@ -665,14 +488,7 @@ export struct MainPage {
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
-        .mode(this.splitFor(3) ? NavigationMode.Split : NavigationMode.Stack)
-        .enableModeChangeAnimation(true)
-        .navBarWidth(navBarWidthOf(this.bp))
-        .navBarWidthRange({
-          minWidth: navBarMinWidthOf(this.bp),
-          maxWidth: navBarMaxWidthOf(this.bp)
-        })
-        .minContentWidth(minContentWidthOf(this.bp))
+        .mode(NavigationMode.Stack)
       }
       .tabBar(new BottomTabBarStyle($r('app.media.ic_person'), $r('app.string.tab_mine')))
     }
@@ -739,8 +555,6 @@ export struct MainPage {
           PageShell() {
             HomePage({
               stack: this.homeStack,
-              splitMode: this.splitFor(0),
-              onWillOpen: () => this.requestSplitBeforePush(0)
             })
           }
         }
@@ -748,17 +562,8 @@ export struct MainPage {
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
-        .mode(this.splitFor(0) ? NavigationMode.Split : NavigationMode.Stack)
-        .navBarWidth(navBarWidthOf(this.bp))
-        .navBarWidthRange({
-          minWidth: navBarMinWidthOf(this.bp),
-          maxWidth: navBarMaxWidthOf(this.bp)
-        })
-        .minContentWidth(minContentWidthOf(this.bp))
+        .mode(NavigationMode.Stack)
         .navBarPosition(NavBarPosition.Start)
-        // 保留 HDS 的模式切换动画（与底部页签分支一致）：两端表现必须一样，
-        // 否则横屏是瞬切、竖屏有动画（实测就是这个差异）。
-        .enableModeChangeAnimation(true)
         .layoutWeight(1)
       } else if (this.currentIndex === 1) {
         HdsNavigation(this.scheduleStack) {
@@ -770,25 +575,14 @@ export struct MainPage {
         .titleBar(this.scheduleTitleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
-        .mode(this.splitFor(1) ? NavigationMode.Split : NavigationMode.Stack)
-        .navBarWidth(navBarWidthOf(this.bp))
-        .navBarWidthRange({
-          minWidth: navBarMinWidthOf(this.bp),
-          maxWidth: navBarMaxWidthOf(this.bp)
-        })
-        .minContentWidth(minContentWidthOf(this.bp))
+        .mode(NavigationMode.Stack)
         .navBarPosition(NavBarPosition.Start)
-        // 保留 HDS 的模式切换动画（与底部页签分支一致）：两端表现必须一样，
-        // 否则横屏是瞬切、竖屏有动画（实测就是这个差异）。
-        .enableModeChangeAnimation(true)
         .layoutWeight(1)
       } else if (this.currentIndex === 2) {
         HdsNavigation(this.featureStack) {
           PageShell() {
             FeaturePage({
               stack: this.featureStack,
-              splitMode: this.splitFor(2),
-              onWillOpen: () => this.requestSplitBeforePush(2)
             })
           }
         }
@@ -796,25 +590,14 @@ export struct MainPage {
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
-        .mode(this.splitFor(2) ? NavigationMode.Split : NavigationMode.Stack)
-        .navBarWidth(navBarWidthOf(this.bp))
-        .navBarWidthRange({
-          minWidth: navBarMinWidthOf(this.bp),
-          maxWidth: navBarMaxWidthOf(this.bp)
-        })
-        .minContentWidth(minContentWidthOf(this.bp))
+        .mode(NavigationMode.Stack)
         .navBarPosition(NavBarPosition.Start)
-        // 保留 HDS 的模式切换动画（与底部页签分支一致）：两端表现必须一样，
-        // 否则横屏是瞬切、竖屏有动画（实测就是这个差异）。
-        .enableModeChangeAnimation(true)
         .layoutWeight(1)
       } else {
         HdsNavigation(this.mineStack) {
           PageShell() {
             MinePage({
               stack: this.mineStack,
-              splitMode: this.splitFor(3),
-              onWillOpen: () => this.requestSplitBeforePush(3),
               onLogout: () => {
                 this.onLogout();
               }
@@ -825,17 +608,8 @@ export struct MainPage {
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
-        .mode(this.splitFor(3) ? NavigationMode.Split : NavigationMode.Stack)
-        .navBarWidth(navBarWidthOf(this.bp))
-        .navBarWidthRange({
-          minWidth: navBarMinWidthOf(this.bp),
-          maxWidth: navBarMaxWidthOf(this.bp)
-        })
-        .minContentWidth(minContentWidthOf(this.bp))
+        .mode(NavigationMode.Stack)
         .navBarPosition(NavBarPosition.Start)
-        // 保留 HDS 的模式切换动画（与底部页签分支一致）：两端表现必须一样，
-        // 否则横屏是瞬切、竖屏有动画（实测就是这个差异）。
-        .enableModeChangeAnimation(true)
         .layoutWeight(1)
       }
     }

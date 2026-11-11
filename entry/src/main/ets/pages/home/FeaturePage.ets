@@ -7,10 +7,10 @@ import { FeatureItem, allFeatures } from '../../components/FeatureRegistry';
 import { KEY_BREAKPOINT, fitColumnsToItems, templateOfColumns, tileColumnsTemplateFor } from '../../common/Breakpoint';
 
 /** 单个按钮的最小宽度（vp）：低于它「标题 + 说明」两行会被挤成省略号。 */
-const MIN_TILE_WIDTH: number = 168;
+const MIN_TILE_WIDTH: number = 112;
 /** 列数上下限。 */
-const MIN_COLUMNS: number = 1;
-const MAX_COLUMNS: number = 4;
+const MIN_COLUMNS: number = 2;
+const MAX_COLUMNS: number = 6;
 
 /**
  * 功能页：一层平铺的功能按钮网格。
@@ -32,15 +32,6 @@ const MAX_COLUMNS: number = 4;
 @Component
 export struct FeaturePage {
   stack: NavPathStack = new NavPathStack();
-  /** 当前是否分栏（由 MainPage 传入）：分栏时点条目是替换右栏而不是压栈。 */
-  @Prop splitMode: boolean = false;
-  /**
-   * 点条目前的回调：返回 true 表示外层会先切到分栏，此时要**延后一帧**再 push。
-   *
-   * 这不是动画，是分栏能用的前提：HDS 在已有目的页的情况下切 mode 会把它弹掉，
-   * 所以必须「先分栏、后 push」。
-   */
-  onWillOpen: () => boolean = () => false;
 
   @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
   /** 实测可用宽度换算出的列数（0 = 还没量到，按窗口断点兜底）。 */
@@ -51,14 +42,7 @@ export struct FeaturePage {
       Toast.show(item.title + ' · 敬请期待');
       return;
     }
-    if (this.splitMode || !this.onWillOpen()) {
-      AppRouter.open(this.stack, item.route, this.splitMode);
-      return;
-    }
-    // 外层即将切分栏：等布局落定再 push
-    setTimeout(() => {
-      AppRouter.open(this.stack, item.route, this.splitMode);
-    }, 32);
+    AppRouter.open(this.stack, item.route);
   }
 
   /** 列数模板：量到宽度就按实测算，否则按窗口断点估。 */
@@ -77,7 +61,6 @@ export struct FeaturePage {
             GridItem() {
               FeatureTile({
                 title: item.title,
-                desc: item.desc,
                 icon: item.icon,
                 color: item.color,
                 onTileClick: () => {

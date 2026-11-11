@@ -13,12 +13,11 @@ import { RouteName } from '../common/AppRouter';
  * - **不再分「普通功能 / 高级功能」**：功能页只做一层平铺，靠图标与色彩区分，
  *   分组反而多出一层视觉噪音。
  * - **移除「个人资料」入口**：它属于「我的」页的账户信息，放在功能页是重复入口。
- * - **图标全部重绘**（`app.media.icf_*`，24×24 单色可着色）：按功能语义各画一个，
- *   替代原先复用的 Material 图标。
+ * - **图标沿用 UBAA 原版**（`app.media.ic_*`，Material 风格，白色着色）。
+ * - **去掉 `desc` 字段**：按钮内只放图标与名称，说明文字不再展示。
  */
 export interface FeatureItem {
   title: string;
-  desc: string;
   icon: Resource;
   color: Resource;
   /** 目标路由名；为空表示暂未实现。 */
@@ -35,71 +34,61 @@ export function allFeatures(): FeatureItem[] {
   return [
     {
       title: '考试安排',
-      desc: '考试时间与考场座位',
-      icon: $r('app.media.icf_exam'),
+      icon: $r('app.media.ic_event'),
       color: AppColor.accentPurple,
       route: RouteName.EXAM
     },
     {
       title: '成绩查询',
-      desc: '按学期看成绩与学分',
-      icon: $r('app.media.icf_grade'),
+      icon: $r('app.media.ic_grade'),
       color: AppColor.accentGreen,
       route: RouteName.GRADE
     },
     {
       title: '空闲教室',
-      desc: '按日期查空闲教室',
-      icon: $r('app.media.icf_classroom'),
+      icon: $r('app.media.ic_meeting_room'),
       color: AppColor.accentYellow,
       route: RouteName.CLASSROOM
     },
     {
       title: '课堂签到',
-      desc: '今日课堂一键签到',
-      icon: $r('app.media.icf_signin'),
+      icon: $r('app.media.ic_schedule'),
       color: AppColor.brand,
       route: RouteName.SIGNIN
     },
     {
       title: '博雅课程',
-      desc: '博雅课程查询与选课',
-      icon: $r('app.media.icf_bykc'),
+      icon: $r('app.media.ic_menu_book'),
       color: AppColor.accentPink,
       route: RouteName.BYKC
     },
     {
       title: '图书馆座位',
-      desc: '预约座位与我的预约',
-      icon: $r('app.media.icf_library'),
+      icon: $r('app.media.ic_schedule'),
       color: AppColor.accentPurple,
       route: RouteName.LIBBOOK_HOME
     },
     {
       title: 'SPOC',
-      desc: '在线课程作业与提交',
-      icon: $r('app.media.icf_spoc'),
+      icon: $r('app.media.ic_school'),
       color: AppColor.brandLight,
       route: RouteName.SPOC
     },
     {
       title: '自动评教',
-      desc: '一键完成待评课程',
-      icon: $r('app.media.icf_evaluation'),
+      icon: $r('app.media.ic_assignment'),
       color: AppColor.accentGreen,
       route: RouteName.EVALUATION
     },
     {
       title: 'iHome',
-      desc: '校园诉求与处理进度',
-      icon: $r('app.media.icf_ihome'),
+      icon: $r('app.media.ic_person'),
       color: AppColor.accentYellow,
       route: RouteName.IHOME
     },
     {
       title: '阳光打卡',
-      desc: '学期打卡次数与记录',
-      icon: $r('app.media.icf_sun'),
+      icon: $r('app.media.ic_home'),
       color: AppColor.accentPink,
       route: RouteName.YGDK
     }

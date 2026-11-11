@@ -112,33 +112,10 @@ export function sideNavWidthOf(bp: string): number {
   return bp === 'xxl' ? 144 : 128;
 }
 
-/** 列表栏（navBar）宽度（vp）。md 竖屏只有 673vp，列表栏必须收窄才留得下详情。 */
-export function navBarWidthOf(bp: string): number {
-  if (bp === 'md') {
-    return 300;
-  }
-  return bp === 'xxl' ? 400 : 360;
-}
-
-/** 列表栏宽度下限 / 上限（vp）。 */
-export function navBarMinWidthOf(bp: string): number {
-  if (bp === 'md') {
-    return 264;
-  }
-  return bp === 'xxl' ? 340 : 320;
-}
-
-export function navBarMaxWidthOf(bp: string): number {
-  if (bp === 'md') {
-    return 320;
-  }
-  return bp === 'xxl' ? 440 : 400;
-}
-
-/** 详情栏最小宽度（vp）：低于它 HDS 会退回单栏。md 下必须放到 300，否则 673vp 分不开。 */
-export function minContentWidthOf(bp: string): number {
-  return bp === 'md' ? 300 : 360;
-}
+/**
+ * 平板端已取消分栏（2026-11-11）：`navBarWidth` / `navBarWidthRange` / `minContentWidth`
+ * 这几个取值函数随之删除 —— 导航一律 Stack 模式，分栏相关参数不再有使用者。
+ */
 
 /**
  * 磁贴 / 卡片网格的列数。
