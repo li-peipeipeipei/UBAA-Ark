@@ -1,6 +1,7 @@
 import { AppRouter } from '../../common/AppRouter';
 import { Toast } from '../../common/Toast';
 import { AppColor, AppFont, AppMotion, AppSize } from '../../components/AppTheme';
+import { Tween } from '../../common/Tween';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { FeatureTile, SectionCard } from '../../components/CommonViews';
 import { FeatureItem, advancedFeatures, basicFeatures } from '../../components/FeatureRegistry';
@@ -53,6 +54,8 @@ export struct FeaturePage {
    * 宽度就会逐帧真实变化 → 栅格每帧重排 → 磁贴是"连续挤窄"而不是"跳一下"。
    */
   @State private paneWidth: number = 0;
+  /** 逐帧补间器：分栏收放时驱动 paneWidth（属性动画不会重跑 build，列数会冻住）。 */
+  private paneTween: Tween = new Tween();
 
   private open(item: FeatureItem): void {
     if (item.route.length === 0) {
@@ -156,21 +159,19 @@ export struct FeaturePage {
       const raw: Length = newArea.width;
       const total: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
       if (Math.abs(total - this.paneWidth) > 0.5) {
-        // 与主页同一套时序：变宽 = 关闭分栏，等一小段再补间，让栅格归位和详情消失同时收尾。
+        // 与主页同一套时序，且**逐帧写状态**：这样栅格列数每帧都跟着宽度重算，
+        // 不会出现"宽度在变、列数冻住 → 磁贴挤在一起 → 收尾归位"的抽动。
         const closing: boolean = total > this.paneWidth;
-        const run = (): void => {
-          this.getUIContext().animateTo({
-            duration: closing ? AppMotion.SPLIT_CLOSE_DURATION : AppMotion.SPLIT_DURATION,
-            curve: Curve.Friction
-          }, () => {
-            this.paneWidth = total;
-          });
-        };
-        if (closing) {
-          setTimeout(run, AppMotion.SPLIT_CLOSE_DELAY);
-        } else {
-          run();
-        }
+        this.paneTween.run(
+          this.getUIContext(),
+          this.paneWidth,
+          total,
+          closing ? AppMotion.SPLIT_CLOSE_DURATION : AppMotion.SPLIT_DURATION,
+          closing ? AppMotion.SPLIT_CLOSE_DELAY : 0,
+          (value: number) => {
+            this.paneWidth = value;
+          }
+        );
       }
     })
     // 顶/底拖到边界时回弹（内容不足一屏也生效）

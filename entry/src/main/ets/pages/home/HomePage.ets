@@ -6,6 +6,7 @@ import { ApiError } from '../../network/ApiError';
 import { ApiService } from '../../network/ApiService';
 import { TokenStore } from '../../network/TokenStore';
 import { AppColor, AppFont, AppMotion, AppSize } from '../../components/AppTheme';
+import { Tween } from '../../common/Tween';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import {
   EmptyView,
@@ -124,6 +125,8 @@ export struct HomePage {
   @State private quickHeightVp: number = 0;
   /** 是否已经量过自身宽度（false 时按窗口断点兜底）。非 @State：只做分支判断。 */
   private measured: boolean = false;
+  /** 逐帧补间器（分栏收放时驱动 blockLane）。 */
+  private laneTween: Tween = new Tween();
 
 
   @State private loadState: LoadState = LoadState.LOADING;
@@ -725,25 +728,22 @@ export struct HomePage {
           //  - 隐式 `.animation()` 对"布局回调里触发的属性变更"不生效（实测 1200ms 仍瞬切）；
           //  - 直接赋值（旧代码在宽度变化时就是直接赋）会让底板在竖屏收放时"跳一下"。
           if (wideChanged || laneChanged) {
-            // 方向决定时序：变宽 = 关闭分栏。关闭时要**等一小段再补间**，
-            // 让"两块归位完成"和"详情页消失"落在同一时刻（见 AppMotion 的注释）。
+            // 必须**逐帧写状态**（Tween），不能用 animateTo 补间属性：
+            // 属性动画不重跑 build()，栅格列数这类派生值会冻在旧值 → 磁贴挤在一起、
+            // 收尾一次性归位（真机看到的"抖一下"）。Tween 每帧写 blockLane，
+            // wideEnough 也由同一个值派生，宽度与列数永远同帧同源。
             const closing: boolean = usable > this.blockLane;
-            const run = (): void => {
-              this.getUIContext().animateTo({
-                duration: closing ? AppMotion.SPLIT_CLOSE_DURATION : AppMotion.SPLIT_DURATION,
-                curve: Curve.Friction
-              }, () => {
-                if (wideChanged) {
-                  this.wideEnough = wide;
-                }
-                this.blockLane = usable;
-              });
-            };
-            if (closing) {
-              setTimeout(run, AppMotion.SPLIT_CLOSE_DELAY);
-            } else {
-              run();
-            }
+            this.laneTween.run(
+              this.getUIContext(),
+              this.blockLane,
+              usable,
+              closing ? AppMotion.SPLIT_CLOSE_DURATION : AppMotion.SPLIT_DURATION,
+              closing ? AppMotion.SPLIT_CLOSE_DELAY : 0,
+              (value: number) => {
+                this.blockLane = value;
+                this.wideEnough = value >= 720;
+              }
+            );
           }
         })
       }
