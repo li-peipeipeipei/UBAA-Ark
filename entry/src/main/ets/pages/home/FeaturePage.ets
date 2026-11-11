@@ -1,6 +1,6 @@
 import { AppRouter } from '../../common/AppRouter';
 import { Toast } from '../../common/Toast';
-import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
+import { AppColor, AppFont, AppMotion, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { FeatureTile, SectionCard } from '../../components/CommonViews';
 import { FeatureItem, advancedFeatures, basicFeatures } from '../../components/FeatureRegistry';
@@ -46,6 +46,14 @@ export struct FeaturePage {
    * 的那一次重建，观感才顺。条目数的适配（整除 / 不超条目）在渲染时再算。
    */
   @State private columns: number = 0;
+  /**
+   * 内容容器的**像素宽度**（我们自己驱动，0 表示还没量到、用 100%）。
+   *
+   * 为什么要这一层：分栏收放是 HDS 的原生动画，动画期间子节点不会逐帧重排，
+   * 栅格列数只能"动画结束瞬间"跳一档。把内容宽度做成自己的状态、用 animateTo 补间，
+   * 宽度就会逐帧真实变化 → 栅格每帧重排 → 磁贴是"连续挤窄"而不是"跳一下"。
+   */
+  @State private paneWidth: number = 0;
 
   private open(item: FeatureItem): void {
     if (item.route.length === 0) {
@@ -60,7 +68,7 @@ export struct FeaturePage {
     AppRouter.openAfterLayout(this.getUIContext(), this.stack, item.route, this.splitMode);
   }
 
-  /** 已有缓存就用它；还没量到（columns=0）时按窗口断点估。 */
+  /** 已有实测列数就用它；还没量到（columns=0）时按窗口断点估。 */
   private columnsTemplate(items: FeatureItem[]): string {
     if (this.columns > 0) {
       return templateOfColumns(fitColumnsToItems(this.columns, items.length, MIN_COLUMNS));
@@ -104,7 +112,9 @@ export struct FeaturePage {
         Blank()
           .height(AppSize.contentBottomInset)
       }
-      .width('100%')
+      // 宽度用像素、由我们自己补间（见下方 Scroll 的 onAreaChange）。
+      // 未量到（paneWidth=0）时先退回 100%，首帧不会塌成 0。
+      .width(this.paneWidth > 0 ? this.paneWidth : '100%')
       .padding({
         left: AppSize.pagePadding,
         right: AppSize.pagePadding,
@@ -115,8 +125,8 @@ export struct FeaturePage {
         bottom: 0
       })
       .constraintSize({ minHeight: '100%' })
-      // 量自身可用宽度（扣掉左右内边距），换算成「单格 84vp 能放几列」；
-      // 只有列数真的变了才写状态，避免分栏动画期间反复重建。
+      // 量**内容列自己**的宽度（它是被我们驱动的像素宽度，动画期间逐帧变化），
+      // 据此算列数 —— 与宽度同源，不会出现"卡片还窄、列数已按宽卡片算"的错位。
       .onAreaChange((oldArea: Area, newArea: Area) => {
         const raw: Length = newArea.width;
         const total: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
@@ -136,6 +146,21 @@ export struct FeaturePage {
       .translate({ y: -AppSize.contentTopLift })
     }
     .scrollBar(BarState.Off)
+    // 量**面板**宽度（Scroll 是 100% 宽），并用 animateTo 把内容列宽补间过去：
+    // HDS 的分栏收放是原生动画、子节点不逐帧重排，只有让内容宽度自己动起来，
+    // 栅格才会逐帧重排、磁贴"连续挤窄"而不是"跳一档"。
+    .onAreaChange((oldArea: Area, newArea: Area) => {
+      const raw: Length = newArea.width;
+      const total: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
+      if (Math.abs(total - this.paneWidth) > 0.5) {
+        this.getUIContext().animateTo({
+          duration: AppMotion.SPLIT_DURATION,
+          curve: Curve.Friction
+        }, () => {
+          this.paneWidth = total;
+        });
+      }
+    })
     // 顶/底拖到边界时回弹（内容不足一屏也生效）
     .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
     // 沉浸光感「三件套」之二 / 之三（配合 titleBar 的 enableComponentSafeArea）：

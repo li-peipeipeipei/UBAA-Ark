@@ -5,7 +5,7 @@ import { Toast } from '../../common/Toast';
 import { ApiError } from '../../network/ApiError';
 import { ApiService } from '../../network/ApiService';
 import { TokenStore } from '../../network/TokenStore';
-import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
+import { AppColor, AppFont, AppMotion, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import {
   EmptyView,
@@ -743,7 +743,7 @@ export struct HomePage {
           // 必须用**显式 animateTo**：这段状态变化发生在布局回调（onAreaChange）里，
           // 隐式 `.animation()` 对"布局过程中触发的属性变更"不生效（实测 1200ms 也是瞬切）。
           if (wide !== this.wideEnough) {
-            this.getUIContext().animateTo({ duration: 280, curve: Curve.Friction }, () => {
+            this.getUIContext().animateTo({ duration: AppMotion.SPLIT_DURATION, curve: Curve.Friction }, () => {
               this.wideEnough = wide;
               this.blockLane = usable;
             });

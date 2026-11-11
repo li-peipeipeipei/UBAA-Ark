@@ -282,3 +282,14 @@ export class ModuleColor {
     return AppColor.accentPink;
   }
 }
+
+/**
+ * 动效令牌。
+ *
+ * 分栏收放时页面内部的"重排动画"统一用同一套时长/曲线 —— 主页（两块宽度与位移）和
+ * 功能页（栅格随宽度重排）必须一致，否则两个页签切换的观感会打架。
+ */
+export class AppMotion {
+  /** 分栏切换时页面内部重排的时长（ms）。HDS 面板动画约 300ms，这里略短一点收得更利落。 */
+  static readonly SPLIT_DURATION: number = 280;
+}
