@@ -116,8 +116,12 @@ export struct GradeTermTitle {
     }
     .width('100%')
     .height(44)
-    // 让开左侧原生返回按钮（40vp 圆 + 16vp 边距）
-    .padding({ left: 64, right: 8 })
+    // 让开左侧返回按钮，并与 HDS 默认标题的起点对齐。
+    //
+    // 实测（横屏 1077vp）：导航栏从侧栏右边开始，返回按钮圆占 30~68vp，
+    // HDS 默认标题的起点在 81vp 处（按钮右边再留 13vp）。
+    // 原来写 64，标题正好压在按钮右边缘上 —— 比其它页少 17vp。
+    .padding({ left: 81, right: 8 })
     .alignItems(VerticalAlign.Center)
   }
 }
