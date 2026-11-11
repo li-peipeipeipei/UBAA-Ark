@@ -511,6 +511,7 @@ export struct MainPage {
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
+        .mode(NavigationMode.Stack)
       }
       .tabBar(new BottomTabBarStyle($r('app.media.ic_home'), $r('app.string.tab_home')))
 
@@ -524,6 +525,7 @@ export struct MainPage {
         .titleBar(this.scheduleTitleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
+        .mode(NavigationMode.Stack)
       }
       .tabBar(new BottomTabBarStyle($r('app.media.ic_schedule'), $r('app.string.tab_schedule')))
 
@@ -537,6 +539,7 @@ export struct MainPage {
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
+        .mode(NavigationMode.Stack)
       }
       .tabBar(new BottomTabBarStyle($r('app.media.ic_apps'), $r('app.string.tab_feature')))
 
@@ -555,6 +558,7 @@ export struct MainPage {
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
+        .mode(NavigationMode.Stack)
       }
       .tabBar(new BottomTabBarStyle($r('app.media.ic_person'), $r('app.string.tab_mine')))
     }

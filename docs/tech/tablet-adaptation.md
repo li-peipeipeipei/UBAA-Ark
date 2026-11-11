@@ -77,7 +77,9 @@ ImmersiveUtil         AppTheme(AppSize getter)      MainPage
 
 - 课表 / 空闲教室：本身是网格与表格，铺满可用宽度即可，无需额外分支。
 
-## 三、方向策略（踩坑记录）
+## 三、两个「必须显式声明」的坑
+
+### 1. 静态 `orientation: "portrait"` 会让平板只得到竖屏兼容窗口
 
 历史上 `module.json5` 静态写 `orientation: "portrait"`，平板横屏下系统会把 App 塞进
 **竖屏兼容窗口**（左右露出壁纸、窗口宽度恒等于竖屏宽度 387vp），此时运行期调用
@@ -96,6 +98,23 @@ ImmersiveUtil.applyOrientationPolicy(windowStage);
 // 平板 / 2in1 → AUTO_ROTATION_RESTRICTED；手机 / 窄屏 → PORTRAIT
 ```
 
+### 2. `NavigationMode.Auto` 会「偷偷分栏」（竖屏左挤的真凶）
+
+平板竖屏 673vp 下主页内容只占左侧 240vp、右侧一块黑 —— `uitest dumpLayout` 显示：
+
+```text
+Tabs        [0,105][1600,2560]
+  TabContent/Navigation  [0,105][1600,2560]
+    NavBar      [0,105][570,2560]     ← 570px = 240vp，右侧没有内容栏
+```
+
+原因：底部页签分支里的 `HdsNavigation` **没有显式设置 `mode`**，默认是
+`NavigationMode.Auto`；窗口宽度 ≥ 600vp 时 Auto 自动切成 Split，栈空的内容栏就是那片黑。
+
+修法：`narrowTabs()` 的四个一级导航全部显式 `.mode(NavigationMode.Stack)`。
+这条只在「平板竖屏（md）」暴露 —— 手机 < 600vp 时 Auto 恰好等于 Stack，所以一直没被
+发现；凡是「宽度会跨过 600vp」的形态都必须显式声明模式。
+
 ## 四、真机验证
 
 平板 MLR-AL10 `5KLBB25902200979`（2560×1600 / 密度 2.375，横屏 1077vp → lg）；
@@ -111,8 +130,11 @@ ImmersiveUtil.applyOrientationPolicy(windowStage);
 | 平板横屏 课表 | lg | 7 天网格铺满 | 通过 |
 | 平板横屏 空闲教室 | lg | 14 节次表格对齐 | 通过 |
 | 手机竖屏 登录页 | sm | 单列铺满、无侧栏 | 通过 |
-| 手机竖屏 主页 | sm | 与改造前一致 | 未验证（手机无校园网，登录进不去） |
-| 平板竖屏 | 673vp → md | 底部页签 + 单列内容 | 未验证（需手工把平板立起来） |
+| 手机竖屏 主页 / 功能 / 课表 | sm | 与改造前一致 | 通过（2026-11-11 复测） |
+| 平板竖屏 主页 | 673vp → md | 底部页签 + 整宽单列，快捷入口 4+4 | 通过（修掉 Auto 偷偷分栏后） |
+| 平板竖屏 功能 | md | 普通功能 4 列 / 高级功能 7 列，标题完整 | 通过 |
+| 平板竖屏 课表 | md | 7 天网格铺满 | 通过 |
+| 平板竖屏 点开详情 | md | 整页显示（md 不分栏）+ 返回可退 | 通过 |
 
 ## 五、后续可做
 

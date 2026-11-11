@@ -190,6 +190,20 @@ export function columnsTemplateByWidth(widthVp: number, minTile: number, minCols
   if (itemCount > 0 && itemCount < columns) {
     columns = itemCount;
   }
+  // 优先选「能整除」的列数，让最后一行不留残行：8 个快捷入口在 673vp 下按 7 列排是
+  // 7+1、按 6 列是 6+2，退到 4 列才是整齐的 4+4。只在会排出第二行时才这么做。
+  if (itemCount > columns) {
+    for (let candidate: number = columns; candidate >= minCols; candidate--) {
+      if (itemCount % candidate === 0) {
+        columns = candidate;
+        break;
+      }
+    }
+  }
+  // 兜底：仍会余 1 时再降一列（余 1 是最难看的形态）
+  while (columns > minCols && itemCount > columns && itemCount % columns === 1) {
+    columns = columns - 1;
+  }
   const cells: string[] = [];
   for (let i = 0; i < columns; i++) {
     cells.push('1fr');
