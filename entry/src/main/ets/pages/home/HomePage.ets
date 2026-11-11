@@ -124,6 +124,20 @@ export struct HomePage {
   /** 是否已经量过自身宽度（false 时按窗口断点兜底）。非 @State：只做分支判断。 */
   private measured: boolean = false;
 
+  /**
+   * 「快捷入口」块的额外位移（vp）：切换并排↔堆叠时用来把换行那一下变成滑行。
+   *
+   * 换行（wrap）是布局重排，位置无法插值，第二块会从右侧瞬间跳到下方。
+   * 这里在翻转瞬间把它**视觉上钉回切换前的位置**（初值 = 两套布局的位置差），
+   * 再用 260ms 归零 —— 看上去就是它自己从右边滑到下面。
+   */
+  @State private shiftX: number = 0;
+  @State private shiftY: number = 0;
+  /** 两块实测高度与内容区可用宽度（vp）：算位移初值用，非 @State（不参与渲染）。 */
+  private todayHeightVp: number = 0;
+  private quickHeightVp: number = 0;
+  private laneWidthVp: number = 0;
+
   @State private loadState: LoadState = LoadState.LOADING;
   @State private errorMessage: string = '';
   @State private todayClasses: TodayClass[] = [];
@@ -517,6 +531,44 @@ export struct HomePage {
     return templateOfColumns(fitColumnsToItems(this.quickColumns, items, 2));
   }
 
+  /** Area 的 Length → vp 数值（布局回调里给的是 vp，可能是 number 也可能是字符串）。 */
+  private static areaToVp(value: Length): number {
+    return typeof value === 'number' ? value : parseFloat(value.toString());
+  }
+
+  /**
+   * 并排 ↔ 堆叠翻转时，给「快捷入口」加位移初值再动画归零。
+   *
+   * 换行是布局重排，位置不参与插值：翻转那一刻它就已经在下方了。这里把它**视觉上
+   * 钉回切换前的位置**（位移初值 = 两套布局的位置差），再 260ms 归零 —— 看到的就是
+   * 它自己从右边滑到下面，而不是瞬移。
+   *
+   * @param toWide 翻转后的目标形态（true = 并排）
+   */
+  private startBlockShift(toWide: boolean): void {
+    const gap: number = AppSize.gapLarge;
+    const half: number = (this.laneWidthVp - gap) / 2;
+    // 并排：第二块左边缘 = half + gap、顶部 = 0；堆叠：左边缘 = 0、顶部 = 第一块高 + gap
+    const nextX: number = toWide ? half + gap : 0;
+    const nextY: number = toWide ? 0 : this.todayHeightVp + gap;
+    const prevX: number = toWide ? 0 : half + gap;
+    const prevY: number = toWide ? this.todayHeightVp + gap : 0;
+
+    this.wideEnough = toWide;
+    // 第一步 duration 0：把位移设成「切换前的位置差」，瞬移、不产生动画
+    this.getUIContext().animateTo({ duration: 0 }, () => {
+      this.shiftX = prevX - nextX;
+      this.shiftY = prevY - nextY;
+    });
+    // 第二步归零：这一帧才真正播放滑行
+    setTimeout(() => {
+      this.getUIContext().animateTo({ duration: 260, curve: Curve.Friction }, () => {
+        this.shiftX = 0;
+        this.shiftY = 0;
+      });
+    }, 0);
+  }
+
   @Builder
   todaySection() {
     SectionCard({
@@ -618,6 +670,9 @@ export struct HomePage {
               }
               .width(this.wideEnough ? '48.5%' : '100%')
               .alignItems(HorizontalAlign.Start)
+              .onAreaChange((oldArea: Area, newArea: Area) => {
+                this.todayHeightVp = HomePage.areaToVp(newArea.height);
+              })
 
               Column() {
                 this.quickSection()
@@ -626,6 +681,10 @@ export struct HomePage {
               .alignItems(HorizontalAlign.Start)
               // 堆叠时补上横向并排时由 space 承担的间距
               .margin({ top: this.wideEnough ? 0 : AppSize.gapLarge })
+              .onAreaChange((oldArea: Area, newArea: Area) => {
+                this.quickHeightVp = HomePage.areaToVp(newArea.height);
+              })
+              .translate({ x: this.shiftX, y: this.shiftY })
             }
             .width('100%')
             .animation({ duration: 260, curve: Curve.Friction })
@@ -653,11 +712,11 @@ export struct HomePage {
           const total: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
           const usable: number = total - AppSize.pagePadding * 2;
           this.measured = true;
+          this.laneWidthVp = usable;
           const wide: boolean = usable >= 720;
           if (wide !== this.wideEnough) {
-            // 只翻这个布尔：两块本身是同一批节点，宽度在 100% ↔ 48.5% 之间变，
-            // 由下方 Flex 的隐式 `.animation()` 负责补间（这里再套 animateTo 会双重动画）。
-            this.wideEnough = wide;
+            // 宽度由 Flex 的隐式 `.animation()` 补间；换行那一下的位移由 shiftX/Y 补。
+            this.startBlockShift(wide);
           }
           // 双列时每栏只有半宽；SectionCard 另有 16vp 内边距 ×2
           const lane: number = (wide ? usable / 2 : usable) - 32;
