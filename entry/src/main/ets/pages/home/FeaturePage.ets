@@ -110,7 +110,11 @@ export struct FeaturePage {
 
   build() {
     Scroll() {
-      Column({ space: AppSize.gapLarge }) {
+      // 外面包一层满宽 Row：内容列在动画期间会比面板窄，直接放进 Scroll 会被**居中**，
+      // 于是收尾那一刻内容整体跳一下（实测左内边距从 20 变 55 再弹回 20）。
+      // Row 撑满宽度 + Start 对齐，内容列就永远贴左边。
+      Row() {
+        Column({ space: AppSize.gapLarge }) {
         SectionCard({ title: '普通功能', subtitle: '课业相关的高频服务' }) {
           this.featureGrid(basicFeatures())
         }
@@ -134,11 +138,15 @@ export struct FeaturePage {
         top: AppSize.destTopInset(topSafeInsetVp()),
         bottom: 0
       })
-      // maxWidth 兜底：动画期间内容列**不许宽过面板** —— 一旦宽过，Scroll 会记下横向偏移，
-      // 收窄时偏移不归零，表现成"完全收回去之后向左跳一下"（就是这样踩到的）。
+      // maxWidth 兜底：动画期间内容列**不许宽过面板**。
       .constraintSize({ minHeight: '100%', maxWidth: '100%' })
       // 一级页内容整体上移一点（纯视觉位移，见 AppSize.contentTopLift）
       .translate({ y: -AppSize.contentTopLift })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.Start)
+      .alignItems(VerticalAlign.Top)
+      .constraintSize({ minHeight: '100%' })
     }
     .scrollBar(BarState.Off)
     // 量**面板**宽度（Scroll 是 100% 宽），并用 animateTo 把内容列宽补间过去：
