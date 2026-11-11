@@ -290,6 +290,12 @@ export class ModuleColor {
  * 功能页（栅格随宽度重排）必须一致，否则两个页签切换的观感会打架。
  */
 export class AppMotion {
-  /** 分栏切换时页面内部重排的时长（ms）。HDS 面板动画约 300ms，这里略短一点收得更利落。 */
-  static readonly SPLIT_DURATION: number = 280;
+  /**
+   * 分栏切换时**页面内部重排**的时长（ms）。
+   *
+   * 必须明显短于 HDS 面板动画（实测约 300ms）：页面内容比面板更早收窄/展宽，
+   * 中间帧里内容永远"比面板窄"，不会横溢到隔壁详情栏上（等长或更长必然溢出）。
+   * 短一点在观感上也更利落 —— 面板在动，内容先落位。
+   */
+  static readonly SPLIT_DURATION: number = 180;
 }

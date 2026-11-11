@@ -741,22 +741,25 @@ export struct HomePage {
           const usable: number = total - AppSize.pagePadding * 2;
           this.measured = true;
           const wide: boolean = usable >= 720;
-          // 必须用**显式 animateTo**：这段状态变化发生在布局回调（onAreaChange）里，
-          // 隐式 `.animation()` 对"布局过程中触发的属性变更"不生效（实测 1200ms 也是瞬切）。
-          if (wide !== this.wideEnough) {
-            this.getUIContext().animateTo({ duration: AppMotion.SPLIT_DURATION, curve: Curve.Friction }, () => {
-              this.wideEnough = wide;
+          const wideChanged: boolean = wide !== this.wideEnough;
+          const laneChanged: boolean = Math.abs(usable - this.blockLane) > 0.5;
+          // 两块几何**只在宽度真的变了时补间**，且一律走显式 animateTo：
+          //  - 隐式 `.animation()` 对"布局回调里触发的属性变更"不生效（实测 1200ms 仍瞬切）；
+          //  - 直接赋值（旧代码在宽度变化时就是直接赋）会让底板在竖屏收放时"跳一下"。
+          if (wideChanged || laneChanged) {
+            this.getUIContext().animateTo({
+              duration: AppMotion.SPLIT_DURATION,
+              curve: Curve.Friction
+            }, () => {
+              if (wideChanged) {
+                this.wideEnough = wide;
+              }
               this.blockLane = usable;
             });
-            return;
           }
-          // 列数不再缓存，交给 quickColumnsTemplate() 用它现算，保证与宽度同源
+          // 列数不再缓存，交给 quickColumnsTemplate() 用卡片自身宽度现算
           if (Math.abs(usable - this.laneWidth) > 0.5) {
             this.laneWidth = usable;
-          }
-          // 像素布局的基准宽度：两块几何全部由它算，配合 .animation() 连续补间
-          if (Math.abs(usable - this.blockLane) > 0.5) {
-            this.blockLane = usable;
           }
         })
       }
