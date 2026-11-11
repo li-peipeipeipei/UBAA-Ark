@@ -179,8 +179,20 @@ export struct MainPage {
     const stacks: NavPathStack[] = [this.homeStack, this.scheduleStack, this.featureStack, this.mineStack];
     for (let i = 0; i < stacks.length; i++) {
       const index: number = i;
-      // 只挂 didShow：push / pop / 手势返回都会经过它，能覆盖所有进出栈路径。
       stacks[i].setInterception({
+        // willShow 在目的页出现**之前**触发。返回时若栈已空，就**立刻**收回分栏 ——
+        // 不能等 didShow（那里为防 push 抖动加了 160ms 防抖）：否则详情已经退出、
+        // 面板还停在分栏状态，右侧留一块空白，等防抖结束才"啪"地展开 —— 就是那一下闪。
+        // willShow 会带 operation：POP 就是在返回。这时立刻收回分栏，
+        // 不等 didShow（那里为防 push 抖动有 160ms 防抖）—— 否则详情已经退出、
+        // 面板还停在分栏态，右侧留一块空白，等防抖结束才"啪"地展开（看到的那一下闪）。
+        willShow: (from, to, operation) => {
+          if (operation === NavigationOperation.POP && this.stackDepth[index] > 0) {
+            this.liveDepth[index] = 0;
+            this.cancelCollapse(index);
+            this.applyDepth(index, 0);
+          }
+        },
         didShow: () => {
           this.updateStackDepth(index, stacks[index].size());
         }
