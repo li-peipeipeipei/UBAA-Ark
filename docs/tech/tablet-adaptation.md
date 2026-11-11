@@ -90,7 +90,17 @@ ImmersiveUtil         AppTheme(AppSize getter)      MainPage
 - 主页 `twoColumnLayout()` 的判据也改成「自身宽度 ≥ 720vp」——两栏各 340vp 才会好看；
 - 窗口断点只用来决定**外壳形态**（页签 / 侧栏、分栏能力），不再参与页面内部栅格。
 
-### 5. 其它页面
+### 5. 转场细节：结构切换永远不要靠 animateTo 兜底
+
+- **别用 `if/else` 切 `Row ↔ Column`**：那是结构切换，旧节点被销毁、新节点直接落在终态，
+  ArkUI 只对「存续节点」的属性补间，外面包 `animateTo` 也补不出来 → 硬切。
+- 正确做法：两块**永远是同一批节点**，只让几何属性变（`width` 100% ↔ 48.5%），
+  外面挂隐式 `.animation({ duration: 260, curve: Curve.Friction })`。
+- 换行的**位移**仍然无法插值（wrap 一换行，第二块就已经在下方了）。用位移补偿把它变成
+  滑行：翻转瞬间 `animateTo({duration: 0})` 把第二块钉回切换前的位置（初值 = 两套布局的
+  位置差），下一帧再 `animateTo(260ms)` 归零。见 `HomePage.startBlockShift`。
+
+### 6. 其它页面
 
 - 课表 / 空闲教室：本身是网格与表格，铺满可用宽度即可，无需额外分支。
 

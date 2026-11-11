@@ -659,10 +659,10 @@ export struct HomePage {
 
             // 「今日课程 | 快捷入口」：宽屏并排、窄屏堆叠。
             //
-            // 不用 if/else 切 Row↔Column —— 那是**结构切换**，旧节点被销毁、新节点直接
-            // 出现在终态位置，无论外面包不包 animateTo 都是硬切（实测：分栏切换时这两块
-            // 会瞬间跳一下）。这里改成**永远是同一批节点**，只让宽度在 100% ↔ 48.5% 之间
-            // 变，配合隐式动画，宽度被插值、换行在动画途中自然发生，观感是两块平滑收窄。
+            // 不用 if/else 切 Row↔Column（结构切换 = 硬切），也**不要**给宽度再挂
+            // `.animation()`：宽度是百分比，本来就随外层面板的收放每帧重算，再叠一层
+            // 宽度动画会让卡片宽度和内部网格列数不同步 —— 实测表现为磁贴被裁成一条条。
+            // 这里只做两件事：宽度跟着面板走，换行那一下用 translate 补偿成滑行。
             Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween,
               alignItems: ItemAlign.Start }) {
               Column() {
@@ -687,7 +687,6 @@ export struct HomePage {
               .translate({ x: this.shiftX, y: this.shiftY })
             }
             .width('100%')
-            .animation({ duration: 260, curve: Curve.Friction })
           }
 
           // 为悬浮底栏预留高度（barOverlap 模式下内容会被底栏覆盖）
