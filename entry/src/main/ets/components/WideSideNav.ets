@@ -14,13 +14,15 @@ const SIDE_NAV_ITEM_HEIGHT: number = 48;
  * 不用 `Curve.Friction + duration` 的原因是那种写法是「固定时长的匀减速」，
  * 到位那一下是「咔」地停住。弹簧有自然的加速—减速—轻微收尾，是 iOS 上分段控件
  * 指示器的手感：
- * - response 0.36：一次振荡的时长。0.15（系统默认）太快，一滑就到；
- * - dampingFraction 0.86：留一点点过冲再收住，接近临界阻尼但不像 1.0 那样发死。
+ * - response 0.28：一次振荡的时长。0.36 在真机上手感偏拖（沛轩反馈"稍微有点慢"），
+ *   0.15（系统默认）又太快、一滑就到，0.28 介于两者之间；
+ * - dampingFraction 0.88：留一点点过冲再收住，接近临界阻尼但不像 1.0 那样发死；
+ *   配合更短的 response，收尾更干脆。
  *
  * ⚠️ 弹簧曲线**不吃 `duration`**，时长由这两个参数决定。
  */
-const SIDE_NAV_SLIDE_RESPONSE: number = 0.36;
-const SIDE_NAV_SLIDE_DAMPING: number = 0.86;
+const SIDE_NAV_SLIDE_RESPONSE: number = 0.28;
+const SIDE_NAV_SLIDE_DAMPING: number = 0.88;
 
 /**
  * 宽屏侧边导航栏（平板 / 折叠展开 / 2in1 / 宽自由窗口）。
