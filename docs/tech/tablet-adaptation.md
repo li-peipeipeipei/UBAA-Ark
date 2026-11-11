@@ -65,7 +65,12 @@ ImmersiveUtil         AppTheme(AppSize getter)      MainPage
 
 - 栈深由 `NavPathStack.setInterception().didShow` 维护（push / pop / 手势返回都会经过），
   写进 `@State stackDepth`；`splitFor(tab)` = `navSplitMode && 页签属于 0/2/3 && 栈深 > 0`。
-- 过渡动画靠 `enableModeChangeAnimation(true)`，不额外写动画。
+- **过渡动画用 HDS 的模式切换动画**（`enableModeChangeAnimation(true)`，两个布局分支都要开）。
+  它的表现是：列表栏从整宽收窄到 300/360，详情栏随之从右往左让出来 —— 正是「详情从右侧
+  出现」。⚠️ 曾经为了修「从左侧出现」把它关掉，结果横屏分支变成瞬切（竖屏分支是默认开启，
+  所以竖屏还有动画），两端表现不一致；**两个分支必须一致，别只改一边**。
+- **push 要等分栏布好再发**（`AppRouter.openAfterLayout`，隔两帧的帧回调）。同一帧里既切
+  mode 又 push，内容栏是跟详情一起新建的，push 动画会被吞掉（横屏大窗口下必然瞬显）。
 - **点条目要用 replace 而不是 push**：分栏时「左列表 → 右详情」是一对一关系，已经在看
   某个详情时再点另一个条目，应该替换右栏内容。否则栈深变 2，返回一次只退到上一个详情，
   用户会觉得返回键失灵。见 `AppRouter.open(stack, route, splitMode)`。

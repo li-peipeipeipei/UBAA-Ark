@@ -30,6 +30,12 @@ export struct FeaturePage {
   stack: NavPathStack = new NavPathStack();
   /** 当前是否分栏（由 MainPage 传入）：分栏时点条目是替换右栏而不是压栈。 */
   @Prop splitMode: boolean = false;
+  /**
+   * 点条目前的回调。返回 true = 外层会立刻切成双列，此时要**延后一帧**再 push：
+   * 分栏先就位，详情才以 push 动画从右侧滑入；否则先 push 后切模式，看到的是
+   * 模式切换动画（内容区自左向右展开，像从左边挤出来）。
+   */
+  onWillOpen: () => boolean = () => false;
 
   @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
   /**
@@ -46,7 +52,12 @@ export struct FeaturePage {
       Toast.show(item.title + ' · 敬请期待');
       return;
     }
-    AppRouter.open(this.stack, item.route, this.splitMode);
+    if (this.splitMode || !this.onWillOpen()) {
+      AppRouter.open(this.stack, item.route, this.splitMode);
+      return;
+    }
+    // 外层即将切分栏：等这一帧布局落定再 push，详情才会从右侧滑入
+    AppRouter.openAfterLayout(this.getUIContext(), this.stack, item.route, this.splitMode);
   }
 
   /** 已有缓存就用它；还没量到（columns=0）时按窗口断点估。 */

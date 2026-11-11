@@ -18,6 +18,8 @@ export struct MinePage {
   stack: NavPathStack = new NavPathStack();
   /** 当前是否分栏（由 MainPage 传入）：分栏时点菜单是替换右栏而不是压栈。 */
   @Prop splitMode: boolean = false;
+  /** 点菜单前的回调。返回 true = 外层会立刻切双列，此时延后一帧再 push，详情才从右侧滑入。 */
+  onWillOpen: () => boolean = () => false;
 
   @State private userName: string = '';
   @State private schoolId: string = '';
@@ -139,6 +141,18 @@ export struct MinePage {
   private clearLocalData(): void {
   }
 
+  /**
+   * 打开二级页。未分栏且外层能分栏时，先切 Split、下一帧再 push，
+   * 让详情以 push 动画从右侧滑入（而不是模式切换动画里的自左向右展开）。
+   */
+  private openRoute(route: string): void {
+    if (this.splitMode || !this.onWillOpen()) {
+      AppRouter.open(this.stack, route, this.splitMode);
+      return;
+    }
+    AppRouter.openAfterLayout(this.getUIContext(), this.stack, route, this.splitMode);
+  }
+
   build() {
     Scroll() {
       Column({ space: AppSize.gapLarge }) {
@@ -147,12 +161,12 @@ export struct MinePage {
         SectionCard({ title: '账户', subtitle: '学籍与连接配置' }) {
           Column() {
             this.menuRow('个人资料', '查看学籍信息与联系方式', $r('sys.symbol.person'), () => {
-              AppRouter.open(this.stack, RouteName.USER_INFO, this.splitMode);
+              this.openRoute(RouteName.USER_INFO);
             })
             Divider().color(AppColor.divider).strokeWidth(0.5)
             this.menuRow('连接设置', '当前：' + connectionModeName(TokenStore.getConnectionMode()),
               $r('sys.symbol.wifi'), () => {
-                AppRouter.open(this.stack, RouteName.SETTINGS, this.splitMode);
+                this.openRoute(RouteName.SETTINGS);
               })
           }
           .width('100%')
@@ -161,7 +175,7 @@ export struct MinePage {
         SectionCard({ title: '关于', subtitle: '版本与开源信息' }) {
           Column() {
             this.menuRow('关于 UBAA', '版本 ' + AppConfig.APP_VERSION, $r('sys.symbol.info_circle'), () => {
-              AppRouter.open(this.stack, RouteName.ABOUT, this.splitMode);
+              this.openRoute(RouteName.ABOUT);
             })
           }
           .width('100%')

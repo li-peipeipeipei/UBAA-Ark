@@ -107,6 +107,8 @@ export struct HomePage {
   stack: NavPathStack = new NavPathStack();
   /** 当前是否分栏（由 MainPage 传入）：分栏时点条目是替换右栏而不是压栈。 */
   @Prop splitMode: boolean = false;
+  /** 点条目前的回调。返回 true = 外层会立刻切双列，此时延后一帧再 push，详情才从右侧滑入。 */
+  onWillOpen: () => boolean = () => false;
 
   /** 当前宽度断点：决定磁贴列数与是否双列并排。 */
   @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
@@ -323,7 +325,21 @@ export struct HomePage {
     // 记一次使用：快捷入口按使用次数排序，回来时顺序已经是新的
     TokenStore.recordFeatureUse(item.title);
     this.featureUsage = TokenStore.getFeatureUsage();
-    AppRouter.open(this.stack, item.route, this.splitMode);
+    this.openRoute(item.route);
+  }
+
+  /**
+   * 打开二级页。
+   *
+   * 未分栏且外层能分栏时，先让外层切到 Split、**下一帧**再 push ——
+   * 详情才是「分栏里的内容从右侧滑入」，而不是模式切换动画里的「自左向右展开」。
+   */
+  private openRoute(route: string): void {
+    if (this.splitMode || !this.onWillOpen()) {
+      AppRouter.open(this.stack, route, this.splitMode);
+      return;
+    }
+    AppRouter.openAfterLayout(this.getUIContext(), this.stack, route, this.splitMode);
   }
 
   /**
@@ -403,7 +419,7 @@ export struct HomePage {
       ]
     })
     .onClick(() => {
-      AppRouter.open(this.stack, RouteName.EXAM, this.splitMode);
+      this.openRoute(RouteName.EXAM);
     })
   }
 
