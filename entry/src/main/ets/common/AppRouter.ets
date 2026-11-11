@@ -40,6 +40,10 @@ export class RouteName {
   static readonly USER_INFO: string = 'userInfo';
   static readonly SETTINGS: string = 'settings';
   static readonly ABOUT: string = 'about';
+  /** 隐私政策与用户协议（应用内全文，上架合规要求）。 */
+  static readonly PRIVACY: string = 'privacy';
+  /** 开源许可（MIT 全文 + 上游项目署名，MIT 许可证要求的随附声明）。 */
+  static readonly LICENSE: string = 'license';
 }
 
 /** 宽屏 Split 右栏栈空时压入的占位路由（只由 MainPage 在 lg / xxl 档使用）。 */
@@ -87,6 +91,11 @@ export class AppRouter {
     setTimeout(() => {
       AppRouter.open(stack, name, splitMode);
     }, 32);
+  }
+
+  /** 二级页返回前通知外层：立刻收起分栏（让左栏在 pop 的同时向右展开，而不是等 pop 结束）。 */
+  static requestSplitCollapse(): void {
+    AppStorage.setOrCreate('ubaaSplitCollapse', Date.now());
   }
 
   static back(stack: NavPathStack): void {

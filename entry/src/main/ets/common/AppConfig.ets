@@ -43,6 +43,28 @@ export class AppConfig {
   /** 客户端版本号，用于 User-Agent 与关于页展示。 */
   static readonly APP_VERSION: string = '0.1.0';
 
+  /** 应用展示名（与 AppScope 的 app_name 保持一致）。 */
+  static readonly APP_DISPLAY_NAME: string = 'UBAA';
+
+  /** 上游开源项目主页（MIT）。关于页与开源许可页展示，属许可证要求的署名。 */
+  static readonly ORIGINAL_PROJECT_NAME: string = 'BUAASubnet / UBAA';
+  static readonly ORIGINAL_PROJECT_URL: string = 'https://github.com/BUAASubnet/UBAA';
+
+  /** 本鸿蒙版本的维护者与仓库（原作者要求在介绍中注明独立维护）。 */
+  static readonly THIS_PROJECT_URL: string = 'https://github.com/li-peipeipeipei/UBAA-HarmonyOS';
+
+  /**
+   * 隐私政策约定的联系邮箱。
+   *
+   * ⚠️ 上架前必须替换为真实可收信地址：华为审核会人工核对隐私政策里的联系方式，
+   * 留占位符或不可达地址会以「隐私政策不合规」驳回。替换时同步修改
+   * `docs/legal/privacy-policy.md` 末尾的同一项。
+   */
+  static readonly CONTACT_EMAIL: string = '请填写联系邮箱';
+
+  /** 隐私政策 / 用户协议生效日期（与 docs/legal 下的文档保持一致）。 */
+  static readonly POLICY_EFFECTIVE_DATE: string = '2026 年 11 月 11 日';
+
   /** 连接超时（毫秒）。 */
   static readonly CONNECT_TIMEOUT: number = 10000;
 

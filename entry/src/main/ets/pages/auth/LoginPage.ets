@@ -269,11 +269,11 @@ export struct LoginPage {
               .height(84)
               .borderRadius(22)
               .draggable(false)
-            Text('智慧北航')
+            Text('UBAA')
               .fontSize(AppFont.titleLarge)
               .fontWeight(FontWeight.Bold)
               .fontColor(Color.White)
-            Text('UBAA · 校园服务聚合客户端')
+            Text('校园服务聚合客户端 · 鸿蒙原生版')
               .fontSize(AppFont.caption)
               .fontColor('#CCFFFFFF')
           }

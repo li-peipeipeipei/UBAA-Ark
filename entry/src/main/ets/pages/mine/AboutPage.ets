@@ -1,4 +1,5 @@
 import { AppConfig } from '../../common/AppConfig';
+import { AppRouter, RouteName } from '../../common/AppRouter';
 import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { InfoRow, SectionCard } from '../../components/CommonViews';
@@ -6,10 +7,54 @@ import { InfoRow, SectionCard } from '../../components/CommonViews';
 /**
  * 关于页。
  *
- * 展示版本、技术栈与后端契约，便于排查问题时快速对齐环境。
+ * ## 上架合规要点（改动前请先读）
+ *
+ * 应用市场上架要求这个页面同时承担三件事，缺一项都可能被审核驳回：
+ * 1. **来源与主体声明** —— 明确「基于 UBAA 开发、由个人独立维护、非学校官方应用」。
+ *    上游项目方在授权中明确要求在应用介绍中注明这一点，写在这里与商店文案形成互证。
+ * 2. **MIT 许可证可达** —— 上游以 MIT 发布，安装包是独立分发形态，必须在应用内可见。
+ * 3. **隐私政策可达** —— 商店要求提交政策 URL，审核同时会核对应用内是否有入口。
+ *
+ * ⚠️ 应用名**不得**使用学校官方应用的名称。当前应用名为 UBAA（上游开源项目名，已获授权）。
  */
 @Component
 export struct AboutPage {
+  stack: NavPathStack = new NavPathStack();
+
+  private openRoute(name: string): void {
+    AppRouter.push(this.stack, name);
+  }
+
+  /** 菜单行（与「我的」页保持同一视觉规格）。 */
+  @Builder
+  menuRow(title: string, subtitle: string, icon: Resource, onClick: () => void) {
+    Row({ space: AppSize.gap }) {
+      SymbolGlyph(icon)
+        .fontSize(22)
+        .fontColor([AppColor.brand])
+
+      Column({ space: 2 }) {
+        Text(title)
+          .fontSize(AppFont.body)
+          .fontColor(AppColor.textPrimary)
+        Text(subtitle)
+          .fontSize(AppFont.caption)
+          .fontColor(AppColor.textTertiary)
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(14)
+        .fontColor([AppColor.textTertiary])
+    }
+    .width('100%')
+    .padding({ top: 10, bottom: 10 })
+    .onClick(() => {
+      onClick();
+    })
+  }
+
   build() {
     Scroll() {
       Column({ space: AppSize.gapLarge }) {
@@ -19,16 +64,60 @@ export struct AboutPage {
             .height(80)
             .borderRadius(20)
             .draggable(false)
-          Text('智慧北航')
+          Text(AppConfig.APP_DISPLAY_NAME)
             .fontSize(AppFont.titleLarge)
             .fontWeight(FontWeight.Bold)
             .fontColor(AppColor.textPrimary)
-          Text('UBAA · HarmonyOS 原生版')
+          Text('校园服务聚合客户端 · 鸿蒙原生版')
             .fontSize(AppFont.caption)
             .fontColor(AppColor.textTertiary)
         }
         .width('100%')
         .padding({ top: 24, bottom: 8 })
+
+        SectionCard({ title: '关于本应用', subtitle: '来源与维护主体', showAction: false }) {
+          Column() {
+            InfoRow({ label: '应用版本', value: AppConfig.APP_VERSION })
+            InfoRow({ label: '维护方式', value: '个人开发者独立维护' })
+            InfoRow({ label: '项目性质', value: '第三方客户端，非学校官方应用' })
+            InfoRow({ label: '上游项目', value: AppConfig.ORIGINAL_PROJECT_NAME, showDivider: false })
+
+            Text('本应用基于开源项目 UBAA 开发，由个人开发者独立维护，' +
+              '与学校及相关校内系统的运营方无从属、代理或合作关系，不代表学校提供任何官方服务。' +
+              '应用内的全部数据，均由您本人通过统一身份认证登录后自行访问学校系统获得；' +
+              '本应用没有自建服务端，不收集、不存储、不转发您的账号与业务数据。')
+              .fontSize(AppFont.caption)
+              .fontColor(AppColor.textSecondary)
+              .lineHeight(20)
+              .width('100%')
+              .padding({ top: 10 })
+
+            Text('上游项目地址（长按可复制）')
+              .fontSize(AppFont.caption)
+              .fontColor(AppColor.textTertiary)
+              .width('100%')
+              .padding({ top: 10 })
+            Text(AppConfig.ORIGINAL_PROJECT_URL)
+              .fontSize(AppFont.caption)
+              .fontColor(AppColor.brand)
+              .width('100%')
+              .copyOption(CopyOptions.LocalDevice)
+          }
+          .width('100%')
+        }
+
+        SectionCard({ title: '法律与开源', subtitle: '隐私政策与许可证', showAction: false }) {
+          Column() {
+            this.menuRow('隐私政策', '信息收集范围与使用方式', $r('sys.symbol.doc'), () => {
+              this.openRoute(RouteName.PRIVACY);
+            })
+            Divider().color(AppColor.divider).strokeWidth(0.5)
+            this.menuRow('开源许可', 'MIT License · 上游版权声明', $r('sys.symbol.book'), () => {
+              this.openRoute(RouteName.LICENSE);
+            })
+          }
+          .width('100%')
+        }
 
         SectionCard({ title: '版本信息', showAction: false }) {
           Column() {

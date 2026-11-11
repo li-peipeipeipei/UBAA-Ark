@@ -10,7 +10,8 @@ import {
 import { KEY_BOTTOM_SAFE_HEIGHT, topSafeInsetVp } from '../common/ImmersiveUtil';
 import { webview } from '@kit.ArkWeb';
 import { Logger } from '../common/Logger';
-import { AppColor, AppFont, AppSize } from '../components/AppTheme';
+import { Tween } from '../common/Tween';
+import { AppColor, AppFont, AppMotion, AppSize } from '../components/AppTheme';
 import { ScheduleDayHeader, ScheduleHeaderModel, ScheduleTermChip, ScheduleWeekChips } from '../components/ScheduleHeader';
 import { routeBuilder } from './RouteBuilder';
 import { HomePage } from './home/HomePage';
@@ -20,6 +21,7 @@ import { MinePage } from './mine/MinePage';
 import {
   KEY_BREAKPOINT,
   KEY_NAV_SPLIT_MODE,
+  KEY_WINDOW_WIDTH_VP,
   navBarWidthOf,
   navBarMinWidthOf,
   navBarMaxWidthOf,
@@ -151,6 +153,23 @@ export struct MainPage {
    * 栈深一旦 > 0 就会被清掉（`updateStackDepth`），不留残余。
    */
   @State private awaitSplit: boolean[] = [false, false, false, false];
+  /**
+   * 二级页点返回时发来的「收起分栏」信号（AppRouter.requestSplitCollapse）。
+   *
+   * 由目的地主动发，比等 HDS 的 pop 结束再切 mode 早约 180ms —— 视觉上左栏跟着
+   * 详情一起向右展开，而不是"详情先走、面板后展"两段式。
+   */
+  @StorageLink('ubaaSplitCollapse') @Watch('onCollapseRequest') private collapseSignal: number = 0;
+  /**
+   * navBar 的覆盖宽度（0 = 用断点默认值）。
+   *
+   * 为什么需要它：HDS 在 pop 进行期间**不接受 mode 切换**（实测：收回指令在点击当帧就发出，
+   * 但面板要等 pop 结束才展开 → 中间露出约 150ms 的空档）。而 `navBarWidth` 是布局属性，
+   * 可以在 pop 期间逐帧改 —— 所以返回时先把 navBar 补间到全宽，左栏就跟着详情一起向右展开，
+   * 等 pop 结束再切 mode（此时宽度已经等于全屏，没有二次跳动）。
+   */
+  @State private navBarW: number = 0;
+  private navBarTween: Tween = new Tween();
   /** 「收回分栏」的防抖定时器（每个页签一个，-1 表示没有在等待）。 */
   private collapseTimer: number[] = [-1, -1, -1, -1];
   /**
@@ -235,6 +254,33 @@ export struct MainPage {
     next[index] = depth;
     this.stackDepth = next;
     Logger.info('LAYOUT 页签' + index + ' 栈深=' + depth);
+  }
+
+  /** 收到二级页的返回信号：先把 navBar 补间到全宽（与 pop 同时向右展开），再收起分栏。 */
+  private onCollapseRequest(): void {
+    const index: number = this.currentIndex;
+    if (this.stackDepth[index] <= 0) {
+      return;
+    }
+    const windowW: number = AppStorage.get<number>(KEY_WINDOW_WIDTH_VP) ?? 0;
+    const from: number = this.navBarW > 0 ? this.navBarW : navBarWidthOf(this.bp);
+    if (windowW > from) {
+      // 逐帧补间，和 pop 抢时间；结束后再真正切回 Stack
+      this.navBarTween.run(this.getUIContext(), from, windowW,
+        AppMotion.SPLIT_CLOSE_DURATION, 0, (value: number) => {
+          this.navBarW = value;
+        });
+      setTimeout(() => {
+        this.navBarW = 0;
+        this.liveDepth[index] = 0;
+        this.cancelCollapse(index);
+        this.applyDepth(index, 0);
+      }, AppMotion.SPLIT_CLOSE_DURATION);
+      return;
+    }
+    this.liveDepth[index] = 0;
+    this.cancelCollapse(index);
+    this.applyDepth(index, 0);
   }
 
   private cancelCollapse(index: number): void {
@@ -610,7 +656,7 @@ export struct MainPage {
         .hideBackButton(true)
         .mode(this.splitFor(0) ? NavigationMode.Split : NavigationMode.Stack)
         .enableModeChangeAnimation(true)
-        .navBarWidth(navBarWidthOf(this.bp))
+        .navBarWidth(this.navBarW > 0 ? this.navBarW : navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
           maxWidth: navBarMaxWidthOf(this.bp)
@@ -631,7 +677,7 @@ export struct MainPage {
         .hideBackButton(true)
         .mode(this.splitFor(1) ? NavigationMode.Split : NavigationMode.Stack)
         .enableModeChangeAnimation(true)
-        .navBarWidth(navBarWidthOf(this.bp))
+        .navBarWidth(this.navBarW > 0 ? this.navBarW : navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
           maxWidth: navBarMaxWidthOf(this.bp)
@@ -656,7 +702,7 @@ export struct MainPage {
         .hideBackButton(true)
         .mode(this.splitFor(2) ? NavigationMode.Split : NavigationMode.Stack)
         .enableModeChangeAnimation(true)
-        .navBarWidth(navBarWidthOf(this.bp))
+        .navBarWidth(this.navBarW > 0 ? this.navBarW : navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
           maxWidth: navBarMaxWidthOf(this.bp)
@@ -684,7 +730,7 @@ export struct MainPage {
         .hideBackButton(true)
         .mode(this.splitFor(3) ? NavigationMode.Split : NavigationMode.Stack)
         .enableModeChangeAnimation(true)
-        .navBarWidth(navBarWidthOf(this.bp))
+        .navBarWidth(this.navBarW > 0 ? this.navBarW : navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
           maxWidth: navBarMaxWidthOf(this.bp)
@@ -766,7 +812,7 @@ export struct MainPage {
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
         .mode(this.splitFor(0) ? NavigationMode.Split : NavigationMode.Stack)
-        .navBarWidth(navBarWidthOf(this.bp))
+        .navBarWidth(this.navBarW > 0 ? this.navBarW : navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
           maxWidth: navBarMaxWidthOf(this.bp)
@@ -788,7 +834,7 @@ export struct MainPage {
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
         .mode(this.splitFor(1) ? NavigationMode.Split : NavigationMode.Stack)
-        .navBarWidth(navBarWidthOf(this.bp))
+        .navBarWidth(this.navBarW > 0 ? this.navBarW : navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
           maxWidth: navBarMaxWidthOf(this.bp)
@@ -814,7 +860,7 @@ export struct MainPage {
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
         .mode(this.splitFor(2) ? NavigationMode.Split : NavigationMode.Stack)
-        .navBarWidth(navBarWidthOf(this.bp))
+        .navBarWidth(this.navBarW > 0 ? this.navBarW : navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
           maxWidth: navBarMaxWidthOf(this.bp)
@@ -843,7 +889,7 @@ export struct MainPage {
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
         .mode(this.splitFor(3) ? NavigationMode.Split : NavigationMode.Stack)
-        .navBarWidth(navBarWidthOf(this.bp))
+        .navBarWidth(this.navBarW > 0 ? this.navBarW : navBarWidthOf(this.bp))
         .navBarWidthRange({
           minWidth: navBarMinWidthOf(this.bp),
           maxWidth: navBarMaxWidthOf(this.bp)
