@@ -101,7 +101,9 @@ struct GradeDestination {
     // 由目的地主动 pop 才可靠；返回 true 表示事件已消费、不再冒泡到系统。
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      this.stack.pop();
+      setTimeout(() => {
+        this.stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -205,7 +207,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('考试安排'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -220,7 +224,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('空闲教室'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -233,7 +239,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('iHome'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -246,7 +254,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('诉求详情'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -259,7 +269,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('希冀作业'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -272,7 +284,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('作业详情'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -285,7 +299,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('自动评教'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -298,7 +314,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('课堂签到'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -311,7 +329,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('SPOC 作业'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -324,7 +344,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('阳光打卡'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -337,7 +359,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('博雅课程'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -350,7 +374,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('选择课程'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -363,7 +389,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('我的课程'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -376,7 +404,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('课程统计'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -389,7 +419,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('课程详情'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -402,7 +434,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('图书馆座位'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -415,7 +449,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('预约座位'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -428,7 +464,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('我的座位预约'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -441,7 +479,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('个人资料'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -454,7 +494,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('设置'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -467,7 +509,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('关于'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -480,7 +524,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('隐私政策'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -493,7 +539,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('开源许可'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
@@ -509,7 +557,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar(''))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .hideBackButton(true)
@@ -530,7 +580,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     .titleBar(destTitleBar('出错了'))
     .onBackPressed(() => {
       AppRouter.requestSplitCollapse();
-      stack.pop();
+      setTimeout(() => {
+        stack.pop();
+      }, 16);
       return true;
     })
     .backgroundColor($r('app.color.page_background'))
