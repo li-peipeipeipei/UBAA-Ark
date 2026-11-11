@@ -203,7 +203,7 @@ export struct MainPage {
       return;
     }
     // 目标页签若有二级页面在栈里，先清干净 —— 卡片进来的应该是该页签的根页面
-    this.stackOf(index).clear();
+    this.clearStack(index);
     // 宽屏没有 HdsTabsController，切页签靠 currentIndex 驱动 if/else 分支
     this.currentIndex = index;
     this.controller.changeIndex(index);
@@ -264,10 +264,26 @@ export struct MainPage {
   }
 
   /** 宽屏侧栏点选：等价 HdsTabs 的 onChange + onTabBarClick 两个回调。 */
+  /**
+   * 清栈回到该页签的根页面。
+   *
+   * **功能页签（index 2）必须硬切**：功能页的大按钮进二级页就是硬切（产品要求），
+   * 返回按钮也是硬切；如果点底部页签「功能」时的清栈带着滑出动画，就会看到
+   * 「二级页滑走 + 列表页滑入」——与同一场景的其它返回方式不一致。
+   * 其余页签保持默认（带动画），与它们的 push / pop 对称。
+   */
+  private clearStack(index: number): void {
+    if (index === 2) {
+      this.stackOf(index).clear(false);
+    } else {
+      this.stackOf(index).clear();
+    }
+  }
+
   private onWideSelect(index: number): void {
     if (index === this.currentIndex) {
       // 「再点当前项回主页」：清栈后自动退回单栏（栈深归零）
-      this.stackOf(index).clear();
+      this.clearStack(index);
       return;
     }
     this.currentIndex = index;
@@ -586,7 +602,7 @@ export struct MainPage {
     // 说明用户想「回顶部/回主页」，就把这个页签的导航栈清空（栈空了会退回根页面）。
     .onTabBarClick((index: number) => {
       if (index === this.currentIndex) {
-        this.stackOf(index).clear();
+        this.clearStack(index);
       }
     })
     .backgroundColor(AppColor.pageBackground)
@@ -715,7 +731,7 @@ export struct MainPage {
       onSelect: (index: number) => {
         if (index === this.currentIndex) {
           // 「再点当前项」清栈回主页（与底部页签的 onTabBarClick 一致）
-          this.stackOf(index).clear();
+          this.clearStack(index);
           return;
         }
         this.controller.changeIndex(index);
