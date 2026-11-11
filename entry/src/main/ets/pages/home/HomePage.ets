@@ -136,6 +136,10 @@ export struct HomePage {
    * 的错位 —— 表现为磁贴被裁成半个（关闭分栏时最明显）。
    */
   @State private quickCardWidth: number = 0;
+  /** 两块区域的像素布局（都挂在同一个 .animation() 上补间）。 */
+  @State private blockLane: number = 0;
+  @State private todayHeightVp: number = 0;
+  @State private quickHeightVp: number = 0;
   /** 是否已经量过自身宽度（false 时按窗口断点兜底）。非 @State：只做分支判断。 */
   private measured: boolean = false;
 
@@ -543,6 +547,35 @@ export struct HomePage {
     return templateOfColumns(fitColumnsToItems(columns, items, 2));
   }
 
+  /** 单块宽度：并排各占一半（扣 16vp 间距），堆叠整宽。 */
+  private blockWidth(): number {
+    const gap: number = AppSize.gapLarge;
+    return this.wideEnough ? (this.blockLane - gap) / 2 : this.blockLane;
+  }
+
+  /** 「快捷入口」左边缘：并排接在「今日课程」右侧 + 间距，堆叠为 0。 */
+  private quickBlockX(): number {
+    return this.wideEnough ? (this.blockLane + AppSize.gapLarge) / 2 : 0;
+  }
+
+  /** 「快捷入口」上边缘：并排与「今日课程」齐平，堆叠落到其下方 + 间距。 */
+  private quickBlockY(): number {
+    return this.wideEnough ? 0 : this.todayHeightVp + AppSize.gapLarge;
+  }
+
+  /**
+   * 堆叠形态下，Stack 自适应高度（= 较高者）与真实需要（h1 + gap + h2）的差额。
+   *
+   * Stack 里第二块是绝对定位，不撑高父容器，所以差额用外层一个 Blank 补上；
+   * 并排时不需要补（两块等高对齐）。
+   */
+  private blocksExtraHeight(): number {
+    if (this.wideEnough || this.blockLane <= 0) {
+      return 0;
+    }
+    return Math.min(this.todayHeightVp, this.quickHeightVp) + AppSize.gapLarge;
+  }
+
   @Builder
   todaySection() {
     SectionCard({
@@ -631,44 +664,57 @@ export struct HomePage {
               this.examBanner()
             }
 
-            // 「今日课程 | 快捷入口」：宽屏并排、窄屏堆叠。
+            // 「今日课程 | 快捷入口」：用**绝对定位 + 像素尺寸**自己排两块。
             //
-            // 不用 if/else 切 Row↔Column（结构切换 = 硬切），也**不要**给宽度再挂
-            // `.animation()`：宽度是百分比，本来就随外层面板的收放每帧重算，再叠一层
-            // 宽度动画会让卡片宽度和内部网格列数不同步 —— 实测表现为磁贴被裁成一条条。
-            // 这里只做两件事：宽度跟着面板走，换行那一下用 translate 补偿成滑行。
-            // justifyContent 必须用 Start：换成 SpaceBetween 时，换行后每行只剩一个块，
-            // SpaceBetween 会把这块「居中」，两块左边缘就差开一截（实测差 85vp）。
-            Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Start,
-              alignItems: ItemAlign.Start }) {
+            // 为什么不用 Flex/Row 收放：分栏收放是 HDS 的原生动画，动画期间页面拿不到
+            // 逐帧宽度、子节点也不会逐帧重排 —— 交给换行布局，底板就会"先出现在中间、
+            // 再跳到目标位"（关闭分栏时最明显）。
+            // 这里把宽度/位置/容器高全部算成像素，挂在同一个 `.animation()` 上：
+            // 数值属性可以插值，底板与内容就会连续地"从左边展开成并排"，不依赖面板重排。
+            Stack({ alignContent: Alignment.TopStart }) {
               Column() {
                 this.todaySection()
               }
-              .width(this.wideEnough ? '48.5%' : '100%')
+              .width(this.blockWidth())
               .alignItems(HorizontalAlign.Start)
-              .margin({ right: this.wideEnough ? AppSize.gapLarge : 0 })
+              .onAreaChange((oldArea: Area, newArea: Area) => {
+                const raw: Length = newArea.height;
+                const measured: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
+                if (Math.abs(measured - this.todayHeightVp) > 0.5) {
+                  this.todayHeightVp = measured;
+                }
+              })
 
               Column() {
                 this.quickSection()
               }
-              .width(this.wideEnough ? '48.5%' : '100%')
+              .width(this.blockWidth())
               .alignItems(HorizontalAlign.Start)
-              // 堆叠时补上横向并排时由 space 承担的间距
-              .margin({ top: this.wideEnough ? 0 : AppSize.gapLarge })
+              // 用 translate 而不是 position：position 不参与属性动画（左边缘会瞬移），
+              // translate 是可插值属性，才能和宽度一起连续移动。
+              .translate({ x: this.quickBlockX(), y: this.quickBlockY() })
               .onAreaChange((oldArea: Area, newArea: Area) => {
-                const raw: Length = newArea.width;
-                const measured: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
-                if (Math.abs(measured - this.quickCardWidth) > 0.5) {
-                  this.quickCardWidth = measured;
+                const rawW: Length = newArea.width;
+                const w: number = typeof rawW === 'number' ? rawW : parseFloat(rawW.toString());
+                if (Math.abs(w - this.quickCardWidth) > 0.5) {
+                  this.quickCardWidth = w;
+                }
+                const rawH: Length = newArea.height;
+                const h: number = typeof rawH === 'number' ? rawH : parseFloat(rawH.toString());
+                if (Math.abs(h - this.quickHeightVp) > 0.5) {
+                  this.quickHeightVp = h;
                 }
               })
             }
             .width('100%')
-            // 分栏收放是 HDS 的原生动画，动画期间这一层可能还拿着旧的子节点宽度，
-            // 卡片会横向溢出到右侧详情栏上 —— 在容器上裁掉，别让它盖住详情。
-            // 注意必须裁在这一层（无位移）；裁到内容列会连同 -16vp 的位移一起，
-            // 把顶部问候语切掉（踩过）。
-            .clip(true)
+            // 高度必须自适应（取较高那块），不能由状态反推 —— 否则"高度依赖子节点测量、
+            // 子节点又依赖高度"会死锁成 0 高（实测整页只剩一个图标）。
+            // 堆叠时第二块在下方，超出的那部分尺寸由下面的 Blank 补。
+
+            // 堆叠时补足"两块高度之和 + 间距"与 Stack 自适应高度之间的差额
+            Blank()
+              .width('100%')
+              .height(this.blocksExtraHeight())
           }
 
           // 为悬浮底栏预留高度（barOverlap 模式下内容会被底栏覆盖）
@@ -694,12 +740,22 @@ export struct HomePage {
           const usable: number = total - AppSize.pagePadding * 2;
           this.measured = true;
           const wide: boolean = usable >= 720;
+          // 必须用**显式 animateTo**：这段状态变化发生在布局回调（onAreaChange）里，
+          // 隐式 `.animation()` 对"布局过程中触发的属性变更"不生效（实测 1200ms 也是瞬切）。
           if (wide !== this.wideEnough) {
-            this.wideEnough = wide;
+            this.getUIContext().animateTo({ duration: 280, curve: Curve.Friction }, () => {
+              this.wideEnough = wide;
+              this.blockLane = usable;
+            });
+            return;
           }
           // 列数不再缓存，交给 quickColumnsTemplate() 用它现算，保证与宽度同源
           if (Math.abs(usable - this.laneWidth) > 0.5) {
             this.laneWidth = usable;
+          }
+          // 像素布局的基准宽度：两块几何全部由它算，配合 .animation() 连续补间
+          if (Math.abs(usable - this.blockLane) > 0.5) {
+            this.blockLane = usable;
           }
         })
       }
