@@ -77,6 +77,15 @@ export struct FeaturePage {
   /** 页面层透明度：转场里由 0 推到 1（反过来收）。 */
   @State private heroContentOpacity: number = 0;
 
+  /**
+   * 本页在屏幕上的真实起点 y（vp）。
+   *
+   * `HdsNavigation` 会把内容避让「状态栏 + MINI 标题栏」，但不同设备/形态下这个值不一样，
+   * 用常量推算会差几十 vp（实测标题栏掉了 55vp）。这里直接量根节点的 globalPosition，
+   * 浮层用负 margin 精确抵消它，才能贴到屏幕顶。
+   */
+  @State private shellTop: number = 0;
+
   /** 刚缩回来的那张卡片（-1 = 没有）。 */
   @State private bounceIndex: number = -1;
   /** 回弹触发计数：只给 `bounceIndex` 那张卡片递增，避免整排一起弹。 */
@@ -321,7 +330,7 @@ export struct FeaturePage {
           heroId: HeroMorph.cardId(this.heroIndex),
           accent: this.heroAccent,
           contentOpacity: this.heroContentOpacity,
-          topInset: AppSize.destTopInset(topSafeInsetVp()),
+          topInset: this.shellTop,
           fullHeight: AppStorage.get<number>(KEY_WINDOW_HEIGHT_VP) ?? 800,
           onBack: () => {
             this.closeHero();
@@ -335,5 +344,11 @@ export struct FeaturePage {
     }
     .width('100%')
     .height('100%')
+    .onAreaChange((_old: Area, now: Area) => {
+      const top: number = now.globalPosition.y as number;
+      if (Math.abs(top - this.shellTop) > 0.5) {
+        this.shellTop = top;
+      }
+    })
   }
 }
