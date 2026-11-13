@@ -1,5 +1,7 @@
 
 import { BackGuard } from './BackGuard';
+import { FeatureHero } from './FeatureHero';
+import { HeroMorph } from './HeroMorph';
 
 /**
  * 路由表。
@@ -89,6 +91,16 @@ export class AppRouter {
    */
   static back(stack: NavPathStack): void {
     if (BackGuard.consume()) {
+      return;
+    }
+    // 有二级页在演「卡片放大」转场：先让它缩回卡片，动画结束再 pop
+    // —— pop 一执行页面就销毁，动画没有载体。
+    if (FeatureHero.hasShell()) {
+      FeatureHero.requestExit(() => {
+        stack.pop(AppRouter.lastPushAnimated);
+      });
+      // 色块铺满 → 页面淡出 → pop → 色块缩回卡片（编排在 MainPage.onMorphTick）
+      HeroMorph.startShrink();
       return;
     }
     stack.pop(AppRouter.lastPushAnimated);

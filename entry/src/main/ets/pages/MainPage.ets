@@ -1,4 +1,7 @@
 import { BackGuard } from '../common/BackGuard';
+import { FeatureHero, HERO_BOUNCE_TICK } from '../common/FeatureHero';
+import { HeroMorph, KEY_HERO_PAGE_OPACITY, KEY_MORPH_TICK, MorphPhase, MorphRect } from '../common/HeroMorph';
+import curves from '@ohos.curves';
 import { FEATURE_STACK, HOME_STACK, KEY_MAIN_TAB_INDEX, MINE_STACK, SCHEDULE_STACK } from '../common/NavStacks';
 import {
   HdsNavigation,
@@ -19,7 +22,7 @@ import { HomePage } from './home/HomePage';
 import { SchedulePage } from './academic/SchedulePage';
 import { FeaturePage } from './home/FeaturePage';
 import { MinePage } from './mine/MinePage';
-import { KEY_BREAKPOINT, sideNavWidthOf, useSideNav } from '../common/Breakpoint';
+import { KEY_BREAKPOINT, KEY_WINDOW_HEIGHT_VP, KEY_WINDOW_WIDTH_VP, sideNavWidthOf, useSideNav } from '../common/Breakpoint';
 import { WideSideNav } from '../components/WideSideNav';
 
 /**
@@ -120,6 +123,131 @@ export struct MainPage {
    * 所以首次 onChange 不当作用户切换，而是让 Tabs 去跟随已保存的页签。
    */
   private tabsReady: boolean = false;
+
+  /* ---------------- 卡片 → 全屏 的转场色块 ---------------- */
+
+  /** 一块纯色：从卡片矩形变形到全屏（或反向）。 */
+  @State private morphVisible: boolean = false;
+  @State private morphX: number = 0;
+  @State private morphY: number = 0;
+  @State private morphW: number = 0;
+  @State private morphH: number = 0;
+  @State private morphRadius: number = 0;
+  @State private morphColor: string = '#1976D2';
+  @State private morphOpacity: number = 1;
+  @StorageProp(KEY_MORPH_TICK) @Watch('onMorphTick') private morphTick: number = 0;
+
+  /** 页面底色：色块放大到位后要「融进」它，浅色 / 深色主题不同。 */
+  private pageBg(): string {
+    const dark: boolean = AppStorage.get<boolean>('isDarkMode') ?? false;
+    return dark ? '#000000' : '#F1F3F5';
+  }
+
+  /**
+   * 转场编排（全在这里，DestShell 只跟着 `heroPageOpacity` 淡入淡出）。
+   *
+   * 入场：色块从卡片矩形放大到全屏、圆角→0、颜色→页面底色；放到一半时页面 0→1 淡入。
+   * 退场：色块铺满 → 页面淡出 → pop → 色块缩回卡片、圆角复原、颜色变回卡片色。
+   */
+  onMorphTick(): void {
+    const phase: MorphPhase = HeroMorph.getPhase();
+    if (phase === MorphPhase.IDLE) {
+      this.morphVisible = false;
+      return;
+    }
+    const navW: number = this.sideNavLayout() ? sideNavWidthOf(this.bp) : 0;
+    const winW: number = AppStorage.get<number>(KEY_WINDOW_WIDTH_VP) ?? 375;
+    const winH: number = AppStorage.get<number>(KEY_WINDOW_HEIGHT_VP) ?? 800;
+    // card.x / card.y 是卡片的**屏幕坐标**（FeatureTile 上报），所以直接用
+    const card: MorphRect = HeroMorph.getCard();
+
+    if (phase === MorphPhase.EXPAND) {
+      this.morphX = card.x;
+      this.morphY = card.y;
+      this.morphW = card.w;
+      this.morphH = card.h;
+      this.morphRadius = card.radius;
+      this.morphColor = HeroMorph.getColor();
+      this.morphOpacity = 1;
+      this.morphVisible = true;
+      AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 0);
+      // ⚠️ 必须等一帧：初值与 animateTo 在同一帧内提交会被合并成「直接到终值」，
+      // 动画整段丢失（踩过）。32ms 足够让色块先以卡片矩形画出来。
+      setTimeout(() => {
+        this.getUIContext().animateTo(
+          {
+            curve: curves.springMotion(0.34, 0.88),
+            onFinish: () => {
+              // 到位后淡出色块：底下压着的是真实页面，标题栏平滑显现
+              this.getUIContext().animateTo(
+                { duration: 120, curve: Curve.EaseOut, onFinish: () => { HeroMorph.finish(); } },
+                () => {
+                  this.morphOpacity = 0;
+                }
+              );
+            }
+          },
+          () => {
+            this.morphX = navW;
+            this.morphY = 0;
+            this.morphW = winW - navW;
+            this.morphH = winH;
+            this.morphRadius = 0;
+            this.morphColor = this.pageBg();
+          }
+        );
+        // 交叉：色块放到约一半时页面开始淡入
+        setTimeout(() => {
+          this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseOut }, () => {
+            AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 1);
+          });
+        }, 170);
+      }, 32);
+      return;
+    }
+
+    // SHRINK
+    this.morphX = navW;
+    this.morphY = 0;
+    this.morphW = winW - navW;
+    this.morphH = winH;
+    this.morphRadius = 0;
+    this.morphColor = this.pageBg();
+    this.morphOpacity = 1;
+    this.morphVisible = true;
+    this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseIn }, () => {
+      AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 0);
+    });
+    setTimeout(() => {
+      FeatureHero.completeExit();
+      this.getUIContext().animateTo(
+        {
+          curve: curves.springMotion(0.28, 0.9),
+          onFinish: () => {
+            this.finishShrink();
+          }
+        },
+        () => {
+          this.morphX = card.x;
+          this.morphY = card.y;
+          this.morphW = card.w;
+          this.morphH = card.h;
+          this.morphRadius = card.radius;
+          this.morphColor = HeroMorph.getColor();
+        }
+      );
+    }, 160);
+  }
+
+  private finishShrink(): void {
+    HeroMorph.finish();
+    AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 1);
+    const index: number = HeroMorph.getCardIndex();
+    if (index >= 0) {
+      const current: number = AppStorage.get<number>(HERO_BOUNCE_TICK) ?? 0;
+      AppStorage.setOrCreate<number>(HERO_BOUNCE_TICK, current + 1);
+    }
+  }
 
   /**
    * 断点变化 = 布局分支切换（侧边栏 ↔ 底部页签），两棵不同的组件树，
@@ -274,6 +402,14 @@ export struct MainPage {
    */
   private clearStack(index: number): void {
     if (index === 2) {
+      // 功能页有二级页时，先演「色块缩回卡片」再清栈（编排见 onMorphTick）
+      if (FeatureHero.hasShell()) {
+        FeatureHero.requestExit(() => {
+          this.stackOf(index).clear(false);
+        });
+        HeroMorph.startShrink();
+        return;
+      }
       this.stackOf(index).clear(false);
     } else {
       this.stackOf(index).clear();
@@ -704,6 +840,18 @@ export struct MainPage {
     // 屏幕中间（踩过：`.align()` 在 @Component 上不生效）。
     Stack({ alignContent: Alignment.Start }) {
       this.narrowTabs()
+
+      // 转场色块：盖在内容区之上、侧栏之下（侧栏始终可见）
+      if (this.morphVisible) {
+        Column()
+          .width(this.morphW)
+          .height(this.morphH)
+          .borderRadius(this.morphRadius)
+          .backgroundColor(this.morphColor)
+          .opacity(this.morphOpacity)
+          .position({ x: this.morphX, y: this.morphY })
+          .hitTestBehavior(HitTestMode.None)
+      }
 
       if (this.sideNavLayout()) {
         this.sideNavOverlay()

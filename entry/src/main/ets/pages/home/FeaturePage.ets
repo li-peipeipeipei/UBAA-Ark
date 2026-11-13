@@ -1,8 +1,11 @@
 import { AppRouter } from '../../common/AppRouter';
+import { FeatureHero, HERO_BOUNCE_TICK } from '../../common/FeatureHero';
+import { HeroMorph, MorphRect } from '../../common/HeroMorph';
 import { Toast } from '../../common/Toast';
+import { Logger } from '../../common/Logger';
 import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
-import { FeatureTile } from '../../components/CommonViews';
+import { FeatureTile, tileFillColor } from '../../components/CommonViews';
 import { FeatureItem, allFeatures } from '../../components/FeatureRegistry';
 import { KEY_BREAKPOINT, templateOfColumns, tileColumnsTemplateFor } from '../../common/Breakpoint';
 
@@ -28,6 +31,8 @@ const MAX_COLUMNS: number = 10;
  * 取 0.16：175vp 的块算出 28vp 圆角，就是之前定下的那个比例。
  */
 const TILE_CORNER_SCALE: number = 0.16;
+/** 卡片宽高比：与 FeatureTile 的 `aspectRatio(0.8)` 必须一致，算卡片中心高度要用。 */
+const TILE_ASPECT_RATIO: number = 0.8;
 
 /**
  * 功能页：一层平铺的功能按钮网格。
@@ -55,14 +60,67 @@ export struct FeaturePage {
   @State private columns: number = 0;
   /** 块的圆角（vp）：块宽 × TILE_CORNER_SCALE，与列数同一帧算出，同源。 */
   @State private tileRadius: number = 28;
+  /** 自身实测宽度（含内边距），算卡片位置要用。 */
+  @State private paneWidth: number = 0;
+  /** 刚缩回来的那张卡片（-1 = 没有）。 */
+  @State private bounceIndex: number = -1;
+  /** 回弹触发计数：只给 `bounceIndex` 那张卡片递增，避免整排一起弹。 */
+  @State private bounceTick: number = 0;
+  /**
+   * 退场动画播完的信号（由 DestShell 递增）。
+   * 收到后取 `FeatureHero.takeBounce()` —— 记住的是**哪一张**卡片要弹。
+   */
+  @StorageProp(HERO_BOUNCE_TICK) @Watch('onBounceSignal') private bounceSignal: number = 0;
 
-  private open(item: FeatureItem): void {
+  onBounceSignal(): void {
+    const index: number = FeatureHero.takeBounce();
+    if (index < 0) {
+      return;
+    }
+    this.bounceIndex = index;
+    this.bounceTick = this.bounceTick + 1;
+  }
+
+  /** 每张卡片在屏幕坐标系里的矩形（由 FeatureTile 的 onAreaChange 上报）。 */
+  private tileBounds: Map<number, number[]> = new Map();
+
+  private onTileBounds(index: number, x: number, y: number, w: number, h: number): void {
+    this.tileBounds.set(index, [x, y, w, h]);
+  }
+
+  /**
+   * 卡片的**真实**屏幕矩形。
+   *
+   * 不再按「页边距 + 列宽」推算：那样和真实布局会差几个像素，放大初始帧就「错位」。
+   * 坐标直接用 FeatureTile 上报的 `globalPosition`（已含侧栏 / 状态栏偏移）。
+   */
+  private cardRect(index: number): MorphRect | null {
+    const bounds: number[] | undefined = this.tileBounds.get(index);
+    if (bounds === undefined || bounds.length < 4) {
+      return null;
+    }
+    return {
+      x: bounds[0],
+      y: bounds[1],
+      w: bounds[2],
+      h: bounds[3],
+      radius: this.tileRadius
+    };
+  }
+
+  private open(item: FeatureItem, index: number): void {
     if (item.route.length === 0) {
       Toast.show(item.title + ' · 敬请期待');
       return;
     }
-    // 功能页的大按钮**保持硬切**（产品要求：这处的转场之后单独设计），
-    // 其余入口（主页横幅、我的菜单…）都走默认的滑入动画。
+    // 转场：一块「卡片色」从卡片矩形变形到全屏，页面在它之上交叉淡入。
+    // push 仍然是硬切 —— 变形动画由 MainPage 的色块层演，跟路由无关。
+    const rect: MorphRect | null = this.cardRect(index);
+    if (rect !== null) {
+      // 卡片本身是「半透明主色叠材质」，色块要用混合后的实际颜色才不跳
+      const dark: boolean = AppStorage.get<boolean>('isDarkMode') ?? false;
+      HeroMorph.startExpand(tileFillColor(item.colorValue, dark), rect, index);
+    }
     AppRouter.open(this.stack, item.route, undefined, false);
   }
 
@@ -89,15 +147,20 @@ export struct FeaturePage {
     Scroll() {
       Column({ space: AppSize.gap }) {
         Grid() {
-          ForEach(allFeatures(), (item: FeatureItem) => {
+          ForEach(allFeatures(), (item: FeatureItem, index: number) => {
             GridItem() {
               FeatureTile({
                 title: item.title,
                 icon: item.icon,
                 color: item.color,
                 radius: this.tileRadius,
+                index: index,
+                bounceTick: this.bounceIndex === index ? this.bounceTick : 0,
+                onBounds: (x: number, y: number, w: number, h: number) => {
+                  this.onTileBounds(index, x, y, w, h);
+                },
                 onTileClick: () => {
-                  this.open(item);
+                  this.open(item, index);
                 }
               })
             }
@@ -128,6 +191,9 @@ export struct FeaturePage {
       .onAreaChange((oldArea: Area, newArea: Area) => {
         const raw: Length = newArea.width;
         const total: number = typeof raw === 'number' ? raw : parseFloat(raw.toString());
+        if (Math.abs(total - this.paneWidth) > 1) {
+          this.paneWidth = total;
+        }
         const usable: number = total - AppSize.pagePadding * 2;
         // 按目标宽度反推列数（+ 间距一起算，避免最后一列的缝隙误差）
         let columns: number = Math.floor((usable + AppSize.gap) / (TILE_TARGET_WIDTH + AppSize.gap));

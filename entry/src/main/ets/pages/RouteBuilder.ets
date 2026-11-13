@@ -5,6 +5,10 @@ import {
   hdsMaterial
 } from '@kit.UIDesignKit';
 import { AppRouter, RouteName } from '../common/AppRouter';
+import { FeatureHero } from '../common/FeatureHero';
+import { KEY_HERO_PAGE_OPACITY } from '../common/HeroMorph';
+import curves from '@ohos.curves';
+import { Logger } from '../common/Logger';
 import { GradeHeaderModel, GradeTermTitle } from '../components/GradeHeader';
 import { ExamPage } from './academic/ExamPage';
 import { GradePage } from './academic/GradePage';
@@ -103,7 +107,9 @@ struct GradeDestination {
       AppRouter.back(this.stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   }
 }
 
@@ -184,12 +190,33 @@ struct DestShell {
    */
   stack: NavPathStack = new NavPathStack();
 
+  /**
+   * 页面整体透明度。
+   *
+   * 由 `MainPage` 的转场编排推：入场 0→1（与彩色块交叉淡入），退场 1→0。
+   * 只作用在内容上 —— 标题栏是 `HdsNavDestination` 自绘的、在外壳之外，
+   * 但它位于转场色块的**下层**，色块铺满时本来就看不见，不必单独控制。
+   */
+  @StorageProp(KEY_HERO_PAGE_OPACITY) private pageOpacity: number = 1;
+
+  /** 在「二级页外壳」栈里的 id（转场要判断谁是栈顶）。 */
+  private shellId: number = -1;
+
+  aboutToAppear(): void {
+    this.shellId = FeatureHero.enterShell();
+  }
+
+  aboutToDisappear(): void {
+    FeatureHero.leaveShell(this.shellId);
+  }
+
   build() {
     Column() {
       this.content()
     }
     .width('100%')
     .height('100%')
+    .opacity(this.pageOpacity)
   }
 }
 
@@ -206,7 +233,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.GRADE) {
     GradeDestination({ stack: stack })
   } else if (name === RouteName.CLASSROOM) {
@@ -220,7 +249,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.IHOME) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -232,7 +263,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.IHOME_DETAIL) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -244,7 +277,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.JUDGE) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -256,7 +291,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.JUDGE_DETAIL) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -268,7 +305,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.EVALUATION) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -280,7 +319,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.SIGNIN) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -292,7 +333,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.SPOC) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -304,7 +347,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.YGDK) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -316,7 +361,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.BYKC) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -328,7 +375,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.BYKC_COURSES) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -340,7 +389,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.BYKC_CHOSEN) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -352,7 +403,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.BYKC_STATISTICS) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -364,7 +417,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.BYKC_DETAIL) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -376,7 +431,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.LIBBOOK_HOME) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -388,7 +445,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.LIBBOOK_RESERVE) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -400,7 +459,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.LIBBOOK_BOOKINGS) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -412,7 +473,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.USER_INFO) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -424,7 +487,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.SETTINGS) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -436,7 +501,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.ABOUT) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -448,7 +515,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.PRIVACY) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -460,7 +529,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === RouteName.LICENSE) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -472,7 +543,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else if (name === WIDE_PLACEHOLDER_ROUTE) {
     // Split 右栏栈空时的占位页；非分栏形态从不 push 这个名字。
     // hideBackButton：占位页不是真实页面，给它一个「返回」按钮没有语义，
@@ -488,7 +561,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       return true;
     })
     .hideBackButton(true)
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   } else {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -507,6 +582,8 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor($r('app.color.page_background'))
+    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
+    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
   }
 }

@@ -1,6 +1,7 @@
 import { AppColor, AppFont, AppSize } from './AppTheme';
 import { MaterialCardLayer } from './MaterialCardLayer';
 import { immersiveMaterialActive } from '../common/SystemMaterial';
+import curves from '@ohos.curves';
 
 /**
  * 材质层之上那层主色的不透明度。
@@ -15,6 +16,18 @@ const FEATURE_TILE_COLOR_ALPHA: number = 0.82;
  * 实际圆角由 FeaturePage 按「块宽 × 固定比例」算好后传进来，保证块变大圆角也变大。
  */
 const FEATURE_TILE_RADIUS_FALLBACK: number = 28;
+
+/**
+ * 按下时缩到多小。
+ *
+ * 反馈要「看得见但不夸张」：0.955 在 175vp 的块上是缩小约 8vp，
+ * 抬手时弹簧回到 1 会有一次很轻的过冲 —— 就是那点「弹性」。
+ */
+const TILE_PRESS_SCALE: number = 0.955;
+/** 按下到位的时间（ms）。必须短，超过 120ms 就会有「迟钝」感。 */
+const TILE_PRESS_DOWN_MS: number = 90;
+/** 返回时原卡片的回弹峰值。 */
+const TILE_BOUNCE_SCALE: number = 1.035;
 
 /**
  * 图标来源类型。
@@ -192,7 +205,47 @@ export struct FeatureTile {
    * 大块看着「角很锐」、小块看着「角很圆」。按比例走，视觉一致。
    */
   radius: number = FEATURE_TILE_RADIUS_FALLBACK;
+  /** 本卡片在网格中的序号，父级用它决定「回来的那张要回弹」。 */
+  @Prop index: number = -1;
+  /**
+   * 回弹触发计数：父级在「全屏页缩回这张卡片」之后把它 +1，
+   * 这里 `@Watch` 收到就弹一下。用计数而不是布尔，才能连续触发多次。
+   */
+  @Prop @Watch('onBounce') bounceTick: number = 0;
   onTileClick: () => void = () => {};
+  /**
+   * 上报本卡片在**屏幕坐标系**里的矩形（转场色块要精确从这里长出来）。
+   *
+   * 用 `onAreaChange` 的 `globalPosition` 而不是父级按列宽推算 —— 推算会跟真实
+   * 布局差几个像素，放大初始帧就看得出来是「错位」的。
+   */
+  onBounds: (x: number, y: number, w: number, h: number) => void = () => {};
+
+  /** 是否处于按下态（0.955）。 */
+  @State private pressed: boolean = false;
+  /** 回弹峰值 1.035，随后由动画收回 1。 */
+  @State private bounceScale: number = 1;
+
+  /**
+   * 按下 / 抬起的动画参数。
+   *
+   * 按下用固定 90ms 的 Friction（跟手、不能等）；回弹用弹簧（有轻微过冲）。
+   * ⚠️ 弹簧曲线不吃 `duration`，所以两者不能共用一个参数对象。
+   */
+  private pressAnim(): AnimateParam {
+    if (this.pressed) {
+      return { duration: TILE_PRESS_DOWN_MS, curve: Curve.Friction };
+    }
+    return { curve: curves.springMotion(0.18, 0.55) };
+  }
+
+  onBounce(): void {
+    // 先跳到峰值，下一帧回 1 —— 由上面的 spring 曲线演出「弹一下」
+    this.bounceScale = TILE_BOUNCE_SCALE;
+    setTimeout(() => {
+      this.bounceScale = 1;
+    }, 16);
+  }
 
   /** 沉浸材质是否可用（只查一次；不可用时退化为不透明纯色）。 */
   private readonly materialActive: boolean = immersiveMaterialActive(false);
@@ -247,12 +300,59 @@ export struct FeatureTile {
     .width('100%')
     // 竖长：宽 / 高 = 0.8，高度比宽度大 25%
     .aspectRatio(0.8)
+    // 按下缩放 + 回来时的一次回弹，都作用在整块上
+    .scale({
+      x: this.pressed ? TILE_PRESS_SCALE : this.bounceScale,
+      y: this.pressed ? TILE_PRESS_SCALE : this.bounceScale
+    })
+    .animation(this.pressAnim())
+    // ⚠️ 不能用 onClick 做按压反馈：onClick 在**抬手**才触发，
+    // 按下去的那 100ms 里没有任何视觉回应，手感是「点不动」。
+    .onTouch((event: TouchEvent) => {
+      if (event.type === TouchType.Down) {
+        this.pressed = true;
+      } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+        this.pressed = false;
+      }
+    })
     // 平板外接键鼠 / 2in1 触控板上，按钮需要悬停反馈才「像个按钮」（官方多设备交互建议）
     .hoverEffect(HoverEffect.Highlight)
     .onClick(() => {
       this.onTileClick();
     })
+    .onAreaChange((_old: Area, now: Area) => {
+      const x: number = now.globalPosition.x as number;
+      const y: number = now.globalPosition.y as number;
+      const w: number = now.width as number;
+      const h: number = now.height as number;
+      this.onBounds(x, y, w, h);
+    })
   }
+}
+
+/**
+ * 卡片**实际显示**的颜色。
+ *
+ * 功能块是「半透明主色叠在系统材质上」，直接拿主色画转场色块会比卡片本身更艳
+ * （用户一眼就能看出颜色不一致）。这里按同一透明度与页面底色做一次混合，
+ * 色块起步的颜色才和卡片对得上。
+ *
+ * @param hex 主色（`#RRGGBB`）
+ * @param dark 当前是否深色主题（决定底色）
+ */
+export function tileFillColor(hex: string, dark: boolean): string {
+  const value: number = parseInt(hex.replace('#', ''), 16);
+  const bg: number = dark ? 0x000000 : 0xF1F3F5;
+  const a: number = FEATURE_TILE_COLOR_ALPHA;
+  const mix = (front: number, back: number): number => Math.round(front * a + back * (1 - a));
+  const r: number = mix((value >> 16) & 0xFF, (bg >> 16) & 0xFF);
+  const g: number = mix((value >> 8) & 0xFF, (bg >> 8) & 0xFF);
+  const b: number = mix(value & 0xFF, bg & 0xFF);
+  const hex2 = (n: number): string => {
+    const text: string = n.toString(16);
+    return text.length === 1 ? '0' + text : text;
+  };
+  return '#' + hex2(r) + hex2(g) + hex2(b);
 }
 
 /** 键值信息行（「我的」页 / 详情页复用）。 */
