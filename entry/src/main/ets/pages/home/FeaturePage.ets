@@ -1,5 +1,5 @@
 import { AppRouter } from '../../common/AppRouter';
-import { FeatureHero, HERO_BOUNCE_TICK } from '../../common/FeatureHero';
+import { FeatureHero, HERO_BOUNCE_TICK, KEY_FEATURE_HERO_CLOSE } from '../../common/FeatureHero';
 import { HeroMorph, MorphRect } from '../../common/HeroMorph';
 import curves from '@ohos.curves';
 import { Toast } from '../../common/Toast';
@@ -86,6 +86,12 @@ export struct FeaturePage {
    * 收到后取 `FeatureHero.takeBounce()` —— 记住的是**哪一张**卡片要弹。
    */
   @StorageProp(HERO_BOUNCE_TICK) @Watch('onBounceSignal') private bounceSignal: number = 0;
+  /** 点页签「功能」时由 MainPage 发信号：收起展开的卡片，回到功能主页。 */
+  @StorageProp(KEY_FEATURE_HERO_CLOSE) @Watch('onCloseRequest') private closeSignal: number = 0;
+
+  onCloseRequest(): void {
+    this.closeHero();
+  }
 
   onBounceSignal(): void {
     const index: number = FeatureHero.takeBounce();
@@ -159,19 +165,8 @@ export struct FeaturePage {
       }, 90);
       return;
     }
-    const rect: MorphRect | null = this.cardRect(index);
-    if (rect !== null) {
-      const dark: boolean = AppStorage.get<boolean>('isDarkMode') ?? false;
-      HeroMorph.startExpand(tileFillColor(item.colorValue, dark), rect, index);
-    }
-    // 共享元素转场：push 必须包在 animateTo 里，并关闭 Navigation 的默认转场，
-    // 系统才会接管「卡片 → 全屏页」的几何过渡（含圆角同步）。
-    this.getUIContext().animateTo(
-      { curve: curves.springMotion(0.32, 0.82) },
-      () => {
-        AppRouter.open(this.stack, item.route, undefined, false);
-      }
-    );
+    // 其余入口暂时维持普通导航跳转（待卡片展开方案验证通过后逐个接入）
+    AppRouter.open(this.stack, item.route, undefined, false);
   }
 
   /**
@@ -184,6 +179,9 @@ export struct FeaturePage {
    */
   /** 收起展开的卡片（返回按钮 / 系统返回都走这里）。 */
   private closeHero(): void {
+    if (!this.heroOpen) {
+      return;
+    }
     BackGuard.unregister();
     // 先让页面层淡出（露出彩色层），再收起几何，最后让卡片弹一下 —— 与入场完全相反
     this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseIn }, () => {

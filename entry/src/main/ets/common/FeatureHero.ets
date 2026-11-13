@@ -33,6 +33,14 @@ export interface HeroOrigin {
 /** 退场动画的兜底超时（ms）：动画没播完也必须放行，不能让用户卡在页面上。 */
 export const EXIT_TIMEOUT_MS: number = 320;
 
+/**
+ * 「收起功能页展开的卡片」信号键。
+ *
+ * 卡片的详情浮层**不在导航栈里**（为了共享元素转场，见 HeroDetailLayer 注释），
+ * 所以点页签时的 `clearStack()` 管不到它 —— 必须单独发一个信号让功能页自己收起来。
+ */
+export const KEY_FEATURE_HERO_CLOSE: string = 'featureHeroCloseTick';
+
 /** 请求退场的信号键：外壳 `@StorageProp` 它，收到就播缩小动画。 */
 export const HERO_EXIT_TICK: string = 'featureHeroExitTick';
 

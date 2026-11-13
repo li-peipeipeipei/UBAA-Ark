@@ -1,6 +1,6 @@
 import { BackGuard } from '../common/BackGuard';
 import { Toast } from '../common/Toast';
-import { FeatureHero, HERO_BOUNCE_TICK } from '../common/FeatureHero';
+import { FeatureHero, HERO_BOUNCE_TICK, KEY_FEATURE_HERO_CLOSE } from '../common/FeatureHero';
 import { HeroMorph, KEY_HERO_PAGE_OPACITY, KEY_MORPH_TICK, MorphPhase, MorphRect } from '../common/HeroMorph';
 import curves from '@ohos.curves';
 import { FEATURE_STACK, HOME_STACK, KEY_MAIN_TAB_INDEX, MINE_STACK, SCHEDULE_STACK } from '../common/NavStacks';
@@ -401,16 +401,20 @@ export struct MainPage {
    * 「二级页滑走 + 列表页滑入」——与同一场景的其它返回方式不一致。
    * 其余页签保持默认（带动画），与它们的 push / pop 对称。
    */
+  /**
+   * 通知功能页收起「展开的卡片」。
+   *
+   * 那是功能页内部的一个浮层（为了共享元素转场），**不在导航栈里** ——
+   * `clearStack()` 清的是栈，碰不到它。点「功能」页签时必须单独发这个信号，
+   * 否则用户会觉得「点了功能按钮回不到功能主页」。
+   */
+  private notifyCloseFeatureHero(): void {
+    const current: number = AppStorage.get<number>(KEY_FEATURE_HERO_CLOSE) ?? 0;
+    AppStorage.setOrCreate<number>(KEY_FEATURE_HERO_CLOSE, current + 1);
+  }
+
   private clearStack(index: number): void {
     if (index === 2) {
-      // 功能页有二级页时，先演「色块缩回卡片」再清栈（编排见 onMorphTick）
-      if (FeatureHero.hasShell()) {
-        FeatureHero.requestExit(() => {
-          this.stackOf(index).clear(false);
-        });
-        HeroMorph.startShrink();
-        return;
-      }
       this.stackOf(index).clear(false);
     } else {
       this.stackOf(index).clear();
@@ -738,6 +742,10 @@ export struct MainPage {
     // onTabBarClick 在**每次点击页签**时都会触发（含点当前页签）。如果点的是当前页签，
     // 说明用户想「回顶部/回主页」，就把这个页签的导航栈清空（栈空了会退回根页面）。
     .onTabBarClick((index: number) => {
+      // 点「功能」：无论当前在不在功能页，都先收起卡片浮层（它不在导航栈里）
+      if (index === 2) {
+        this.notifyCloseFeatureHero();
+      }
       if (index === this.currentIndex) {
         this.clearStack(index);
       }
@@ -878,8 +886,12 @@ export struct MainPage {
       currentIndex: this.currentIndex,
       bp: this.bp,
       onSelect: (index: number) => {
+        // 点「功能」：先收起卡片浮层（与底部页签一致）
+        if (index === 2) {
+          this.notifyCloseFeatureHero();
+        }
         if (index === this.currentIndex) {
-          // 「再点当前项」清栈回主页（与底部页签的 onTabBarClick 一致）
+          // 「再点当前项」清栈回主页
           this.clearStack(index);
           return;
         }
