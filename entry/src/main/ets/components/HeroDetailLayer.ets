@@ -59,8 +59,10 @@ export struct HeroDetailLayer {
         .width('100%')
         .height('100%')
         .backgroundColor(this.accent)
-        // 略透：放大过程中底下的其他卡片还隐约透得出来
-        .opacity(0.92)
+        // **不透明**：收起时它就是那张卡片的实体色块。
+        // （放大早期「其他卡片可见」靠的是它还没盖满屏幕，而不是靠半透明——
+        //  半透明会让收起时的彩色层显得发灰、发虚，用户明确否过。）
+        .opacity(1)
 
       // 页面层：内容 + 标题栏，从 0 淡入 =「渐变至功能页本身」
       Column() {
@@ -89,7 +91,8 @@ export struct HeroDetailLayer {
           Blank()
         }
         .width('100%')
-        .height(84)
+        // 高度与 HDS 的 MINI 标题栏一致（56vp），不是 84（那是展开态标题栏）
+        .height(56)
         .padding({ left: 24, right: 24 })
         .alignItems(VerticalAlign.Center)
 
