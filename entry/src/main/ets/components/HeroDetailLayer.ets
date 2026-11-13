@@ -43,6 +43,16 @@ export struct HeroDetailLayer {
   accent: string = '#1976D2';
   /** 页面层透明度：0 = 只有彩色层；1 = 完全是页面。由父级在转场里推动。 */
   @Prop contentOpacity: number = 0;
+  /**
+   * 需要向上抵消的外壳避让（vp）。
+   *
+   * 本组件挂在功能页内部，而功能页已被 `HdsNavigation` 避让掉「状态栏 + MINI 标题栏」。
+   * 展开页要盖到屏幕顶，所以用负 margin 抵回来 —— 用 margin 而不是 offset：
+   * offset / translate 只改绘制不改布局，点击会错位。
+   */
+  topInset: number = 0;
+  /** 整窗高度（抵消避让后要补回这段高度，否则底部缺一截）。 */
+  fullHeight: number = 0;
 
   onBack: () => void = () => {};
 
@@ -109,14 +119,10 @@ export struct HeroDetailLayer {
       .opacity(this.contentOpacity)
     }
     .width('100%')
-    .height('100%')
+    .height(this.fullHeight > 0 ? this.fullHeight : '100%')
+    .margin({ top: -this.topInset })
     // 裁掉圆角外的溢出
     .clip(true)
-    // ⚠️ 必须显式声明圆角，共享元素才会做圆角插值：
-    // `geometryTransition` 只同步「绑定处自己的 borderRadius」，没设就按无圆角处理，
-    // 于是展开瞬间卡片的大圆角会直接变成直角（用户看到的就是「没有圆角过渡」）。
-    // 这里取 0（展开后是整页），系统会从卡片的 28 平滑插值到 0。
-    .borderRadius(0)
     .geometryTransition(this.heroId)
   }
 }

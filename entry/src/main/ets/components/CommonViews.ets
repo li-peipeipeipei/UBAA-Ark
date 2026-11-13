@@ -321,11 +321,9 @@ export struct FeatureTile {
     .onClick(() => {
       this.onTileClick();
     })
-    // ⚠️ 圆角必须声明在**绑定共享元素的那个节点**上：`geometryTransition` 只同步
-    // 绑定处自己的 borderRadius，系统才知道要从 28 插值到 0（内层色块的圆角不算）。
-    .borderRadius(this.radius)
-    .clip(true)
     // 共享元素：目的页用同一个 id 绑定，系统自动把这张卡片「长」成全屏页
+    // ⚠️ 这里**不要**加 clip(true)：实测会让共享元素的几何过渡失效，
+    // 展开时会僵在起点（画面像是「卡片被放大了一点、内容没了」）。
     .geometryTransition(HeroMorph.cardId(this.index))
     .onAreaChange((_old: Area, now: Area) => {
       const x: number = now.globalPosition.x as number;

@@ -12,7 +12,7 @@ import { ExamPage } from '../academic/ExamPage';
 import { RouteName } from '../../common/AppRouter';
 import { BackGuard } from '../../common/BackGuard';
 import { FeatureItem, allFeatures } from '../../components/FeatureRegistry';
-import { KEY_BREAKPOINT, templateOfColumns, tileColumnsTemplateFor } from '../../common/Breakpoint';
+import { KEY_BREAKPOINT, KEY_WINDOW_HEIGHT_VP, templateOfColumns, tileColumnsTemplateFor } from '../../common/Breakpoint';
 
 /**
  * 单个按钮的**目标宽度**（vp）。
@@ -321,6 +321,8 @@ export struct FeaturePage {
           heroId: HeroMorph.cardId(this.heroIndex),
           accent: this.heroAccent,
           contentOpacity: this.heroContentOpacity,
+          topInset: AppSize.destTopInset(topSafeInsetVp()),
+          fullHeight: AppStorage.get<number>(KEY_WINDOW_HEIGHT_VP) ?? 800,
           onBack: () => {
             this.closeHero();
           }
