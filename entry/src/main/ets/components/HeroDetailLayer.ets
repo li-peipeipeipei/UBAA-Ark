@@ -107,8 +107,13 @@ export struct HeroDetailLayer {
     }
     .width('100%')
     .height('100%')
-    // 裁掉圆角外的溢出；圆角本身由系统在共享元素转场里与卡片插值
+    // 裁掉圆角外的溢出
     .clip(true)
+    // ⚠️ 必须显式声明圆角，共享元素才会做圆角插值：
+    // `geometryTransition` 只同步「绑定处自己的 borderRadius」，没设就按无圆角处理，
+    // 于是展开瞬间卡片的大圆角会直接变成直角（用户看到的就是「没有圆角过渡」）。
+    // 这里取 0（展开后是整页），系统会从卡片的 28 平滑插值到 0。
+    .borderRadius(0)
     .geometryTransition(this.heroId)
   }
 }

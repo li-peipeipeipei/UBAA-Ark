@@ -28,7 +28,7 @@ const TILE_PRESS_SCALE: number = 0.955;
 /** 按下到位的时间（ms）。必须短，超过 120ms 就会有「迟钝」感。 */
 const TILE_PRESS_DOWN_MS: number = 90;
 /** 返回时原卡片的回弹峰值。 */
-const TILE_BOUNCE_SCALE: number = 1.05;
+const TILE_BOUNCE_SCALE: number = 1.06;
 
 /**
  * 图标来源类型。
@@ -321,6 +321,10 @@ export struct FeatureTile {
     .onClick(() => {
       this.onTileClick();
     })
+    // ⚠️ 圆角必须声明在**绑定共享元素的那个节点**上：`geometryTransition` 只同步
+    // 绑定处自己的 borderRadius，系统才知道要从 28 插值到 0（内层色块的圆角不算）。
+    .borderRadius(this.radius)
+    .clip(true)
     // 共享元素：目的页用同一个 id 绑定，系统自动把这张卡片「长」成全屏页
     .geometryTransition(HeroMorph.cardId(this.index))
     .onAreaChange((_old: Area, now: Area) => {

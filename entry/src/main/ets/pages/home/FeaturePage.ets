@@ -188,16 +188,31 @@ export struct FeaturePage {
       this.heroContentOpacity = 0;
     });
     setTimeout(() => {
+      // 回弹挂在收缩动画的 onFinish 上：动画一落地就弹，中间不留空档
+      let bounced: boolean = false;
+      const bounce = (): void => {
+        if (bounced) {
+          return;
+        }
+        bounced = true;
+        this.bounceIndex = this.heroIndex;
+        this.bounceTick = this.bounceTick + 1;
+      };
       this.getUIContext().animateTo(
-        { curve: curves.springMotion(0.3, 0.85) },
+        {
+          curve: curves.springMotion(0.3, 0.85),
+          onFinish: () => {
+            bounce();
+          }
+        },
         () => {
           this.heroOpen = false;
         }
       );
+      // 兜底：动画被中断时 onFinish 不会来，别让回弹丢了
       setTimeout(() => {
-        this.bounceIndex = this.heroIndex;
-        this.bounceTick = this.bounceTick + 1;
-      }, 320);
+        bounce();
+      }, 520);
     }, 160);
   }
 
