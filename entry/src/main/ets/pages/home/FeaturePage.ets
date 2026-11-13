@@ -272,10 +272,13 @@ export struct FeaturePage {
       .padding({
         left: AppSize.pagePadding,
         right: AppSize.pagePadding,
-        // 顶部让开「状态栏 + 悬浮标题栏（MINI，56vp）」。状态栏那一段的模糊由
-        // PageShell 的磨砂层补上，视口必须从屏幕顶开始（见 MainPage.PageShell）；
-        // 留白只能写在这里，写到外壳上会把视口压低、内容就滑不进磨砂层了。
-        top: AppSize.destTopInset(topSafeInsetVp()),
+        // 顶部让开「状态栏 + 56vp 视觉留白」。
+        //
+        // ⚠️ 这里**不能**用 `AppSize.destTopInset()`：那个函数在「安全区交给 HDS 处理」时
+        // 直接返回 0（因为它以为 HdsNavigation 会避让标题栏）。而功能页签为了卡片展开
+        // 已经 `hideTitleBar(true)`，避让没了 —— 再用它就会让卡片顶到状态栏上。
+        // 所以这里显式算：状态栏高度 + 与标题栏等高的留白，位置与改造前一致。
+        top: topSafeInsetVp() + AppSize.navTitleBarMiniHeight,
         bottom: 0
       })
       .constraintSize({ minHeight: '100%' })
