@@ -321,6 +321,9 @@ export struct FeatureTile {
     .onClick(() => {
       this.onTileClick();
     })
+    // 圆角必须声明在**绑定共享元素的这个节点**上，系统才知道要插值什么
+    // （内层色块的 borderRadius 不参与）。
+    .borderRadius(this.radius)
     // 共享元素：目的页用同一个 id 绑定，系统自动把这张卡片「长」成全屏页
     // ⚠️ 这里**不要**加 clip(true)：实测会让共享元素的几何过渡失效，
     // 展开时会僵在起点（画面像是「卡片被放大了一点、内容没了」）。

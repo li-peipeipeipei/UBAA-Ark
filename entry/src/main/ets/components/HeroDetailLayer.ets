@@ -86,7 +86,9 @@ export struct HeroDetailLayer {
           .width(40)
           .height(40)
           .borderRadius(20)
-          .backgroundColor(AppColor.glassSurface)
+          // 与项目里其它圆形返回/关闭按钮同款底色（沉浸光感令牌），
+          // 之前误用了 glassSurface（那是卡片玻璃底，偏亮偏透）。
+          .backgroundColor(AppColor.circleButtonSurface)
           .onClick(() => {
             this.onBack();
           })
@@ -121,8 +123,10 @@ export struct HeroDetailLayer {
     .width('100%')
     .height(this.fullHeight > 0 ? this.fullHeight : '100%')
     .margin({ top: -this.topInset })
-    // 裁掉圆角外的溢出
-    .clip(true)
+    // 声明圆角：`geometryTransition` 只同步**绑定处自己的** borderRadius，
+    // 不声明就按直角处理（卡片的大圆角会瞬间丢失）。这里取 0，由系统从卡片圆角插值过来。
+    // ⚠️ 不要配 clip(true)：实测会让共享元素的几何动画整段失效。
+    .borderRadius(0)
     .geometryTransition(this.heroId)
   }
 }

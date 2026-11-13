@@ -668,6 +668,12 @@ export struct MainPage {
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
         .mode(NavigationMode.Stack)
+        // 功能页没有标题栏（一级页只有卡片网格），但 HdsNavigation 默认会为 MINI 标题栏
+        // 避让约 96vp —— 卡片展开的浮层要盖到屏幕顶，就会超出父容器边界，
+        // 顶部的返回按钮**点不到**（ArkUI 的命中测试不越界）。
+        // 隐藏标题栏后内容从屏幕顶开始，浮层不用上移，按钮恢复正常；
+        // 网格自身的顶部留白由页面内的 destTopInset 补齐，位置不变。
+        .hideTitleBar(true)
       }
       .tabBar(new BottomTabBarStyle($r('app.media.ic_apps'), $r('app.string.tab_feature')))
 
