@@ -63,10 +63,27 @@ export class HeroMorph {
   private static seed: number = 0;
 
   /** 入场：记下卡片颜色与矩形，并广播。调用方紧接着 push（硬切）。 */
+  /** 共享元素的 id：卡片与目的页必须一致，系统才知道「谁变成谁」。 */
+  static cardId(index: number): string {
+    return 'feature_tile_' + index;
+  }
+
+  /** 当前点击的那张卡片的共享元素 id（目的页据此绑定同一个）。 */
+  private static activeCardId: string = '';
+
+  static getCardId(): string {
+    return HeroMorph.activeCardId;
+  }
+
+  static hasCard(): boolean {
+    return HeroMorph.activeCardId.length > 0;
+  }
+
   static startExpand(color: string, card: MorphRect, index: number): void {
     HeroMorph.color = color;
     HeroMorph.card = card;
     HeroMorph.cardIndex = index;
+    HeroMorph.activeCardId = HeroMorph.cardId(index);
     HeroMorph.phase = MorphPhase.EXPAND;
     HeroMorph.bump();
   }

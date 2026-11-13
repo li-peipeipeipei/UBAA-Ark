@@ -1,11 +1,16 @@
 import { AppRouter } from '../../common/AppRouter';
 import { FeatureHero, HERO_BOUNCE_TICK } from '../../common/FeatureHero';
 import { HeroMorph, MorphRect } from '../../common/HeroMorph';
+import curves from '@ohos.curves';
 import { Toast } from '../../common/Toast';
 import { Logger } from '../../common/Logger';
 import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { FeatureTile, tileFillColor } from '../../components/CommonViews';
+import { HeroDetailLayer } from '../../components/HeroDetailLayer';
+import { ExamPage } from '../academic/ExamPage';
+import { RouteName } from '../../common/AppRouter';
+import { BackGuard } from '../../common/BackGuard';
 import { FeatureItem, allFeatures } from '../../components/FeatureRegistry';
 import { KEY_BREAKPOINT, templateOfColumns, tileColumnsTemplateFor } from '../../common/Breakpoint';
 
@@ -62,6 +67,12 @@ export struct FeaturePage {
   @State private tileRadius: number = 28;
   /** 自身实测宽度（含内边距），算卡片位置要用。 */
   @State private paneWidth: number = 0;
+  /** 卡片展开的浮层（同树 geometryTransition 才会生效，见 HeroDetailLayer 注释）。 */
+  @State private heroOpen: boolean = false;
+  @State private heroTitle: string = '';
+  @State private heroRoute: string = '';
+  @State private heroIndex: number = -1;
+
   /** 刚缩回来的那张卡片（-1 = 没有）。 */
   @State private bounceIndex: number = -1;
   /** 回弹触发计数：只给 `bounceIndex` 那张卡片递增，避免整排一起弹。 */
@@ -115,13 +126,38 @@ export struct FeaturePage {
     }
     // 转场：一块「卡片色」从卡片矩形变形到全屏，页面在它之上交叉淡入。
     // push 仍然是硬切 —— 变形动画由 MainPage 的色块层演，跟路由无关。
+    // 先只接管「考试安排」这一页（跑通链路后再逐个接入其余入口）。
+    // 其余入口维持原来的导航跳转，不受影响。
+    if (item.route === RouteName.EXAM) {
+      this.heroTitle = item.title;
+      this.heroRoute = item.route;
+      this.heroIndex = index;
+      BackGuard.register(() => {
+        this.closeHero();
+        return true;
+      });
+      // 共享元素转场：状态变更必须包在 animateTo 里，系统才会做几何过渡
+      this.getUIContext().animateTo(
+        { curve: curves.springMotion(0.32, 0.82) },
+        () => {
+          this.heroOpen = true;
+        }
+      );
+      return;
+    }
     const rect: MorphRect | null = this.cardRect(index);
     if (rect !== null) {
-      // 卡片本身是「半透明主色叠材质」，色块要用混合后的实际颜色才不跳
       const dark: boolean = AppStorage.get<boolean>('isDarkMode') ?? false;
       HeroMorph.startExpand(tileFillColor(item.colorValue, dark), rect, index);
     }
-    AppRouter.open(this.stack, item.route, undefined, false);
+    // 共享元素转场：push 必须包在 animateTo 里，并关闭 Navigation 的默认转场，
+    // 系统才会接管「卡片 → 全屏页」的几何过渡（含圆角同步）。
+    this.getUIContext().animateTo(
+      { curve: curves.springMotion(0.32, 0.82) },
+      () => {
+        AppRouter.open(this.stack, item.route, undefined, false);
+      }
+    );
   }
 
   /**
@@ -132,6 +168,17 @@ export struct FeaturePage {
    * 那样一来竖屏的块就比横屏大得多，正是要避免的「视觉大小忽变」。
    * 这里只按目标宽度取列，残行怎么都躲不掉（10 个块不可能被 3 整除）。
    */
+  /** 收起展开的卡片（返回按钮 / 系统返回都走这里）。 */
+  private closeHero(): void {
+    BackGuard.unregister();
+    this.getUIContext().animateTo(
+      { curve: curves.springMotion(0.28, 0.9) },
+      () => {
+        this.heroOpen = false;
+      }
+    );
+  }
+
   private columnsTemplate(items: FeatureItem[]): string {
     if (this.columns <= 0) {
       return tileColumnsTemplateFor(this.bp, items.length);
@@ -144,6 +191,7 @@ export struct FeaturePage {
   }
 
   build() {
+    Stack() {
     Scroll() {
       Column({ space: AppSize.gap }) {
         Grid() {
@@ -228,5 +276,23 @@ export struct FeaturePage {
     // 顶部留白不写在 Scroll 上 —— ArkUI 会把 Scroll 的 padding 当 contentInset，
     // 把滚动内容整体上移（实测反而顶到时钟上）；留白写在滚动内容的内边距里。
     .backgroundColor(AppColor.pageBackground)
+
+      // 卡片展开的详情浮层：与点击的那张卡片共用 geometryTransition id
+      if (this.heroOpen) {
+        HeroDetailLayer({
+          title: this.heroTitle,
+          heroId: HeroMorph.cardId(this.heroIndex),
+          onBack: () => {
+            this.closeHero();
+          }
+        }) {
+          if (this.heroRoute === RouteName.EXAM) {
+            ExamPage()
+          }
+        }
+      }
+    }
+    .width('100%')
+    .height('100%')
   }
 }

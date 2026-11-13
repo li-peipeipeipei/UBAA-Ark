@@ -2,6 +2,7 @@ import { AppColor, AppFont, AppSize } from './AppTheme';
 import { MaterialCardLayer } from './MaterialCardLayer';
 import { immersiveMaterialActive } from '../common/SystemMaterial';
 import curves from '@ohos.curves';
+import { HeroMorph } from '../common/HeroMorph';
 
 /**
  * 材质层之上那层主色的不透明度。
@@ -320,6 +321,8 @@ export struct FeatureTile {
     .onClick(() => {
       this.onTileClick();
     })
+    // 共享元素：目的页用同一个 id 绑定，系统自动把这张卡片「长」成全屏页
+    .geometryTransition(HeroMorph.cardId(this.index))
     .onAreaChange((_old: Area, now: Area) => {
       const x: number = now.globalPosition.x as number;
       const y: number = now.globalPosition.y as number;

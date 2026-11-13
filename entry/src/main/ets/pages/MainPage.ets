@@ -1,4 +1,5 @@
 import { BackGuard } from '../common/BackGuard';
+import { Toast } from '../common/Toast';
 import { FeatureHero, HERO_BOUNCE_TICK } from '../common/FeatureHero';
 import { HeroMorph, KEY_HERO_PAGE_OPACITY, KEY_MORPH_TICK, MorphPhase, MorphRect } from '../common/HeroMorph';
 import curves from '@ohos.curves';
@@ -172,7 +173,6 @@ export struct MainPage {
       // 底下的功能页（其他卡片）一直透得出来，才会是「卡片发光展开」而不是「盖一块色板」。
       this.morphOpacity = 0.75;
       this.morphVisible = true;
-      AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 0);
       // ⚠️ 必须等一帧：初值与 animateTo 在同一帧内提交会被合并成「直接到终值」，
       // 动画整段丢失（踩过）。32ms 足够让色块先以卡片矩形画出来。
       setTimeout(() => {
@@ -843,7 +843,7 @@ export struct MainPage {
       this.narrowTabs()
 
       // 转场色块：盖在内容区之上、侧栏之下（侧栏始终可见）
-      if (this.morphVisible) {
+      if (false && this.morphVisible) {
         Column()
           .width(this.morphW)
           .height(this.morphH)
