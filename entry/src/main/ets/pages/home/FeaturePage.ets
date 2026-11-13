@@ -72,6 +72,10 @@ export struct FeaturePage {
   @State private heroTitle: string = '';
   @State private heroRoute: string = '';
   @State private heroIndex: number = -1;
+  /** 卡片实际显示色（展开的起点色）。 */
+  @State private heroAccent: string = '#1976D2';
+  /** 页面层透明度：转场里由 0 推到 1（反过来收）。 */
+  @State private heroContentOpacity: number = 0;
 
   /** 刚缩回来的那张卡片（-1 = 没有）。 */
   @State private bounceIndex: number = -1;
@@ -129,20 +133,30 @@ export struct FeaturePage {
     // 先只接管「考试安排」这一页（跑通链路后再逐个接入其余入口）。
     // 其余入口维持原来的导航跳转，不受影响。
     if (item.route === RouteName.EXAM) {
+      const dark: boolean = AppStorage.get<boolean>('isDarkMode') ?? false;
       this.heroTitle = item.title;
       this.heroRoute = item.route;
       this.heroIndex = index;
+      this.heroAccent = tileFillColor(item.colorValue, dark);
+      this.heroContentOpacity = 0;
       BackGuard.register(() => {
         this.closeHero();
         return true;
       });
-      // 共享元素转场：状态变更必须包在 animateTo 里，系统才会做几何过渡
+      // 共享元素转场：状态变更必须包在 animateTo 里，系统才会做几何过渡。
+      // 0.38 / 0.78 比默认慢一档，末端有一次轻微的过冲（Apple 的那种手感）。
       this.getUIContext().animateTo(
-        { curve: curves.springMotion(0.32, 0.82) },
+        { curve: curves.springMotion(0.38, 0.78) },
         () => {
           this.heroOpen = true;
         }
       );
+      // 彩色层先长大，页面层稍后淡入 → 「彩色卡片渐变成页面」
+      setTimeout(() => {
+        this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+          this.heroContentOpacity = 1;
+        });
+      }, 90);
       return;
     }
     const rect: MorphRect | null = this.cardRect(index);
@@ -171,12 +185,22 @@ export struct FeaturePage {
   /** 收起展开的卡片（返回按钮 / 系统返回都走这里）。 */
   private closeHero(): void {
     BackGuard.unregister();
-    this.getUIContext().animateTo(
-      { curve: curves.springMotion(0.28, 0.9) },
-      () => {
-        this.heroOpen = false;
-      }
-    );
+    // 先让页面层淡出（露出彩色层），再收起几何，最后让卡片弹一下 —— 与入场完全相反
+    this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseIn }, () => {
+      this.heroContentOpacity = 0;
+    });
+    setTimeout(() => {
+      this.getUIContext().animateTo(
+        { curve: curves.springMotion(0.3, 0.85) },
+        () => {
+          this.heroOpen = false;
+        }
+      );
+      setTimeout(() => {
+        this.bounceIndex = this.heroIndex;
+        this.bounceTick = this.bounceTick + 1;
+      }, 320);
+    }, 160);
   }
 
   private columnsTemplate(items: FeatureItem[]): string {
@@ -282,6 +306,8 @@ export struct FeaturePage {
         HeroDetailLayer({
           title: this.heroTitle,
           heroId: HeroMorph.cardId(this.heroIndex),
+          accent: this.heroAccent,
+          contentOpacity: this.heroContentOpacity,
           onBack: () => {
             this.closeHero();
           }

@@ -13,6 +13,17 @@ import { topSafeInsetVp } from '../common/ImmersiveUtil';
  * 所以卡片展开的详情页不走导航，直接在功能页里用浮层渲染 —— 同树内系统才会接管
  * 「这张卡片长成这一页」的几何过渡（含圆角同步）。
  *
+ * ## 两层结构（「渐变至功能页本身」的关键）
+ *
+ * ```
+ * Stack（绑定 geometryTransition，随系统几何放大 / 缩小，圆角同步）
+ * ├─ 彩色层：卡片本身的颜色，不透明度 0.92 —— 放大时看到的是「这张卡在长大」
+ * └─ 页面层：标题栏 + 页面内容，opacity 由父级推动 0→1
+ * ```
+ *
+ * 入场：彩色层先长大，页面层稍后淡入 —— 观感是「彩色卡片展开并变成页面」。
+ * 退场：页面层先淡出露出彩色层，再缩回卡片。
+ *
  * ## 与 HDS 标题栏的视觉对齐
  *
  * 自绘标题栏刻意复刻 HDS 的排版：84vp 高、返回按钮 40vp 圆、标题 24vp Bold、
@@ -21,7 +32,6 @@ import { topSafeInsetVp } from '../common/ImmersiveUtil';
 @Component
 export struct HeroDetailLayer {
   title: string = '';
-  onBack: () => void = () => {};
   /**
    * 共享元素 id —— 与点击的那张卡片一致。
    *
@@ -29,6 +39,12 @@ export struct HeroDetailLayer {
    * （`Component({...}) { }.geometryTransition(...)` 会直接编译报错）。
    */
   heroId: string = '';
+  /** 卡片实际显示的颜色（半透明主色叠材质后的结果），展开的起点色。 */
+  accent: string = '#1976D2';
+  /** 页面层透明度：0 = 只有彩色层；1 = 完全是页面。由父级在转场里推动。 */
+  @Prop contentOpacity: number = 0;
+
+  onBack: () => void = () => {};
 
   @Builder
   empty() {
@@ -37,48 +53,62 @@ export struct HeroDetailLayer {
   @BuilderParam content: () => void = this.empty;
 
   build() {
-    Column() {
-      // 自绘标题栏（对齐 HdsNavDestination 的 MINI 模式）
-      Row({ space: 16 }) {
-        Button() {
-          SymbolGlyph($r('sys.symbol.chevron_left'))
-            .fontSize(22)
-            .fontColor([AppColor.textPrimary])
-        }
-        .type(ButtonType.Normal)
-        .width(40)
-        .height(40)
-        .borderRadius(20)
-        .backgroundColor(AppColor.glassSurface)
-        .onClick(() => {
-          this.onBack();
-        })
+    Stack() {
+      // 彩色层：整块随共享元素几何一起长大 / 缩小
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(this.accent)
+        // 略透：放大过程中底下的其他卡片还隐约透得出来
+        .opacity(0.92)
 
-        Text(this.title)
-          .fontSize(AppFont.title)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(AppColor.textPrimary)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-        Blank()
-      }
-      .width('100%')
-      .height(84)
-      .padding({ left: 24, right: 24 })
-      .alignItems(VerticalAlign.Center)
-
-      // 页面内容
+      // 页面层：内容 + 标题栏，从 0 淡入 =「渐变至功能页本身」
       Column() {
-        this.content()
+        Row({ space: 16 }) {
+          Button() {
+            SymbolGlyph($r('sys.symbol.chevron_left'))
+              .fontSize(22)
+              .fontColor([AppColor.textPrimary])
+          }
+          .type(ButtonType.Normal)
+          .width(40)
+          .height(40)
+          .borderRadius(20)
+          .backgroundColor(AppColor.glassSurface)
+          .onClick(() => {
+            this.onBack();
+          })
+
+          Text(this.title)
+            .fontSize(AppFont.title)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(AppColor.textPrimary)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Blank()
+        }
+        .width('100%')
+        .height(84)
+        .padding({ left: 24, right: 24 })
+        .alignItems(VerticalAlign.Center)
+
+        Column() {
+          this.content()
+        }
+        .width('100%')
+        .layoutWeight(1)
       }
       .width('100%')
-      .layoutWeight(1)
+      .height('100%')
+      .backgroundColor(AppColor.pageBackground)
+      .padding({ top: topSafeInsetVp() })
+      .opacity(this.contentOpacity)
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(AppColor.pageBackground)
-    .padding({ top: topSafeInsetVp() })
+    // 裁掉圆角外的溢出；圆角本身由系统在共享元素转场里与卡片插值
+    .clip(true)
     .geometryTransition(this.heroId)
   }
 }
