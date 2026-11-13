@@ -27,7 +27,7 @@ const TILE_PRESS_SCALE: number = 0.955;
 /** 按下到位的时间（ms）。必须短，超过 120ms 就会有「迟钝」感。 */
 const TILE_PRESS_DOWN_MS: number = 90;
 /** 返回时原卡片的回弹峰值。 */
-const TILE_BOUNCE_SCALE: number = 1.035;
+const TILE_BOUNCE_SCALE: number = 1.05;
 
 /**
  * 图标来源类型。

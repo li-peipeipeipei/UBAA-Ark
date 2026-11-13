@@ -168,7 +168,9 @@ export struct MainPage {
       this.morphH = card.h;
       this.morphRadius = card.radius;
       this.morphColor = HeroMorph.getColor();
-      this.morphOpacity = 1;
+      // 起步不是纯色块，而是**半透明的彩色光层**：放大过程中它逐渐溶解，
+      // 底下的功能页（其他卡片）一直透得出来，才会是「卡片发光展开」而不是「盖一块色板」。
+      this.morphOpacity = 0.75;
       this.morphVisible = true;
       AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 0);
       // ⚠️ 必须等一帧：初值与 animateTo 在同一帧内提交会被合并成「直接到终值」，
@@ -176,15 +178,10 @@ export struct MainPage {
       setTimeout(() => {
         this.getUIContext().animateTo(
           {
-            curve: curves.springMotion(0.34, 0.88),
+            // Apple 式非线性：快起步 + 轻微过冲 + 干净收尾
+            curve: curves.springMotion(0.32, 0.82),
             onFinish: () => {
-              // 到位后淡出色块：底下压着的是真实页面，标题栏平滑显现
-              this.getUIContext().animateTo(
-                { duration: 120, curve: Curve.EaseOut, onFinish: () => { HeroMorph.finish(); } },
-                () => {
-                  this.morphOpacity = 0;
-                }
-              );
+              HeroMorph.finish();
             }
           },
           () => {
@@ -194,14 +191,16 @@ export struct MainPage {
             this.morphH = winH;
             this.morphRadius = 0;
             this.morphColor = this.pageBg();
+            // 与放大同一段动画里溶解到完全透明
+            this.morphOpacity = 0;
           }
         );
-        // 交叉：色块放到约一半时页面开始淡入
+        // 页面稍晚一点、用更长的时间淡入：让「彩色层还亮着」的观感先建立起来
         setTimeout(() => {
-          this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseOut }, () => {
+          this.getUIContext().animateTo({ duration: 320, curve: Curve.EaseOut }, () => {
             AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 1);
           });
-        }, 170);
+        }, 120);
       }, 32);
       return;
     }
@@ -213,7 +212,8 @@ export struct MainPage {
     this.morphH = winH;
     this.morphRadius = 0;
     this.morphColor = this.pageBg();
-    this.morphOpacity = 1;
+    // 退场从「几乎看不见」开始：页面还盖着，色块浮现的瞬间页面正好淡出
+    this.morphOpacity = 0;
     this.morphVisible = true;
     this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseIn }, () => {
       AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 0);
@@ -234,6 +234,7 @@ export struct MainPage {
           this.morphH = card.h;
           this.morphRadius = card.radius;
           this.morphColor = HeroMorph.getColor();
+          this.morphOpacity = 0.75;
         }
       );
     }, 160);
