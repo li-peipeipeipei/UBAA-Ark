@@ -2,7 +2,6 @@ import { AppColor, AppFont, AppSize } from './AppTheme';
 import { MaterialCardLayer } from './MaterialCardLayer';
 import { immersiveMaterialActive } from '../common/SystemMaterial';
 import curves from '@ohos.curves';
-import { HeroMorph } from '../common/HeroMorph';
 
 /**
  * 材质层之上那层主色的不透明度。
@@ -334,13 +333,10 @@ export struct FeatureTile {
     .onClick(() => {
       this.onTileClick();
     })
-    // 圆角必须声明在**绑定共享元素的这个节点**上，系统才知道要插值什么
-    // （内层色块的 borderRadius 不参与）。
+    // 卡片展开的转场由 MainPage 的遮罩演（见 MainPage.onMorphTick），
+    // 这里不再绑 `geometryTransition` —— 跨 NavDestination 它不生效（实测），
+    // 留着反而会触发系统自己的共享元素逻辑、与遮罩抢动画。
     .borderRadius(this.radius)
-    // 共享元素：目的页用同一个 id 绑定，系统自动把这张卡片「长」成全屏页
-    // ⚠️ 这里**不要**加 clip(true)：实测会让共享元素的几何过渡失效，
-    // 展开时会僵在起点（画面像是「卡片被放大了一点、内容没了」）。
-    .geometryTransition(HeroMorph.cardId(this.index))
     .onAreaChange((_old: Area, now: Area) => {
       const x: number = now.globalPosition.x as number;
       const y: number = now.globalPosition.y as number;
@@ -360,31 +356,6 @@ export struct FeatureTile {
  */
 export function featureTileAlpha(): number {
   return immersiveMaterialActive(false) ? FEATURE_TILE_COLOR_ALPHA : 1;
-}
-
-/**
- * 卡片**实际显示**的颜色。
- *
- * 功能块是「半透明主色叠在系统材质上」，直接拿主色画转场色块会比卡片本身更艳
- * （用户一眼就能看出颜色不一致）。这里按同一透明度与页面底色做一次混合，
- * 色块起步的颜色才和卡片对得上。
- *
- * @param hex 主色（`#RRGGBB`）
- * @param dark 当前是否深色主题（决定底色）
- */
-export function tileFillColor(hex: string, dark: boolean): string {
-  const value: number = parseInt(hex.replace('#', ''), 16);
-  const bg: number = dark ? 0x000000 : 0xF1F3F5;
-  const a: number = FEATURE_TILE_COLOR_ALPHA;
-  const mix = (front: number, back: number): number => Math.round(front * a + back * (1 - a));
-  const r: number = mix((value >> 16) & 0xFF, (bg >> 16) & 0xFF);
-  const g: number = mix((value >> 8) & 0xFF, (bg >> 8) & 0xFF);
-  const b: number = mix(value & 0xFF, bg & 0xFF);
-  const hex2 = (n: number): string => {
-    const text: string = n.toString(16);
-    return text.length === 1 ? '0' + text : text;
-  };
-  return '#' + hex2(r) + hex2(g) + hex2(b);
 }
 
 /** 键值信息行（「我的」页 / 详情页复用）。 */

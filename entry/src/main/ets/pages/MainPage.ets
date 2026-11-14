@@ -1,6 +1,5 @@
 import { BackGuard } from '../common/BackGuard';
 import { Toast } from '../common/Toast';
-import { FeatureHero, HERO_BOUNCE_TICK, KEY_FEATURE_HERO_CLOSE } from '../common/FeatureHero';
 import { NavHero } from '../common/NavHero';
 import { HeroMorph, KEY_HERO_PAGE_OPACITY, KEY_MORPH_TICK, MorphPhase, MorphRect } from '../common/HeroMorph';
 import curves from '@ohos.curves';
@@ -163,6 +162,14 @@ export struct MainPage {
   private expandDone: boolean = false;
   /** 收起收尾只做一次（onFinish 与兜底定时器都会调）。 */
   private shrinkDone: boolean = false;
+  /**
+   * 转场序号：每开一轮（EXPAND / SHRINK）+1。
+   *
+   * 定时器必须带着自己那一轮的序号回来 —— 否则「展开还没播完就按了返回」时，
+   * 展开那批定时器还会继续执行：520ms 的收尾会把收起中的遮罩直接藏掉、
+   * 并提前 `finishTransition()`，画面会突然断掉（真机会这样）。
+   */
+  private morphSeq: number = 0;
 
   /**
    * 「卡片 → 全屏」的遮罩动画（打开 / 收起共用一套矩形动画）。
@@ -202,6 +209,8 @@ export struct MainPage {
     if (phase === MorphPhase.EXPAND) {
       this.shrinkDone = false;
       this.expandDone = false;
+      this.morphSeq = this.morphSeq + 1;
+      const seq: number = this.morphSeq;
       this.morphAlpha = HeroMorph.getAlpha();
       this.morphTitle = HeroMorph.getTitle();
       this.morphIcon = HeroMorph.getIcon();
@@ -241,8 +250,8 @@ export struct MainPage {
         // ⚠️ 页面透明度必须显式拉回 1：它在前一帧被设成 0（避免转场瞬间闪页面），
         // 忘了拉回来的话，遮罩淡完就是**一片黑**（真机踩过）。
         setTimeout(() => {
-          // 用户可能在放大还没结束时就按了返回：阶段已经变了就别再推打开的那套值
-          if (HeroMorph.getPhase() !== MorphPhase.EXPAND) {
+          // 用户可能在放大还没结束时就按了返回：这一轮已经换了就别再推打开的那套值
+          if (seq !== this.morphSeq) {
             return;
           }
           this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, () => {
@@ -252,6 +261,9 @@ export struct MainPage {
         }, 230);
         // 收尾：不再依赖弹簧的 onFinish（它比视觉停稳晚很多，页面会显得「出来得慢」）
         setTimeout(() => {
+          if (seq !== this.morphSeq) {
+            return;
+          }
           this.finishExpand();
         }, 520);
       }, 32);
@@ -260,6 +272,8 @@ export struct MainPage {
 
     // SHRINK：遮罩先铺满并把页面隐去 —— 收缩时露出的应是功能页，而不是这一页。
     this.shrinkDone = false;
+    this.morphSeq = this.morphSeq + 1;
+    const seq: number = this.morphSeq;
     this.morphX = navW;
     this.morphY = 0;
     this.morphW = fullW;
@@ -291,6 +305,9 @@ export struct MainPage {
       );
       // 与几何同一时长收尾：落地即回弹，中间不留空档
       setTimeout(() => {
+        if (seq !== this.morphSeq) {
+          return;
+        }
         this.finishShrink();
       }, 320);
     }, 32);
@@ -481,18 +498,6 @@ export struct MainPage {
    * 「二级页滑走 + 列表页滑入」——与同一场景的其它返回方式不一致。
    * 其余页签保持默认（带动画），与它们的 push / pop 对称。
    */
-  /**
-   * 通知功能页收起「展开的卡片」。
-   *
-   * 那是功能页内部的一个浮层（为了共享元素转场），**不在导航栈里** ——
-   * `clearStack()` 清的是栈，碰不到它。点「功能」页签时必须单独发这个信号，
-   * 否则用户会觉得「点了功能按钮回不到功能主页」。
-   */
-  private notifyCloseFeatureHero(): void {
-    const current: number = AppStorage.get<number>(KEY_FEATURE_HERO_CLOSE) ?? 0;
-    AppStorage.setOrCreate<number>(KEY_FEATURE_HERO_CLOSE, current + 1);
-  }
-
   private clearStack(index: number): void {
     if (index === 2) {
       const stack: NavPathStack = this.stackOf(index);
@@ -898,7 +903,6 @@ export struct MainPage {
     .onTabBarClick((index: number) => {
       // 点「功能」：无论当前在不在功能页，都先收起卡片浮层（它不在导航栈里）
       if (index === 2) {
-        this.notifyCloseFeatureHero();
       }
       if (index === this.currentIndex) {
         this.clearStack(index);
@@ -1080,8 +1084,7 @@ export struct MainPage {
       onSelect: (index: number) => {
         // 点「功能」：先收起卡片浮层（与底部页签一致）
         if (index === 2) {
-          this.notifyCloseFeatureHero();
-        }
+          }
         if (index === this.currentIndex) {
           // 「再点当前项」清栈回主页
           this.clearStack(index);

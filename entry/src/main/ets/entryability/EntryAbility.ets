@@ -7,7 +7,6 @@ import { Logger } from '../common/Logger';
 import { TokenStore } from '../network/TokenStore';
 import { KEY_MAIN_TAB_INDEX } from '../common/NavStacks';
 import { NavHero } from '../common/NavHero';
-import { HERO_BOUNCE_TICK, HERO_EXIT_TICK } from '../common/FeatureHero';
 import { KEY_HERO_PAGE_OPACITY, KEY_MORPH_TICK } from '../common/HeroMorph';
 import {
   KEY_WINDOW_WIDTH_VP,
@@ -56,9 +55,6 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate<boolean>(KEY_NAV_SPLIT_MODE, false);
     // 当前页签序号（横竖屏切换后还要停在原来那一页，见 common/NavStacks.ets）
     AppStorage.setOrCreate<number>(KEY_MAIN_TAB_INDEX, 0);
-    // 功能块放大/缩回转场的两个信号（见 common/FeatureHero.ets）
-    AppStorage.setOrCreate<number>(HERO_EXIT_TICK, 0);
-    AppStorage.setOrCreate<number>(HERO_BOUNCE_TICK, 0);
     AppStorage.setOrCreate<number>(KEY_MORPH_TICK, 0);
     AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 1);
     // 原生导航「卡片展开」转场的三个信号键（见 common/NavHero.ets）

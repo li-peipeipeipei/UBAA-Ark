@@ -1,6 +1,5 @@
 
 import { BackGuard } from './BackGuard';
-import { FeatureHero } from './FeatureHero';
 
 /**
  * 路由表。

@@ -8,7 +8,7 @@ import { AppRouter, RouteName } from '../common/AppRouter';
 import { NativeHeroDest } from '../components/NativeHeroDest';
 import { AppColor } from '../components/AppTheme';
 import { FeatureHero } from '../common/FeatureHero';
-import { HeroMorph, KEY_HERO_PAGE_OPACITY } from '../common/HeroMorph';
+import { KEY_HERO_PAGE_OPACITY } from '../common/HeroMorph';
 import curves from '@ohos.curves';
 import { Logger } from '../common/Logger';
 import { GradeHeaderModel, GradeTermTitle } from '../components/GradeHeader';
@@ -219,8 +219,6 @@ struct DestShell {
     .width('100%')
     .height('100%')
     .opacity(this.pageOpacity)
-    // 与点击的那张卡片共用 id：系统负责把它从卡片矩形「长」到全屏（含圆角同步）
-    .geometryTransition(HeroMorph.getCardId())
   }
 }
 

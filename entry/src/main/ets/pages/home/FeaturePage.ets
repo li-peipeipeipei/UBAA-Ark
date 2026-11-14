@@ -1,5 +1,4 @@
 import { AppRouter } from '../../common/AppRouter';
-import { FeatureHero, HERO_BOUNCE_TICK } from '../../common/FeatureHero';
 import { KEY_HERO_TILE_BOUNCE, KEY_HERO_TILE_SHOW, NavHero } from '../../common/NavHero';
 import { HeroMorph, MorphRect } from '../../common/HeroMorph';
 import curves from '@ohos.curves';
@@ -70,10 +69,6 @@ export struct FeaturePage {
   /** 被展开的那张卡片是否隐藏（展开后由浮层接管，收起前还原）。 */
   @State private heroHideTile: boolean = false;
   /** 收起时浮层的几何：相对全屏原位的平移 + 非等比缩放（全屏 = 0 / 1）。 */
-  @State private heroTransX: number = 0;
-  @State private heroTransY: number = 0;
-  @State private heroScaleX: number = 1;
-  @State private heroScaleY: number = 1;
 
   /**
    * 本页在屏幕上的真实起点 y（vp）。
@@ -82,17 +77,11 @@ export struct FeaturePage {
    * 用常量推算会差几十 vp（实测标题栏掉了 55vp）。这里直接量根节点的 globalPosition，
    * 浮层用负 margin 精确抵消它，才能贴到屏幕顶。
    */
-  @State private shellTop: number = 0;
 
   /** 刚缩回来的那张卡片（-1 = 没有）。 */
   @State private bounceIndex: number = -1;
   /** 回弹触发计数：只给 `bounceIndex` 那张卡片递增，避免整排一起弹。 */
   @State private bounceTick: number = 0;
-  /**
-   * 退场动画播完的信号（由 DestShell 递增）。
-   * 收到后取 `FeatureHero.takeBounce()` —— 记住的是**哪一张**卡片要弹。
-   */
-  @StorageProp(HERO_BOUNCE_TICK) @Watch('onBounceSignal') private bounceSignal: number = 0;
   /** 目的地开始收缩：原卡片先显示出来（此刻画面还是全屏不透明，看不到变化）。 */
   @StorageProp(KEY_HERO_TILE_SHOW) @Watch('onTileShow') private tileShowTick: number = 0;
   /** 收缩落地：原卡片回弹一次。 */
@@ -107,15 +96,6 @@ export struct FeaturePage {
       return;
     }
     this.bounceIndex = this.heroIndex;
-    this.bounceTick = this.bounceTick + 1;
-  }
-
-  onBounceSignal(): void {
-    const index: number = FeatureHero.takeBounce();
-    if (index < 0) {
-      return;
-    }
-    this.bounceIndex = index;
     this.bounceTick = this.bounceTick + 1;
   }
 
@@ -300,11 +280,5 @@ export struct FeaturePage {
     }
     .width('100%')
     .height('100%')
-    .onAreaChange((_old: Area, now: Area) => {
-      const top: number = now.globalPosition.y as number;
-      if (Math.abs(top - this.shellTop) > 0.5) {
-        this.shellTop = top;
-      }
-    })
   }
 }
