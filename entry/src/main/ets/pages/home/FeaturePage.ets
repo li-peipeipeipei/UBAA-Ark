@@ -171,14 +171,22 @@ export struct FeaturePage {
       });
       // 共享元素转场：状态变更必须包在 animateTo 里，系统才会做几何过渡。
       // 0.38 / 0.78 比默认慢一档，末端有一次轻微的过冲（Apple 的那种手感）。
+      // ⚠️ 圆角必须**晚一帧**再收平：和 `heroOpen = true` 写进同一个 animateTo 的话，
+      // 浮层创建时收到的 corner 已经是终值 0，等于从直角开始 —— 看不出圆角过渡。
       this.getUIContext().animateTo(
         { curve: curves.springMotion(0.38, 0.78) },
         () => {
           this.heroOpen = true;
-          // 圆角与几何同步收平：卡片圆角 → 0
-          this.heroCorner = 0;
         }
       );
+      setTimeout(() => {
+        this.getUIContext().animateTo(
+          { curve: curves.springMotion(0.38, 0.78) },
+          () => {
+            this.heroCorner = 0;
+          }
+        );
+      }, 16);
       // 颜色先走、内容后到：
       //   0~180ms   彩色层褪干净（不再等放大做完）
       //   40~280ms  页面层淡入（比颜色晚 40ms，形成「色退→内容浮现」的错峰）
@@ -217,6 +225,15 @@ export struct FeaturePage {
     this.getUIContext().animateTo({ duration: 140, curve: Curve.EaseIn }, () => {
       this.heroContentOpacity = 0;
     });
+    // 先把圆角长回卡片值（仍然看得见浮层时做），再收缩 —— 否则 out 过渡里圆角是突变的
+    setTimeout(() => {
+      this.getUIContext().animateTo(
+        { curve: curves.springMotion(0.3, 0.85) },
+        () => {
+          this.heroCorner = this.tileRadius;
+        }
+      );
+    }, 16);
     setTimeout(() => {
       // 回弹挂在收缩动画的 onFinish 上：动画一落地就弹，中间不留空档
       let bounced: boolean = false;
@@ -237,8 +254,6 @@ export struct FeaturePage {
         },
         () => {
           this.heroOpen = false;
-          // 收势里圆角长回卡片值，和几何收缩同一段弹簧
-          this.heroCorner = this.tileRadius;
         }
       );
       // 彩色层晚 120ms 才回来：收势前半段是中性底，后半段才「变成那张卡片」
