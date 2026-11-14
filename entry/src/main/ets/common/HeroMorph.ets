@@ -60,6 +60,11 @@ export class HeroMorph {
   private static card: MorphRect = { x: 0, y: 0, w: 0, h: 0, radius: 0 };
   /** 卡片在网格里的序号（退场后回弹用）。 */
   private static cardIndex: number = -1;
+  /** 卡片上的文字与图标 —— 遮罩要带着它们一起放大，才有「这张卡本身展开」的观感。 */
+  private static title: string = '';
+  private static icon: Resource | null = null;
+  /** 卡片色块的不透明度：材质可用时 0.86，否则 1（与 FeatureTile 完全同源）。 */
+  private static alpha: number = 1;
   private static seed: number = 0;
 
   /** 入场：记下卡片颜色与矩形，并广播。调用方紧接着 push（硬切）。 */
@@ -79,10 +84,14 @@ export class HeroMorph {
     return HeroMorph.activeCardId.length > 0;
   }
 
-  static startExpand(color: string, card: MorphRect, index: number): void {
+  static startExpand(color: string, card: MorphRect, index: number,
+    title: string, icon: Resource, alpha: number): void {
     HeroMorph.color = color;
     HeroMorph.card = card;
     HeroMorph.cardIndex = index;
+    HeroMorph.title = title;
+    HeroMorph.icon = icon;
+    HeroMorph.alpha = alpha;
     HeroMorph.activeCardId = HeroMorph.cardId(index);
     HeroMorph.phase = MorphPhase.EXPAND;
     HeroMorph.bump();
@@ -117,6 +126,19 @@ export class HeroMorph {
 
   static getCardIndex(): number {
     return HeroMorph.cardIndex;
+  }
+
+  static getTitle(): string {
+    return HeroMorph.title;
+  }
+
+  static getIcon(): Resource | null {
+    return HeroMorph.icon;
+  }
+
+  /** 卡片色块的不透明度（与 FeatureTile 用的是同一个判定）。 */
+  static getAlpha(): number {
+    return HeroMorph.alpha;
   }
 
   static tick(): number {

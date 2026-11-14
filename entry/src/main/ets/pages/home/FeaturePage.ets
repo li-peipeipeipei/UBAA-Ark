@@ -7,7 +7,7 @@ import { Toast } from '../../common/Toast';
 import { Logger } from '../../common/Logger';
 import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
-import { FeatureTile, tileFillColor } from '../../components/CommonViews';
+import { FeatureTile, featureTileAlpha } from '../../components/CommonViews';
 import { RouteName } from '../../common/AppRouter';
 import { BackGuard } from '../../common/BackGuard';
 import { FeatureItem, allFeatures } from '../../components/FeatureRegistry';
@@ -157,19 +157,20 @@ export struct FeaturePage {
       const rect: MorphRect | null = this.cardRect(index);
       if (rect !== null) {
         const dark: boolean = AppStorage.get<boolean>('isDarkMode') ?? false;
-        // 深色主题用深色那份字面值，否则遮罩会比卡片暗一档
-        const color: string = tileFillColor(dark ? item.colorDark : item.colorValue, dark);
-        // 记两处：NavHero 给目的地（取色/序号），HeroMorph 给 MainPage 的遮罩（矩形动画）
+        // ⚠️ 传**基础色**而不是预先混合好的色值：遮罩用「基础色 + 与卡片相同的透明度」
+        // 自己叠出来，混合方式与卡片完全一致，起点颜色才不会有色差。
+        const base: string = dark ? item.colorDark : item.colorValue;
+        // 记两处：NavHero 给目的地（序号），HeroMorph 给 MainPage 的遮罩（矩形 + 图标文字 + 透明度）
         NavHero.setCard({
           x: rect.x,
           y: rect.y,
           w: rect.w,
           h: rect.h,
           radius: rect.radius,
-          color: color,
+          color: base,
           index: index
         });
-        HeroMorph.startExpand(color, rect, index);
+        HeroMorph.startExpand(base, rect, index, item.title, item.icon, featureTileAlpha());
         this.heroIndex = index;
         // 遮罩首帧就是这张卡（同色同位置同圆角），所以把它藏起来看不出差别；
         // 30ms 是给遮罩一帧布局的时间。

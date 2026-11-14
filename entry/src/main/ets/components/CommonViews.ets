@@ -30,7 +30,7 @@ const TILE_PRESS_SCALE: number = 0.955;
 /** 按下到位的时间（ms）。必须短，超过 120ms 就会有「迟钝」感。 */
 const TILE_PRESS_DOWN_MS: number = 90;
 /** 返回时原卡片的回弹峰值。 */
-const TILE_BOUNCE_SCALE: number = 1.06;
+const TILE_BOUNCE_SCALE: number = 1.08;
 
 /**
  * 图标来源类型。
@@ -247,7 +247,8 @@ export struct FeatureTile {
     if (this.pressed) {
       return { duration: TILE_PRESS_DOWN_MS, curve: Curve.Friction };
     }
-    return { curve: curves.springMotion(0.18, 0.55) };
+    // 回弹用稍慢一点的弹簧：1.08 的峰值 + 约 250ms 的回落，肉眼才看得出「弹了一下」
+    return { curve: curves.springMotion(0.24, 0.6) };
   }
 
   onBounce(): void {
@@ -348,6 +349,17 @@ export struct FeatureTile {
       this.onBounds(x, y, w, h);
     })
   }
+}
+
+/**
+ * 卡片色块**实际使用的透明度**。
+ *
+ * 与 `FeatureTile` 内部完全同源：材质可用时用 `FEATURE_TILE_COLOR_ALPHA`（0.86），
+ * 不可用时退成 1（不透明纯色）。转场遮罩必须用同一个值，否则起点颜色和卡片对不上
+ * （用户反馈的「略有差别」就是这里）。
+ */
+export function featureTileAlpha(): number {
+  return immersiveMaterialActive(false) ? FEATURE_TILE_COLOR_ALPHA : 1;
 }
 
 /**

@@ -136,6 +136,14 @@ export struct MainPage {
   @State private morphH: number = 0;
   @State private morphRadius: number = 0;
   @State private morphColor: string = '#1976D2';
+  /** 彩色层的透明度（与卡片同源：材质可用 0.86，否则 1）。展开时溶到 0 = 融进页面。 */
+  @State private morphAccentOpacity: number = 0;
+  /** 卡片上的图标 + 文字：随色块一起拉伸，才有「这张卡本身展开」的一体感。 */
+  @State private morphContentScale: number = 1;
+  @State private morphContentOpacity: number = 1;
+  @State private morphTitle: string = '';
+  private morphIcon: Resource | null = null;
+  private morphAlpha: number = 1;
   @State private morphOpacity: number = 1;
   @StorageProp(KEY_MORPH_TICK) @Watch('onMorphTick') private morphTick: number = 0;
 
@@ -163,16 +171,18 @@ export struct MainPage {
    *
    * 直接在 `NavDestination` 的内容上做 scale/translate 实测无效：日志显示动画正常播完、
    * 状态也确实是终值，但画面停在初始大小（系统在转场期间冻结了目的地的渲染）。
-   * 而这一层是 MainPage 的普通子节点，`animateTo` 改 width/height/position 稳定可靠
-   * （前面几轮真机验证过）。
+   * 而这一层是 MainPage 的普通子节点，`animateTo` 改 width/height/position 稳定可靠。
    *
-   * ## 两个阶段各自看到什么
+   * ## 结构（三层，缺一不可）
    *
-   * - 打开：遮罩 = 那张卡（实心卡片色 + 卡片圆角），从卡片矩形长到全屏；
-   *   周围一直是**系统保留的功能页快照**，所以「其他功能块可见」；
-   *   长到全屏后遮罩淡出，露出早就铺好的真实页面（交叉过渡）。
-   * - 收起：遮罩先铺满（页面底色）并立刻把页面隐去 → 缩回卡片矩形（颜色/圆角复原）
-   *   → 结束后才让系统移除目的地，此刻遮罩与真实卡片像素级重合，看不出切换。
+   * ```
+   * ① 页面底色        —— 颜色淡去后剩下的是它，等于「融进页面本身」
+   * ② 彩色层          —— 基础色 + 与卡片相同的透明度（0.86），起点颜色才能和卡片一模一样
+   * ③ 图标 + 文字     —— 跟着色块一起放大 / 缩小，做出一体感
+   * ```
+   *
+   * 时序（打开）：几何 340ms；180ms 起遮罩整体淡出 260ms；440ms 收尾放行。
+   * 时序（收起）：几何 320ms 固定时长（弹簧的 onFinish 比视觉停稳晚很多，会显得回弹滞后）。
    */
   onMorphTick(): void {
     const phase: MorphPhase = HeroMorph.getPhase();
@@ -185,16 +195,26 @@ export struct MainPage {
     const winH: number = AppStorage.get<number>(KEY_WINDOW_HEIGHT_VP) ?? 800;
     // card.x / card.y 是卡片的**屏幕坐标**（FeatureTile 上报），所以直接用
     const card: MorphRect = HeroMorph.getCard();
+    const fullW: number = winW - navW;
+    // 图标 / 文字按宽度比例放大：色块长到全屏时它们也长到对应倍数，始终「长在一块上」
+    const endScale: number = card.w > 0 ? fullW / card.w : 1;
 
     if (phase === MorphPhase.EXPAND) {
       this.shrinkDone = false;
-      // ① 首帧就是「这张卡」：实心卡片色、卡片圆角、卡片矩形
+      this.expandDone = false;
+      this.morphAlpha = HeroMorph.getAlpha();
+      this.morphTitle = HeroMorph.getTitle();
+      this.morphIcon = HeroMorph.getIcon();
+      // ① 首帧就是「这张卡」：实心卡片色（同透明度）、卡片圆角、卡片矩形、图标文字原位
       this.morphX = card.x;
       this.morphY = card.y;
       this.morphW = card.w;
       this.morphH = card.h;
       this.morphRadius = card.radius;
       this.morphColor = HeroMorph.getColor();
+      this.morphAccentOpacity = this.morphAlpha;
+      this.morphContentScale = 1;
+      this.morphContentOpacity = 1;
       this.morphOpacity = 1;
       this.morphVisible = true;
       // 目的地一开始不可见：等遮罩铺满并开始淡出时它才登场
@@ -202,101 +222,94 @@ export struct MainPage {
       // ⚠️ 必须等一帧：初值与 animateTo 在同一帧内提交会被合并成「直接到终值」
       setTimeout(() => {
         this.getUIContext().animateTo(
-          {
-            // Apple 式非线性：快起步 + 轻微过冲 + 干净收尾
-            curve: curves.springMotion(0.32, 0.82),
-            onFinish: () => {
-              this.finishExpand();
-            }
-          },
+          { curve: curves.springMotion(0.32, 0.82) },
           () => {
             this.morphX = navW;
             this.morphY = 0;
-            this.morphW = winW - navW;
+            this.morphW = fullW;
             this.morphH = winH;
             this.morphRadius = 0;
-            this.morphColor = this.pageBg();
+            // 颜色溶掉 → 露出下面的页面底色层 = 「渐变至功能页本身」
+            this.morphAccentOpacity = 0;
+            // 图标 / 文字跟着一起长大
+            this.morphContentScale = endScale;
           }
         );
-        // 页面在遮罩仍是实心时就淡入（被遮罩盖着看不见），
-        // 随后遮罩淡出 —— 两者在这一段交叉，观感是「色块融进页面」
+        // 图形在放大途中淡出：不淡掉的话最后会是一块巨大的白色图标。
+        // 120ms 起淡（前 40% 时间一直清晰），拉伸感才看得出来。
+        setTimeout(() => {
+          this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseIn }, () => {
+            this.morphContentOpacity = 0;
+          });
+        }, 120);
+        // 遮罩整体淡出（此时它已经是一整块页面底色），页面在下面露出来
         setTimeout(() => {
           this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, () => {
-            AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 1);
+            this.morphOpacity = 0;
           });
-        }, 160);
-        // 兜底：几何动画的 onFinish 因故没来也要放行
+        }, 180);
+        // 收尾：不再依赖弹簧的 onFinish（它比视觉停稳晚很多，页面会显得「出来得慢」）
         setTimeout(() => {
           this.finishExpand();
-        }, 700);
+        }, 440);
       }, 32);
       return;
     }
 
-    // SHRINK：遮罩先铺满并立刻把页面隐去 ——
-    // 收缩时遮罩外露出的应该是功能页，而不是这一页。
+    // SHRINK：遮罩先铺满并把页面隐去 —— 收缩时露出的应是功能页，而不是这一页。
     this.shrinkDone = false;
     this.morphX = navW;
     this.morphY = 0;
-    this.morphW = winW - navW;
+    this.morphW = fullW;
     this.morphH = winH;
     this.morphRadius = 0;
-    this.morphColor = this.pageBg();
+    this.morphColor = HeroMorph.getColor();
+    this.morphAlpha = HeroMorph.getAlpha();
+    this.morphAccentOpacity = 0;
+    this.morphContentScale = endScale;
+    this.morphContentOpacity = 0;
     this.morphOpacity = 1;
     this.morphVisible = true;
     AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 0);
     setTimeout(() => {
       this.getUIContext().animateTo(
-        {
-          curve: curves.springMotion(0.34, 0.86),
-          onFinish: () => {
-            this.finishShrink();
-          }
-        },
+        // 固定时长：弹簧的 onFinish 明显滞后于视觉停稳，回弹会晚半拍（用户实测反馈）
+        { duration: 320, curve: Curve.FastOutSlowIn },
         () => {
           this.morphX = card.x;
           this.morphY = card.y;
           this.morphW = card.w;
           this.morphH = card.h;
           this.morphRadius = card.radius;
-          this.morphColor = HeroMorph.getColor();
+          this.morphAccentOpacity = this.morphAlpha;
+          this.morphContentScale = 1;
         }
       );
+      // 收势后半段把图标 / 文字显出来，落地时正好是「那张卡」
+      setTimeout(() => {
+        this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
+          this.morphContentOpacity = 1;
+        });
+      }, 70);
+      // 与几何同一时长收尾：落地即回弹，中间不留空档
       setTimeout(() => {
         this.finishShrink();
-      }, 700);
+      }, 320);
     }, 32);
   }
 
-  /** 放大到位：遮罩淡出，露出已经铺好的页面（真正的交叉过渡）。 */
+  /** 放大到位：遮罩已经淡到 0，移除目的地（此刻画面早已是页面本身）。 */
   private finishExpand(): void {
     if (this.expandDone) {
       return;
     }
     this.expandDone = true;
-    this.getUIContext().animateTo(
-      {
-        duration: 140,
-        curve: Curve.EaseOut,
-        onFinish: () => {
-          this.morphVisible = false;
-          HeroMorph.finish();
-          // 页面已经完全可见，这时才让系统移除功能页快照（看不出变化）
-          NavHero.finishTransition();
-        }
-      },
-      () => {
-        this.morphOpacity = 0;
-      }
-    );
-    setTimeout(() => {
-      this.morphVisible = false;
-      HeroMorph.finish();
-      NavHero.finishTransition();
-    }, 400);
+    this.morphVisible = false;
+    HeroMorph.finish();
+    NavHero.finishTransition();
   }
 
-  /** 收缩落地：移除目的地 → 真实卡片露出，再让它弹一下。 */
+  /** 收缩落地：移除目的地 → 真实卡片露出，立刻回弹。 */
   private finishShrink(): void {
     if (this.shrinkDone) {
       return;
@@ -307,7 +320,10 @@ export struct MainPage {
     AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 1);
     HeroMorph.finish();
     NavHero.finishTransition();
-    NavHero.notifyBounce();
+    // 回弹放在下一帧：先让 grid 真正露出来，弹动才看得见（同帧弹会被上面那层盖掉）
+    setTimeout(() => {
+      NavHero.notifyBounce();
+    }, 16);
   }
 
   /**
@@ -994,14 +1010,50 @@ export struct MainPage {
       // 它是 MainPage 的普通子节点 —— 不在 Navigation 的转场里，animateTo 改
       // width/height/position 一定生效（目的页内容上的 transform 会被系统冻结）。
       if (this.morphVisible) {
-        Column()
-          .width(this.morphW)
-          .height(this.morphH)
-          .borderRadius(this.morphRadius)
-          .backgroundColor(this.morphColor)
-          .opacity(this.morphOpacity)
-          .position({ x: this.morphX, y: this.morphY })
-          .hitTestBehavior(HitTestMode.None)
+        // 三层：页面底色 → 彩色层（与卡片同透明度）→ 图标文字（随块一起拉伸）
+        Stack() {
+          Column()
+            .width('100%')
+            .height('100%')
+            .backgroundColor(this.pageBg())
+
+          Column()
+            .width('100%')
+            .height('100%')
+            .backgroundColor(this.morphColor)
+            .opacity(this.morphAccentOpacity)
+
+          Column({ space: 12 }) {
+            if (this.morphIcon !== null) {
+              Image(this.morphIcon)
+                .width(40)
+                .height(40)
+                .fillColor(Color.White)
+                .opacity(0.9)
+                .draggable(false)
+            }
+            Text(this.morphTitle)
+              .fontSize(AppFont.subtitle)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(Color.White)
+              .opacity(0.95)
+              .maxLines(1)
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+          // 以中心缩放：块在长大时，图标与文字同步长大，看上去是同一张卡在展开
+          .scale({ x: this.morphContentScale, y: this.morphContentScale })
+          .opacity(this.morphContentOpacity)
+        }
+        .width(this.morphW)
+        .height(this.morphH)
+        .borderRadius(this.morphRadius)
+        // 裁掉放大后溢出的图标文字
+        .clip(true)
+        .opacity(this.morphOpacity)
+        .position({ x: this.morphX, y: this.morphY })
+        .hitTestBehavior(HitTestMode.None)
       }
 
       if (this.sideNavLayout()) {
