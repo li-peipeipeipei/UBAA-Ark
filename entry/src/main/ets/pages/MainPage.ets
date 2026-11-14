@@ -270,7 +270,11 @@ export struct MainPage {
       return;
     }
 
-    // SHRINK：遮罩先铺满并把页面隐去 —— 收缩时露出的应是功能页，而不是这一页。
+    // SHRINK：页面先溶解进底色，色块再收缩成卡片。
+    //
+    // ⚠️ 不能一上来就把遮罩设成**不透明的页面底色**、同时把页面隐掉：
+    // 深色模式下页面底色就是纯黑，会出现「页面消失 → 纯黑 0.13s → 色块才显形」
+    // （逐帧实测：#1~#4 整屏黑）。所以遮罩从透明淡入，与页面淡出交叉。
     this.shrinkDone = false;
     this.morphSeq = this.morphSeq + 1;
     const seq: number = this.morphSeq;
@@ -284,13 +288,22 @@ export struct MainPage {
     this.morphAccentOpacity = 0;
     this.morphContentScale = endScale;
     this.morphContentOpacity = 0;
-    this.morphOpacity = 1;
+    // 遮罩先不可见：靠下面的交叉过渡一点点盖住页面，而不是瞬间换掉
+    this.morphOpacity = 0;
     this.morphVisible = true;
-    AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 0);
+    // ① 交叉：遮罩淡入 + 页面淡出（同一段动画、同一条曲线）
+    this.getUIContext().animateTo({ duration: 110, curve: Curve.EaseIn }, () => {
+      this.morphOpacity = 1;
+      AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 0);
+    });
+    // ② 底色铺满后再收缩（颜色与图标/文字同一条曲线一起回来）
     setTimeout(() => {
+      if (seq !== this.morphSeq) {
+        return;
+      }
       this.getUIContext().animateTo(
         // 固定时长：弹簧的 onFinish 明显滞后于视觉停稳，回弹会晚半拍（用户实测反馈）
-        { duration: 320, curve: Curve.FastOutSlowIn },
+        { duration: 300, curve: Curve.FastOutSlowIn },
         () => {
           this.morphX = card.x;
           this.morphY = card.y;
@@ -309,8 +322,8 @@ export struct MainPage {
           return;
         }
         this.finishShrink();
-      }, 320);
-    }, 32);
+      }, 300);
+    }, 110);
   }
 
   /** 放大到位：遮罩已经淡到 0，移除目的地（此刻画面早已是页面本身）。 */
