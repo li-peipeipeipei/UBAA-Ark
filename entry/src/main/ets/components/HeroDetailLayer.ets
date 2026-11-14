@@ -97,7 +97,12 @@ export struct HeroDetailLayer {
         .borderRadius(this.corner)
 
       // ③ 页面层：内容 + 标题栏，从 0 淡入 =「渐变至功能页本身」
+      //
+      // ⚠️ 分两层：外层只负责「背景 + 圆角 + 裁剪」，内层承担 padding。
+      // 如果把 padding 写在外层，`clip` 裁的是内容区（不含 padding），
+      // 背景与内容在四角就会露出直角 —— 用户看到的「圆角不一致」就是这个。
       Column() {
+        Column() {
         Row({ space: 16 }) {
           Button() {
             SymbolGlyph($r('sys.symbol.chevron_left'))
@@ -135,13 +140,17 @@ export struct HeroDetailLayer {
         }
         .width('100%')
         .layoutWeight(1)
+        }
+        .width('100%')
+        .height('100%')
+        .padding({ top: topSafeInsetVp() })
       }
       .width('100%')
       .height('100%')
       .backgroundColor(AppColor.pageBackground)
-      // 同款圆角：只靠背景绘制，不配 clip（clip 裁内容区、背景铺 border box，会露出直角边）
       .borderRadius(this.corner)
-      .padding({ top: topSafeInsetVp() })
+      // 外层无 padding，clip 才能裁到边缘（含四角）
+      .clip(true)
       .opacity(this.contentOpacity)
     }
     .width('100%')
