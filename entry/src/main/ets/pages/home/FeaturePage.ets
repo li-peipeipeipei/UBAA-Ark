@@ -303,61 +303,45 @@ export struct FeaturePage {
    * 位置：`translate` 相对自身原位（全屏左上角 = 屏幕 (0,0)），直接取卡片左上角；
    *      `scale` 的 centerX/centerY = 0（从左上角缩），位置不会漂。
    */
+  /**
+   * 收起：几何交给系统的 out 过渡（`heroOpen = false`）。
+   *
+   * 只倒放**状态**，不自己缩放：
+   *   0~160ms  页面淡出 + 颜色回来 + 圆角长回（三者重叠，避免出现「整屏变紫」的空档）
+   *   160ms    触发 out 过渡 —— 系统按卡片的真实矩形把浮层缩回去（位置尺寸必然准确）
+   *   ~540ms   落地 + 卡片回弹
+   *
+   * 已知取舍：系统的 out 阶段会让离场组件淡出（收缩过程中偏透），
+   * 这个行为不由业务侧控制。要完全不透只能自己 scale，但那会引入坐标系误差，
+   * 详见 docs/tech/feature-tile-transition.md 的「为什么做不到完全反向」。
+   */
   private closeHero(): void {
     if (!this.heroOpen) {
       return;
     }
     BackGuard.unregister();
-    const bounds: number[] | undefined = this.tileBounds.get(this.heroIndex);
-    const winW: number = AppStorage.get<number>(KEY_WINDOW_WIDTH_VP) ?? 375;
-    const navW: number = useSideNav(this.bp) ? sideNavWidthOf(this.bp) : 0;
-    const winH: number = AppStorage.get<number>(KEY_WINDOW_HEIGHT_VP) ?? 800;
-    const fullW: number = winW - navW;
-
-    // ① 页面淡出 + 颜色到实心（120ms，同时进行）
-    this.getUIContext().animateTo({ duration: 120, curve: Curve.EaseIn }, () => {
+    // 三者同时倒放，避免「页面还在淡出、颜色已经铺满」的空档
+    this.getUIContext().animateTo({ duration: 160, curve: Curve.EaseIn }, () => {
       this.heroContentOpacity = 0;
       this.heroAccentOpacity = 1;
+      this.heroCorner = this.tileRadius;
     });
-
-    // ② 60ms 就开始缩 —— 与淡出重叠，没有「整屏紫停留」的空档
     setTimeout(() => {
-      let sx: number = 0.16;
-      let sy: number = 0.33;
-      let tx: number = 0;
-      let ty: number = 0;
-      if (bounds !== undefined && fullW > 0 && winH > 0) {
-        sx = bounds[2] / fullW;
-        sy = bounds[3] / winH;
-        tx = bounds[0];
-        ty = bounds[1];
-      }
-      const cornerTarget: number = Math.min(this.tileRadius / (sx > 0 ? sx : 1), 300);
-      this.getUIContext().animateTo(
-        {
-          curve: curves.springMotion(0.34, 0.86),
-          onFinish: () => {
-            // 浮层已与卡片重合，一次性切走
+      // 卡片先复位：out 过渡需要一个可见的 in 组件作目标
+      this.heroHideTile = false;
+      setTimeout(() => {
+        this.getUIContext().animateTo(
+          { curve: curves.springMotion(0.38, 0.78) },
+          () => {
             this.heroOpen = false;
-            this.heroTransX = 0;
-            this.heroTransY = 0;
-            this.heroScaleX = 1;
-            this.heroScaleY = 1;
-            this.heroCorner = this.tileRadius;
-            this.bounceIndex = this.heroIndex;
-            this.bounceTick = this.bounceTick + 1;
           }
-        },
-        () => {
-          this.heroTransX = tx;
-          this.heroTransY = ty;
-          this.heroScaleX = sx;
-          this.heroScaleY = sy;
-          // 圆角补偿：scale 之后视觉圆角 = corner × scale
-          this.heroCorner = cornerTarget;
-        }
-      );
-    }, 60);
+        );
+        setTimeout(() => {
+          this.bounceIndex = this.heroIndex;
+          this.bounceTick = this.bounceTick + 1;
+        }, 380);
+      }, 16);
+    }, 160);
   }
 
   private columnsTemplate(items: FeatureItem[]): string {
