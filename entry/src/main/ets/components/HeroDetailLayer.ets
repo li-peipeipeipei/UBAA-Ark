@@ -44,6 +44,14 @@ export struct HeroDetailLayer {
   /** 页面层透明度：0 = 只有彩色层；1 = 完全是页面。由父级在转场里推动。 */
   @Prop contentOpacity: number = 0;
   /**
+   * 彩色层透明度：展开时很快褪去、收起时很晚才浮现。
+   *
+   * 和 `contentOpacity` 分开控制，才能做出「颜色先走、内容后到」的错峰感：
+   * 展开 → 颜色 0~180ms 褪完、页面 40~280ms 淡入；
+   * 收起 → 页面先淡出、收势过半时颜色才回来。
+   */
+  @Prop accentOpacity: number = 1;
+  /**
    * 需要向上抵消的外壳避让（vp）。
    *
    * 本组件挂在功能页内部，而功能页已被 `HdsNavigation` 避让掉「状态栏 + MINI 标题栏」。
@@ -64,17 +72,20 @@ export struct HeroDetailLayer {
 
   build() {
     Stack() {
-      // 彩色层：整块随共享元素几何一起长大 / 缩小
+      // ① 中性底：收起过程中先露出「形状」，颜色稍后才回来
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor(AppColor.pageBackground)
+
+      // ② 彩色层：展开时快速褪去，收起时较晚浮现（由 accentOpacity 推动）
       Column()
         .width('100%')
         .height('100%')
         .backgroundColor(this.accent)
-        // **不透明**：收起时它就是那张卡片的实体色块。
-        // （放大早期「其他卡片可见」靠的是它还没盖满屏幕，而不是靠半透明——
-        //  半透明会让收起时的彩色层显得发灰、发虚，用户明确否过。）
-        .opacity(1)
+        .opacity(this.accentOpacity)
 
-      // 页面层：内容 + 标题栏，从 0 淡入 =「渐变至功能页本身」
+      // ③ 页面层：内容 + 标题栏，从 0 淡入 =「渐变至功能页本身」
       Column() {
         Row({ space: 16 }) {
           Button() {

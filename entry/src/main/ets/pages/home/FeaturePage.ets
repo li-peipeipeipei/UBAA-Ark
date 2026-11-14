@@ -76,6 +76,8 @@ export struct FeaturePage {
   @State private heroAccent: string = '#1976D2';
   /** 页面层透明度：转场里由 0 推到 1（反过来收）。 */
   @State private heroContentOpacity: number = 0;
+  /** 彩色层透明度：展开时先褪、收起时后现 —— 与内容错峰。 */
+  @State private heroAccentOpacity: number = 1;
 
   /**
    * 本页在屏幕上的真实起点 y（vp）。
@@ -154,6 +156,7 @@ export struct FeaturePage {
       this.heroIndex = index;
       this.heroAccent = tileFillColor(item.colorValue, dark);
       this.heroContentOpacity = 0;
+      this.heroAccentOpacity = 1;
       BackGuard.register(() => {
         this.closeHero();
         return true;
@@ -166,12 +169,19 @@ export struct FeaturePage {
           this.heroOpen = true;
         }
       );
-      // 彩色层先长大，页面层稍后淡入 → 「彩色卡片渐变成页面」
+      // 颜色先走、内容后到：
+      //   0~180ms   彩色层褪干净（不再等放大做完）
+      //   40~280ms  页面层淡入（比颜色晚 40ms，形成「色退→内容浮现」的错峰）
       setTimeout(() => {
-        this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+        this.getUIContext().animateTo({ duration: 180, curve: Curve.EaseOut }, () => {
+          this.heroAccentOpacity = 0;
+        });
+      }, 16);
+      setTimeout(() => {
+        this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseOut }, () => {
           this.heroContentOpacity = 1;
         });
-      }, 90);
+      }, 40);
       return;
     }
     // 其余入口暂时维持普通导航跳转（待卡片展开方案验证通过后逐个接入）
@@ -192,8 +202,9 @@ export struct FeaturePage {
       return;
     }
     BackGuard.unregister();
-    // 先让页面层淡出（露出彩色层），再收起几何，最后让卡片弹一下 —— 与入场完全相反
-    this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseIn }, () => {
+    // 与入场相反，但**颜色更晚回来**：先淡出内容（露出中性底），
+    // 收势过半（+120ms）彩色层才浮现，最后缩回卡片并回弹。
+    this.getUIContext().animateTo({ duration: 140, curve: Curve.EaseIn }, () => {
       this.heroContentOpacity = 0;
     });
     setTimeout(() => {
@@ -218,6 +229,12 @@ export struct FeaturePage {
           this.heroOpen = false;
         }
       );
+      // 彩色层晚 120ms 才回来：收势前半段是中性底，后半段才「变成那张卡片」
+      setTimeout(() => {
+        this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
+          this.heroAccentOpacity = 1;
+        });
+      }, 120);
       // 兜底：动画被中断时 onFinish 不会来，别让回弹丢了
       setTimeout(() => {
         bounce();
@@ -333,6 +350,7 @@ export struct FeaturePage {
           heroId: HeroMorph.cardId(this.heroIndex),
           accent: this.heroAccent,
           contentOpacity: this.heroContentOpacity,
+          accentOpacity: this.heroAccentOpacity,
           topInset: this.shellTop,
           fullHeight: AppStorage.get<number>(KEY_WINDOW_HEIGHT_VP) ?? 800,
           onBack: () => {
