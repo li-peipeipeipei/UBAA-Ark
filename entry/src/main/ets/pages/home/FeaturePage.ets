@@ -193,15 +193,17 @@ export struct FeaturePage {
       //   0~70ms     颜色**保持实心**（最接近卡片位置的那几帧必须是「这张卡本身」）
       //   70~210ms   快速褪干净
       //   40~280ms   页面层淡入（与褪色交叉）
-      setTimeout(() => {
-        this.getUIContext().animateTo({ duration: 140, curve: Curve.EaseIn }, () => {
-          this.heroAccentOpacity = 0;
-        });
-      }, 70);
-      // 颜色开始褪时把卡片藏起来：此时浮层已经盖住卡片区域，看不到跳变
+      // 卡片尽早隐藏：只要浮层已经在放大（第一帧之后），它就没有存在价值了，
+      // 留着只会「透过正在褪色的彩色层被看见」，观感是浮层半透明。
       setTimeout(() => {
         this.heroHideTile = true;
-      }, 70);
+      }, 16);
+      // 颜色保持实心到 90ms 再快速褪，保证「最接近卡片」的那段时间是实心的这张卡
+      setTimeout(() => {
+        this.getUIContext().animateTo({ duration: 130, curve: Curve.EaseIn }, () => {
+          this.heroAccentOpacity = 0;
+        });
+      }, 90);
       setTimeout(() => {
         this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseOut }, () => {
           this.heroContentOpacity = 1;
@@ -237,29 +239,33 @@ export struct FeaturePage {
       return;
     }
     BackGuard.unregister();
-    // 还原卡片：几何收缩需要一个可见的 out 组件作目标
-    this.heroHideTile = false;
-    // 一段动画里同时做三件事，避免「先变圆、再收缩」的错位感
-    this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseIn }, () => {
+    // ① 内容先完全淡出（这一段只看到中性底，不影响颜色）
+    this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseIn }, () => {
       this.heroContentOpacity = 0;
-      this.heroAccentOpacity = 1;
-      this.heroCorner = this.tileRadius;
     });
-    // 颜色与圆角到位后再收缩
+    // ② 颜色**晚一点**才出现，且很快到实心：太早出现会让页面像「整块变紫」，
+    //    不够实又会透过它看到下面还亮着的卡片。
     setTimeout(() => {
+      this.getUIContext().animateTo({ duration: 110, curve: Curve.EaseOut }, () => {
+        this.heroAccentOpacity = 1;
+      });
+    }, 150);
+    // ③ 圆角与收缩同时进行；收缩前才还原卡片（此刻浮层已经实心，盖得住它）
+    setTimeout(() => {
+      this.heroHideTile = false;
       this.getUIContext().animateTo(
         { curve: curves.springMotion(0.3, 0.85) },
         () => {
+          this.heroCorner = this.tileRadius;
           this.heroOpen = false;
         }
       );
       // 收缩时长约 300ms，落地即回弹
       setTimeout(() => {
-        this.heroHideTile = false;
         this.bounceIndex = this.heroIndex;
         this.bounceTick = this.bounceTick + 1;
       }, 300);
-    }, 120);
+    }, 280);
   }
 
   private columnsTemplate(items: FeatureItem[]): string {
