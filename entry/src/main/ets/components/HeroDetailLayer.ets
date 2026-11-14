@@ -78,16 +78,21 @@ export struct HeroDetailLayer {
    * 改为保持浮层在场、用 scale 自己缩回卡片，最后再一次性切走（此刻两者已完全重合）。
    */
   /**
-   * 收起时的几何：左上角位置 + 非等比缩放。
+   * 收起时的几何：**相对全屏原位**的平移量 + 非等比缩放。
    *
-   * 三个必须分开的量（踩过两轮才齐）：
-   * 1. **位置**用 `position` 定左上角 —— 相对父容器，可预测；
-   * 2. **缩放**用 `scale` 且 `centerX/centerY = 0`（从左上角缩），位置才不会漂；
-   * 3. **X/Y 分别缩放** —— 浮层是全屏横向（≈1.6:1），卡片是竖长（≈0.77:1），
-   *    等比缩放会缩成一个横向的块（实测过）。
+   * 三个量（踩了三轮才齐）：
+   * 1. 位置用 `translate` —— 相对自身原位，**与父容器偏移无关**。
+   *    用 `position` 会踩坑：它相对父容器，而父容器被侧栏/标题栏推过，
+   *    传屏幕坐标会整体偏移（实测偏移 112vp = 侧栏宽）。
+   * 2. 缩放用 `scale` 且 `centerX/centerY = 0`（从左上角缩），位置才不漂。
+   * 3. X/Y 分别缩放 —— 浮层全屏横向（≈1.6:1）、卡片竖长（≈0.77:1），
+   *    等比会缩成一个横向块。
+   *
+   * 收起终点：左上角 = (translate)，尺寸 = 全屏 × (scaleX, scaleY)，
+   * 所以 translate 直接取卡片左上角的**屏幕坐标**即可。
    */
-  @Prop posX: number = 0;
-  @Prop posY: number = 0;
+  @Prop transX: number = 0;
+  @Prop transY: number = 0;
   @Prop scaleX: number = 1;
   @Prop scaleY: number = 1;
 
@@ -175,9 +180,10 @@ export struct HeroDetailLayer {
     }
     .width('100%')
     .height(this.fullHeight > 0 ? this.fullHeight : '100%')
-    // 左上角定位 + 从左上角缩放（见 posX/scaleX 注释）
-    .position({ x: this.posX, y: this.posY })
+    .margin({ top: -this.topInset })
+    // 从左上角缩放 + 相对原位平移（见 transX / scaleX 注释）
     .scale({ x: this.scaleX, y: this.scaleY, centerX: 0, centerY: 0 })
+    .translate({ x: this.transX, y: this.transY })
     // 声明圆角：`geometryTransition` 只同步**绑定处自己的** borderRadius，
     // 不声明就按直角处理（卡片的大圆角会瞬间丢失）。这里取 0，由系统从卡片圆角插值过来。
     // ⚠️ 不要配 clip(true)：实测会让共享元素的几何动画整段失效。

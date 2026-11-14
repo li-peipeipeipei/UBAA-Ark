@@ -87,9 +87,9 @@ export struct FeaturePage {
   @State private heroCorner: number = 0;
   /** 被展开的那张卡片是否隐藏（展开后由浮层接管，收起前还原）。 */
   @State private heroHideTile: boolean = false;
-  /** 收起时浮层的几何：左上角位置 + 非等比缩放（全屏 = posY -shellTop / scale 1）。 */
-  @State private heroPosX: number = 0;
-  @State private heroPosY: number = 0;
+  /** 收起时浮层的几何：相对全屏原位的平移 + 非等比缩放（全屏 = 0 / 1）。 */
+  @State private heroTransX: number = 0;
+  @State private heroTransY: number = 0;
   @State private heroScaleX: number = 1;
   @State private heroScaleY: number = 1;
 
@@ -172,8 +172,8 @@ export struct FeaturePage {
       this.heroContentOpacity = 0;
       this.heroAccentOpacity = 1;
       this.heroCorner = this.tileRadius;
-      this.heroPosX = 0;
-      this.heroPosY = -this.shellTop;
+      this.heroTransX = 0;
+      this.heroTransY = 0;
       this.heroScaleX = 1;
       this.heroScaleY = 1;
       BackGuard.register(() => {
@@ -287,9 +287,9 @@ export struct FeaturePage {
         // 非等比：宽度按卡片宽/全屏宽，高度按卡片高/全屏高
         sx = bounds[2] / fullW;
         sy = bounds[3] / winH;
-        // 左上角直接对到卡片左上角（position 是相对父容器，父容器顶 = shellTop）
-        this.heroPosX = bounds[0];
-        this.heroPosY = bounds[1] - this.shellTop;
+        // 全屏原位左上角就是屏幕 (0,0)，平移到卡片左上角即可（都是屏幕坐标）
+        this.heroTransX = bounds[0];
+        this.heroTransY = bounds[1];
       }
       this.getUIContext().animateTo({ duration: 110, curve: Curve.EaseOut }, () => {
         this.heroAccentOpacity = 1;
@@ -299,8 +299,8 @@ export struct FeaturePage {
           curve: curves.springMotion(0.34, 0.86),
           onFinish: () => {
             this.heroOpen = false;
-            this.heroPosX = 0;
-            this.heroPosY = -this.shellTop;
+            this.heroTransX = 0;
+            this.heroTransY = 0;
             this.heroScaleX = 1;
             this.heroScaleY = 1;
             this.heroCorner = this.tileRadius;
@@ -429,8 +429,8 @@ export struct FeaturePage {
           contentOpacity: this.heroContentOpacity,
           accentOpacity: this.heroAccentOpacity,
           corner: this.heroCorner,
-          posX: this.heroPosX,
-          posY: this.heroPosY,
+          transX: this.heroTransX,
+          transY: this.heroTransY,
           scaleX: this.heroScaleX,
           scaleY: this.heroScaleY,
           topInset: this.shellTop,
