@@ -290,40 +290,74 @@ export struct FeaturePage {
    *   340ms  触发系统 out 过渡，浮层缩回卡片
    *   ~720ms 卡片回弹
    */
+  /**
+   * 收起：**自己缩放**（不用系统 out 过渡）+ 与淡出**重叠**。
+   *
+   * 两个约束互相打架，只能这样解：
+   * 1. 不能等「页面淡完 + 颜色铺满」再缩 —— 那中间会有一段整屏紫停在那里
+   *    （上一版的 200~340ms 就是这样，用户看到「先全屏变紫」）。
+   *    所以收缩提前到 60ms，与淡出重叠。
+   * 2. 不能交给系统 out 过渡 —— 它会强制离场组件淡出，「缩小过程中太透明」就是它。
+   *    所以用 translate + scale 自己缩，浮层全程保持不透明。
+   *
+   * 位置：`translate` 相对自身原位（全屏左上角 = 屏幕 (0,0)），直接取卡片左上角；
+   *      `scale` 的 centerX/centerY = 0（从左上角缩），位置不会漂。
+   */
   private closeHero(): void {
     if (!this.heroOpen) {
       return;
     }
     BackGuard.unregister();
-    // ① 颜色与圆角先倒回去（对应打开时的「褪色 + 圆角收平」）
-    this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
+    const bounds: number[] | undefined = this.tileBounds.get(this.heroIndex);
+    const winW: number = AppStorage.get<number>(KEY_WINDOW_WIDTH_VP) ?? 375;
+    const navW: number = useSideNav(this.bp) ? sideNavWidthOf(this.bp) : 0;
+    const winH: number = AppStorage.get<number>(KEY_WINDOW_HEIGHT_VP) ?? 800;
+    const fullW: number = winW - navW;
+
+    // ① 页面淡出 + 颜色到实心（120ms，同时进行）
+    this.getUIContext().animateTo({ duration: 120, curve: Curve.EaseIn }, () => {
+      this.heroContentOpacity = 0;
       this.heroAccentOpacity = 1;
-      this.heroCorner = this.tileRadius;
     });
-    // ② 页面延迟 100ms 才开始淡出，时长 240ms（严格镜像打开的 40~280ms）
+
+    // ② 60ms 就开始缩 —— 与淡出重叠，没有「整屏紫停留」的空档
     setTimeout(() => {
-      this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseIn }, () => {
-        this.heroContentOpacity = 0;
-      });
-    }, 100);
-    // ③ 340ms 触发反向几何：系统把浮层缩回卡片矩形
-    setTimeout(() => {
-      // 卡片先复位：out 过渡需要一个可见的 in 组件作目标
-      this.heroHideTile = false;
-      setTimeout(() => {
-        this.getUIContext().animateTo(
-          { curve: curves.springMotion(0.38, 0.78) },
-          () => {
+      let sx: number = 0.16;
+      let sy: number = 0.33;
+      let tx: number = 0;
+      let ty: number = 0;
+      if (bounds !== undefined && fullW > 0 && winH > 0) {
+        sx = bounds[2] / fullW;
+        sy = bounds[3] / winH;
+        tx = bounds[0];
+        ty = bounds[1];
+      }
+      const cornerTarget: number = Math.min(this.tileRadius / (sx > 0 ? sx : 1), 300);
+      this.getUIContext().animateTo(
+        {
+          curve: curves.springMotion(0.34, 0.86),
+          onFinish: () => {
+            // 浮层已与卡片重合，一次性切走
             this.heroOpen = false;
+            this.heroTransX = 0;
+            this.heroTransY = 0;
+            this.heroScaleX = 1;
+            this.heroScaleY = 1;
+            this.heroCorner = this.tileRadius;
+            this.bounceIndex = this.heroIndex;
+            this.bounceTick = this.bounceTick + 1;
           }
-        );
-        // ④ 收缩落地（约 380ms）→ 卡片回弹
-        setTimeout(() => {
-          this.bounceIndex = this.heroIndex;
-          this.bounceTick = this.bounceTick + 1;
-        }, 380);
-      }, 16);
-    }, 340);
+        },
+        () => {
+          this.heroTransX = tx;
+          this.heroTransY = ty;
+          this.heroScaleX = sx;
+          this.heroScaleY = sy;
+          // 圆角补偿：scale 之后视觉圆角 = corner × scale
+          this.heroCorner = cornerTarget;
+        }
+      );
+    }, 60);
   }
 
   private columnsTemplate(items: FeatureItem[]): string {
