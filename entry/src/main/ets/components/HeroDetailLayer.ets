@@ -78,9 +78,16 @@ export struct HeroDetailLayer {
    * 改为保持浮层在场、用 scale 自己缩回卡片，最后再一次性切走（此刻两者已完全重合）。
    */
   @Prop shrinkScale: number = 1;
-  /** 缩放中心（相对浮层左上角 = 屏幕坐标）。 */
-  @Prop shrinkCx: number = 0;
-  @Prop shrinkCy: number = 0;
+  /**
+   * 收起时的平移量（vp，相对自身原位）。
+   *
+   * 不用 `scale` 的 centerX/centerY 做定位：本组件的布局盒被负 margin 上移过，
+   * center 的坐标系和屏幕坐标对不上（会缩到屏幕右下角去，实测过）。
+   * 改成「默认中心缩放 + 纯平移」：缩放后中心不动，再把它平移到卡片中心，
+   * 两个量各自独立、与布局盒无关。
+   */
+  @Prop shrinkTx: number = 0;
+  @Prop shrinkTy: number = 0;
 
   onBack: () => void = () => {};
 
@@ -168,12 +175,8 @@ export struct HeroDetailLayer {
     .height(this.fullHeight > 0 ? this.fullHeight : '100%')
     .margin({ top: -this.topInset })
     // 收起：自己缩到卡片位置（不用系统的 out 过渡，见 shrinkScale 注释）
-    .scale({
-      x: this.shrinkScale,
-      y: this.shrinkScale,
-      centerX: this.shrinkCx,
-      centerY: this.shrinkCy
-    })
+    .scale({ x: this.shrinkScale, y: this.shrinkScale })
+    .translate({ x: this.shrinkTx, y: this.shrinkTy })
     // 声明圆角：`geometryTransition` 只同步**绑定处自己的** borderRadius，
     // 不声明就按直角处理（卡片的大圆角会瞬间丢失）。这里取 0，由系统从卡片圆角插值过来。
     // ⚠️ 不要配 clip(true)：实测会让共享元素的几何动画整段失效。

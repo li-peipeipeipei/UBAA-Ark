@@ -87,10 +87,10 @@ export struct FeaturePage {
   @State private heroCorner: number = 0;
   /** 被展开的那张卡片是否隐藏（展开后由浮层接管，收起前还原）。 */
   @State private heroHideTile: boolean = false;
-  /** 收起时浮层自己缩小的比例与中心（1 = 全屏）。 */
+  /** 收起时浮层自己缩小的比例与平移量（1 / 0 = 全屏原位）。 */
   @State private heroShrinkScale: number = 1;
-  @State private heroShrinkCx: number = 0;
-  @State private heroShrinkCy: number = 0;
+  @State private heroShrinkTx: number = 0;
+  @State private heroShrinkTy: number = 0;
 
   /**
    * 本页在屏幕上的真实起点 y（vp）。
@@ -254,40 +254,47 @@ export struct FeaturePage {
    *   280ms     开始缩（spring 0.32），圆角按 1/scale 补偿，视觉上仍是卡片圆角
    *   ~600ms    切换 + 回弹
    */
+  /**
+   * 收起：内容淡出 → **紧接着**就开始缩（同时颜色到实心），不走系统 out 过渡。
+   *
+   * 之前的顺序是「淡出 → 整屏变紫 → 再缩」，中间那一段全屏变色是多余的，
+   * 看起来就是「先刷一层紫再收」。现在淡出与收缩只隔 120ms，颜色在收缩头 110ms 里补上，
+   * 观感是「页面淡去的同时，紫块已经在往回缩」。
+   */
   private closeHero(): void {
     if (!this.heroOpen) {
       return;
     }
     BackGuard.unregister();
-    // ① 内容先淡出
-    this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseIn }, () => {
+    // ① 内容淡出（只看到中性底）
+    this.getUIContext().animateTo({ duration: 120, curve: Curve.EaseIn }, () => {
       this.heroContentOpacity = 0;
     });
-    // ② 颜色晚一点出现，快速到实心
-    setTimeout(() => {
-      this.getUIContext().animateTo({ duration: 110, curve: Curve.EaseOut }, () => {
-        this.heroAccentOpacity = 1;
-      });
-    }, 150);
-    // ③ 缩回卡片
+    // ② 紧接着开始缩，颜色同时补到实心
     setTimeout(() => {
       const bounds: number[] | undefined = this.tileBounds.get(this.heroIndex);
       const winW: number = AppStorage.get<number>(KEY_WINDOW_WIDTH_VP) ?? 375;
       const navW: number = useSideNav(this.bp) ? sideNavWidthOf(this.bp) : 0;
+      const winH: number = AppStorage.get<number>(KEY_WINDOW_HEIGHT_VP) ?? 800;
       const fullW: number = winW - navW;
       let target: number = 0.16;
       if (bounds !== undefined && fullW > 0) {
         target = bounds[2] / fullW;
-        this.heroShrinkCx = bounds[0] + bounds[2] / 2;
-        this.heroShrinkCy = bounds[1] + bounds[3] / 2;
+        // 缩放后中心不动，平移到卡片中心（两个量都相对「全屏原位」）
+        this.heroShrinkTx = bounds[0] + bounds[2] / 2 - fullW / 2;
+        this.heroShrinkTy = bounds[1] + bounds[3] / 2 - winH / 2;
       }
+      this.getUIContext().animateTo({ duration: 110, curve: Curve.EaseOut }, () => {
+        this.heroAccentOpacity = 1;
+      });
       this.getUIContext().animateTo(
         {
-          curve: curves.springMotion(0.32, 0.86),
+          curve: curves.springMotion(0.34, 0.86),
           onFinish: () => {
-            // 浮层已与卡片重合，切换看不出来
             this.heroOpen = false;
             this.heroShrinkScale = 1;
+            this.heroShrinkTx = 0;
+            this.heroShrinkTy = 0;
             this.heroCorner = this.tileRadius;
             this.bounceIndex = this.heroIndex;
             this.bounceTick = this.bounceTick + 1;
@@ -295,11 +302,11 @@ export struct FeaturePage {
         },
         () => {
           this.heroShrinkScale = target;
-          // 圆角补偿：scale 之后视觉圆角 = corner × scale，要它仍是卡片圆角
+          // 圆角补偿：scale 之后视觉圆角 = corner × scale
           this.heroCorner = Math.min(this.tileRadius / (target > 0 ? target : 1), 200);
         }
       );
-    }, 280);
+    }, 120);
   }
 
   private columnsTemplate(items: FeatureItem[]): string {
@@ -414,8 +421,8 @@ export struct FeaturePage {
           accentOpacity: this.heroAccentOpacity,
           corner: this.heroCorner,
           shrinkScale: this.heroShrinkScale,
-          shrinkCx: this.heroShrinkCx,
-          shrinkCy: this.heroShrinkCy,
+          shrinkTx: this.heroShrinkTx,
+          shrinkTy: this.heroShrinkTy,
           topInset: this.shellTop,
           fullHeight: AppStorage.get<number>(KEY_WINDOW_HEIGHT_VP) ?? 800,
           onBack: () => {
