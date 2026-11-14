@@ -87,7 +87,6 @@ export struct HeroDetailLayer {
         .height('100%')
         .backgroundColor(AppColor.pageBackground)
         .borderRadius(this.corner)
-        .clip(true)
 
       // ② 彩色层：展开时快速褪去，收起时较晚浮现（由 accentOpacity 推动）
       Column()
@@ -96,7 +95,6 @@ export struct HeroDetailLayer {
         .backgroundColor(this.accent)
         .opacity(this.accentOpacity)
         .borderRadius(this.corner)
-        .clip(true)
 
       // ③ 页面层：内容 + 标题栏，从 0 淡入 =「渐变至功能页本身」
       Column() {
@@ -141,6 +139,8 @@ export struct HeroDetailLayer {
       .width('100%')
       .height('100%')
       .backgroundColor(AppColor.pageBackground)
+      // 同款圆角：只靠背景绘制，不配 clip（clip 裁内容区、背景铺 border box，会露出直角边）
+      .borderRadius(this.corner)
       .padding({ top: topSafeInsetVp() })
       .opacity(this.contentOpacity)
     }
