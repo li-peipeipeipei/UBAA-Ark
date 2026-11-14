@@ -277,18 +277,36 @@ export struct FeaturePage {
    *
    * 代价：系统的 out 阶段会让离场组件轻微淡出，这是它固有的行为，参数改不动。
    */
+  /**
+   * 收起 = 打开过程的**逐帧镜像**（含页面透明度的延迟与时长）。
+   *
+   * 打开的透明度时间轴：0~40ms 保持 0 → 40~280ms 淡入（240ms）。
+   * 镜像到 380ms 的几何时长上：
+   *   100~340ms 淡出（240ms）—— 先保持不透明 100ms，再花 240ms 淡出。
+   *
+   * 所以收起不是「立刻淡出」，而是：
+   *   0ms    颜色回来 + 圆角长回（200ms）
+   *   100ms  页面才开始淡出（240ms），与几何收缩（340ms 起）交叠
+   *   340ms  触发系统 out 过渡，浮层缩回卡片
+   *   ~720ms 卡片回弹
+   */
   private closeHero(): void {
     if (!this.heroOpen) {
       return;
     }
     BackGuard.unregister();
-    // ① 倒放第一步：页面淡出 + 颜色回来 + 圆角长回（与打开时的「褪色/收圆角/淡入」镜像）
-    this.getUIContext().animateTo({ duration: 140, curve: Curve.EaseIn }, () => {
-      this.heroContentOpacity = 0;
+    // ① 颜色与圆角先倒回去（对应打开时的「褪色 + 圆角收平」）
+    this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseOut }, () => {
       this.heroAccentOpacity = 1;
       this.heroCorner = this.tileRadius;
     });
-    // ② 触发反向几何：系统把浮层缩回卡片矩形
+    // ② 页面延迟 100ms 才开始淡出，时长 240ms（严格镜像打开的 40~280ms）
+    setTimeout(() => {
+      this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseIn }, () => {
+        this.heroContentOpacity = 0;
+      });
+    }, 100);
+    // ③ 340ms 触发反向几何：系统把浮层缩回卡片矩形
     setTimeout(() => {
       // 卡片先复位：out 过渡需要一个可见的 in 组件作目标
       this.heroHideTile = false;
@@ -299,13 +317,13 @@ export struct FeaturePage {
             this.heroOpen = false;
           }
         );
-        // ③ 收缩落地（约 400ms）→ 卡片回弹
+        // ④ 收缩落地（约 380ms）→ 卡片回弹
         setTimeout(() => {
           this.bounceIndex = this.heroIndex;
           this.bounceTick = this.bounceTick + 1;
         }, 380);
       }, 16);
-    }, 140);
+    }, 340);
   }
 
   private columnsTemplate(items: FeatureItem[]): string {
