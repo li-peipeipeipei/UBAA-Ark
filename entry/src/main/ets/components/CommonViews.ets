@@ -209,6 +209,14 @@ export struct FeatureTile {
   /** 本卡片在网格中的序号，父级用它决定「回来的那张要回弹」。 */
   @Prop index: number = -1;
   /**
+   * 是否隐藏（卡片正在「变成」展开页时）。
+   *
+   * 不隐藏的话，展开页只是「盖在卡片上的一块」——最接近卡片的那几帧能同时看到
+   * 卡片和色块，观感是「浮层压上去」，而不是「这张卡自己展开了」。
+   * ⚠️ 收起前必须先置回 false：几何过渡需要一个可见的 out 组件作目标。
+   */
+  @Prop hidden: boolean = false;
+  /**
    * 回弹触发计数：父级在「全屏页缩回这张卡片」之后把它 +1，
    * 这里 `@Watch` 收到就弹一下。用计数而不是布尔，才能连续触发多次。
    */
@@ -316,6 +324,8 @@ export struct FeatureTile {
         this.pressed = false;
       }
     })
+    // 正在展开时自己消失（分层由展开页接管），收起前会被父级还原
+    .opacity(this.hidden ? 0 : 1)
     // 平板外接键鼠 / 2in1 触控板上，按钮需要悬停反馈才「像个按钮」（官方多设备交互建议）
     .hoverEffect(HoverEffect.Highlight)
     .onClick(() => {
