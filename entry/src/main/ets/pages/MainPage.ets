@@ -137,6 +137,14 @@ export struct MainPage {
   @State private morphColor: string = '#1976D2';
   /** 彩色层的透明度（与卡片同源：材质可用 0.86，否则 1）。展开时溶到 0 = 融进页面。 */
   @State private morphAccentOpacity: number = 0;
+  /**
+   * 底色层（页面底色）的透明度。
+   *
+   * 打开时要 1：色块褪色后剩下的是它，等于「融进页面本身」。
+   * 收起时要 0：底色是纯黑（深色主题），若遮罩带着它淡入，页面溶解的目标就是**黑屏** ——
+   * 逐帧实测有 2 帧纯黑。收起改让溶解直接露出背后的功能页网格，色块再凝结出来。
+   */
+  @State private morphBgOpacity: number = 1;
   /** 卡片上的图标 + 文字：随色块一起拉伸，才有「这张卡本身展开」的一体感。 */
   @State private morphContentScale: number = 1;
   @State private morphContentOpacity: number = 1;
@@ -225,11 +233,13 @@ export struct MainPage {
       this.morphContentScale = 1;
       this.morphContentOpacity = 1;
       this.morphOpacity = 1;
+      this.morphBgOpacity = 1;
       this.morphVisible = true;
       // 目的地一开始不可见：等遮罩铺满并开始淡出时它才登场
       AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 0);
       // ⚠️ 必须等一帧：初值与 animateTo 在同一帧内提交会被合并成「直接到终值」
       setTimeout(() => {
+        // ① 几何：色块从卡片矩形长到全屏（图标/文字同步拉伸）
         this.getUIContext().animateTo(
           { curve: curves.springMotion(0.32, 0.82) },
           () => {
@@ -238,34 +248,35 @@ export struct MainPage {
             this.morphW = fullW;
             this.morphH = winH;
             this.morphRadius = 0;
-            // 颜色与图标/文字**同一条曲线**一起淡出：两层始终同进同退
-            this.morphAccentOpacity = 0;
-            this.morphContentOpacity = 0;
-            // 图标 / 文字跟着色块一起长大
             this.morphContentScale = endScale;
           }
         );
-        // 交叉过渡：遮罩整体淡出 + 页面淡入放在同一个 animateTo 里 ——
-        // 两者的曲线、时长、起止完全一致，不会出现「一层没了另一层还没来」的黑场。
-        // ⚠️ 页面透明度必须显式拉回 1：它在前一帧被设成 0（避免转场瞬间闪页面），
-        // 忘了拉回来的话，遮罩淡完就是**一片黑**（真机踩过）。
+        // ② 交叉：颜色褪去 + 图标文字淡出 + 遮罩淡出 + 页面淡入，**同一个 animateTo**。
+        //
+        // ⚠️ 这四件事必须在同一段时间里发生。逐帧实测过拆开的后果：
+        // 颜色先溶掉（150ms 左右就没了）而页面要到 230ms 才开始淡入，中间有一段
+        // 「遮罩是纯黑底、页面还没来」—— 打开时整整 0.2s 的黑场（#73~#78）。
+        // 现在四者同窗口，任何时刻都有一层在场，不会出现空档。
         setTimeout(() => {
-          // 用户可能在放大还没结束时就按了返回：这一轮已经换了就别再推打开的那套值
           if (seq !== this.morphSeq) {
             return;
           }
-          this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, () => {
+          this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseOut }, () => {
+            this.morphAccentOpacity = 0;
+            this.morphContentOpacity = 0;
             this.morphOpacity = 0;
+            // ⚠️ 页面透明度必须显式拉回 1：它在前一帧被设成 0（避免转场瞬间闪页面），
+            // 忘了拉回来的话，遮罩淡完就是**一片黑**（真机踩过）。
             AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 1);
           });
-        }, 230);
-        // 收尾：不再依赖弹簧的 onFinish（它比视觉停稳晚很多，页面会显得「出来得慢」）
+        }, 80);
+        // 收尾：交叉在 320ms 结束，这里留一档余量再放行
         setTimeout(() => {
           if (seq !== this.morphSeq) {
             return;
           }
           this.finishExpand();
-        }, 520);
+        }, 440);
       }, 32);
       return;
     }
@@ -288,10 +299,13 @@ export struct MainPage {
     this.morphAccentOpacity = 0;
     this.morphContentScale = endScale;
     this.morphContentOpacity = 0;
+    // 底色层透明：收起时不能拿纯黑底去盖页面，否则溶解的目标就是黑屏
+    this.morphBgOpacity = 0;
     // 遮罩先不可见：靠下面的交叉过渡一点点盖住页面，而不是瞬间换掉
     this.morphOpacity = 0;
     this.morphVisible = true;
-    // ① 交叉：遮罩淡入 + 页面淡出（同一段动画、同一条曲线）
+    // ① 交叉：遮罩淡入 + 页面淡出（同一段动画、同一条曲线）——
+    //    因为底色层是透明的，这一段露出的是**背后的功能页网格**，不是黑
     this.getUIContext().animateTo({ duration: 110, curve: Curve.EaseIn }, () => {
       this.morphOpacity = 1;
       AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 0);
@@ -301,6 +315,12 @@ export struct MainPage {
       if (seq !== this.morphSeq) {
         return;
       }
+      // ② 色块「凝结」：颜色与图标/文字同一条曲线一起回来（150ms）——
+      //    收起的前半段仍以网格为背景，颜色在此期间浮现 = 「颜色更晚出现」
+      this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
+        this.morphAccentOpacity = this.morphAlpha;
+        this.morphContentOpacity = 1;
+      });
       this.getUIContext().animateTo(
         // 固定时长：弹簧的 onFinish 明显滞后于视觉停稳，回弹会晚半拍（用户实测反馈）
         { duration: 300, curve: Curve.FastOutSlowIn },
@@ -310,9 +330,6 @@ export struct MainPage {
           this.morphW = card.w;
           this.morphH = card.h;
           this.morphRadius = card.radius;
-          // 与打开对称：颜色与图标/文字同一条曲线一起回来
-          this.morphAccentOpacity = this.morphAlpha;
-          this.morphContentOpacity = 1;
           this.morphContentScale = 1;
         }
       );
@@ -1031,6 +1048,7 @@ export struct MainPage {
             .width('100%')
             .height('100%')
             .backgroundColor(this.pageBg())
+            .opacity(this.morphBgOpacity)
 
           Column()
             .width('100%')
