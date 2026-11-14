@@ -215,58 +215,41 @@ export struct FeaturePage {
    * 这里只按目标宽度取列，残行怎么都躲不掉（10 个块不可能被 3 整除）。
    */
   /** 收起展开的卡片（返回按钮 / 系统返回都走这里）。 */
+  /**
+   * 收起展开的卡片 —— 与打开完全对称的一段式：
+   *
+   * ```
+   * t=0    内容淡出 + 颜色浮现 + 圆角长回（同一段，200ms）
+   * t=120  开始收缩（此时颜色/圆角已到位，不会出现「先变圆再收缩」的错位）
+   * t=420  收缩落地 → 原卡片回弹（固定延时，不再依赖 animateTo 的 onFinish：
+   *        滚动/销毁会让它不回调，之前靠 520ms 兜底，所以回弹总是慢半拍）
+   * ```
+   */
   private closeHero(): void {
     if (!this.heroOpen) {
       return;
     }
     BackGuard.unregister();
-    // 与入场相反，但**颜色更晚回来**：先淡出内容（露出中性底），
-    // 收势过半（+120ms）彩色层才浮现，最后缩回卡片并回弹。
-    this.getUIContext().animateTo({ duration: 140, curve: Curve.EaseIn }, () => {
+    // 一段动画里同时做三件事，避免「先变圆、再收缩」的错位感
+    this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseIn }, () => {
       this.heroContentOpacity = 0;
+      this.heroAccentOpacity = 1;
+      this.heroCorner = this.tileRadius;
     });
-    // 先把圆角长回卡片值（仍然看得见浮层时做），再收缩 —— 否则 out 过渡里圆角是突变的
+    // 颜色与圆角到位后再收缩
     setTimeout(() => {
       this.getUIContext().animateTo(
         { curve: curves.springMotion(0.3, 0.85) },
         () => {
-          this.heroCorner = this.tileRadius;
-        }
-      );
-    }, 16);
-    setTimeout(() => {
-      // 回弹挂在收缩动画的 onFinish 上：动画一落地就弹，中间不留空档
-      let bounced: boolean = false;
-      const bounce = (): void => {
-        if (bounced) {
-          return;
-        }
-        bounced = true;
-        this.bounceIndex = this.heroIndex;
-        this.bounceTick = this.bounceTick + 1;
-      };
-      this.getUIContext().animateTo(
-        {
-          curve: curves.springMotion(0.3, 0.85),
-          onFinish: () => {
-            bounce();
-          }
-        },
-        () => {
           this.heroOpen = false;
         }
       );
-      // 彩色层晚 120ms 才回来：收势前半段是中性底，后半段才「变成那张卡片」
+      // 收缩时长约 300ms，落地即回弹
       setTimeout(() => {
-        this.getUIContext().animateTo({ duration: 300, curve: Curve.EaseOut }, () => {
-          this.heroAccentOpacity = 1;
-        });
-      }, 120);
-      // 兜底：动画被中断时 onFinish 不会来，别让回弹丢了
-      setTimeout(() => {
-        bounce();
-      }, 520);
-    }, 160);
+        this.bounceIndex = this.heroIndex;
+        this.bounceTick = this.bounceTick + 1;
+      }, 300);
+    }, 120);
   }
 
   private columnsTemplate(items: FeatureItem[]): string {
