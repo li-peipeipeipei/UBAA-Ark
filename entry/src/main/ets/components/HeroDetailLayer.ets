@@ -61,6 +61,15 @@ export struct HeroDetailLayer {
   topInset: number = 0;
   /** 整窗高度（抵消避让后要补回这段高度，否则底部缺一截）。 */
   fullHeight: number = 0;
+  /**
+   * 视觉圆角（vp）：展开时由卡片圆角插值到 0，收起时反过来。
+   *
+   * 系统的共享元素**不会**跨 TabContent 同步圆角（实测两次，过渡中始终是直角），
+   * 所以圆角改由父级的 animateTo 驱动，由三层子节点各自裁剪出形状。
+   * 注意只能加在**子层**上：加在绑定 geometryTransition 的根节点会连带 clip，
+   * 那会让整个几何动画失效（踩过）。
+   */
+  @Prop corner: number = 0;
 
   onBack: () => void = () => {};
 
@@ -77,6 +86,8 @@ export struct HeroDetailLayer {
         .width('100%')
         .height('100%')
         .backgroundColor(AppColor.pageBackground)
+        .borderRadius(this.corner)
+        .clip(true)
 
       // ② 彩色层：展开时快速褪去，收起时较晚浮现（由 accentOpacity 推动）
       Column()
@@ -84,6 +95,8 @@ export struct HeroDetailLayer {
         .height('100%')
         .backgroundColor(this.accent)
         .opacity(this.accentOpacity)
+        .borderRadius(this.corner)
+        .clip(true)
 
       // ③ 页面层：内容 + 标题栏，从 0 淡入 =「渐变至功能页本身」
       Column() {

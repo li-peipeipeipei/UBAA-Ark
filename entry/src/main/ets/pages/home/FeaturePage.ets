@@ -78,6 +78,13 @@ export struct FeaturePage {
   @State private heroContentOpacity: number = 0;
   /** 彩色层透明度：展开时先褪、收起时后现 —— 与内容错峰。 */
   @State private heroAccentOpacity: number = 1;
+  /**
+   * 展开页的视觉圆角（vp）。
+   *
+   * 系统的共享元素不跨 TabContent 同步圆角，所以这里用真正的圆角值驱动动画：
+   * 展开 卡片圆角 → 0，收起 0 → 卡片圆角。
+   */
+  @State private heroCorner: number = 0;
 
   /**
    * 本页在屏幕上的真实起点 y（vp）。
@@ -157,6 +164,7 @@ export struct FeaturePage {
       this.heroAccent = tileFillColor(item.colorValue, dark);
       this.heroContentOpacity = 0;
       this.heroAccentOpacity = 1;
+      this.heroCorner = this.tileRadius;
       BackGuard.register(() => {
         this.closeHero();
         return true;
@@ -167,6 +175,8 @@ export struct FeaturePage {
         { curve: curves.springMotion(0.38, 0.78) },
         () => {
           this.heroOpen = true;
+          // 圆角与几何同步收平：卡片圆角 → 0
+          this.heroCorner = 0;
         }
       );
       // 颜色先走、内容后到：
@@ -227,6 +237,8 @@ export struct FeaturePage {
         },
         () => {
           this.heroOpen = false;
+          // 收势里圆角长回卡片值，和几何收缩同一段弹簧
+          this.heroCorner = this.tileRadius;
         }
       );
       // 彩色层晚 120ms 才回来：收势前半段是中性底，后半段才「变成那张卡片」
@@ -351,6 +363,7 @@ export struct FeaturePage {
           accent: this.heroAccent,
           contentOpacity: this.heroContentOpacity,
           accentOpacity: this.heroAccentOpacity,
+          corner: this.heroCorner,
           topInset: this.shellTop,
           fullHeight: AppStorage.get<number>(KEY_WINDOW_HEIGHT_VP) ?? 800,
           onBack: () => {
