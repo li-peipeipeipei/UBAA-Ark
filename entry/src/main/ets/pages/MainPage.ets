@@ -229,29 +229,31 @@ export struct MainPage {
             this.morphW = fullW;
             this.morphH = winH;
             this.morphRadius = 0;
-            // 颜色溶掉 → 露出下面的页面底色层 = 「渐变至功能页本身」
+            // 颜色与图标/文字**同一条曲线**一起淡出：两层始终同进同退
             this.morphAccentOpacity = 0;
-            // 图标 / 文字跟着一起长大
+            this.morphContentOpacity = 0;
+            // 图标 / 文字跟着色块一起长大
             this.morphContentScale = endScale;
           }
         );
-        // 图形在放大途中淡出：不淡掉的话最后会是一块巨大的白色图标。
-        // 120ms 起淡（前 40% 时间一直清晰），拉伸感才看得出来。
+        // 交叉过渡：遮罩整体淡出 + 页面淡入放在同一个 animateTo 里 ——
+        // 两者的曲线、时长、起止完全一致，不会出现「一层没了另一层还没来」的黑场。
+        // ⚠️ 页面透明度必须显式拉回 1：它在前一帧被设成 0（避免转场瞬间闪页面），
+        // 忘了拉回来的话，遮罩淡完就是**一片黑**（真机踩过）。
         setTimeout(() => {
-          this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseIn }, () => {
-            this.morphContentOpacity = 0;
-          });
-        }, 120);
-        // 遮罩整体淡出（此时它已经是一整块页面底色），页面在下面露出来
-        setTimeout(() => {
+          // 用户可能在放大还没结束时就按了返回：阶段已经变了就别再推打开的那套值
+          if (HeroMorph.getPhase() !== MorphPhase.EXPAND) {
+            return;
+          }
           this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, () => {
             this.morphOpacity = 0;
+            AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 1);
           });
-        }, 180);
+        }, 230);
         // 收尾：不再依赖弹簧的 onFinish（它比视觉停稳晚很多，页面会显得「出来得慢」）
         setTimeout(() => {
           this.finishExpand();
-        }, 440);
+        }, 520);
       }, 32);
       return;
     }
@@ -281,16 +283,12 @@ export struct MainPage {
           this.morphW = card.w;
           this.morphH = card.h;
           this.morphRadius = card.radius;
+          // 与打开对称：颜色与图标/文字同一条曲线一起回来
           this.morphAccentOpacity = this.morphAlpha;
+          this.morphContentOpacity = 1;
           this.morphContentScale = 1;
         }
       );
-      // 收势后半段把图标 / 文字显出来，落地时正好是「那张卡」
-      setTimeout(() => {
-        this.getUIContext().animateTo({ duration: 220, curve: Curve.EaseOut }, () => {
-          this.morphContentOpacity = 1;
-        });
-      }, 70);
       // 与几何同一时长收尾：落地即回弹，中间不留空档
       setTimeout(() => {
         this.finishShrink();
