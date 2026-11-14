@@ -265,57 +265,47 @@ export struct FeaturePage {
    * 看起来就是「先刷一层紫再收」。现在淡出与收缩只隔 120ms，颜色在收缩头 110ms 里补上，
    * 观感是「页面淡去的同时，紫块已经在往回缩」。
    */
+  /**
+   * 收起 = **完全反向的打开**（同一套机制，只是状态倒着走）。
+   *
+   * 打开：卡片隐藏 → 浮层以卡片矩形出现 → 圆角收平 → 颜色褪去 → 页面淡入
+   * 收起：页面淡出 → 颜色回来 → 圆角长回 → 浮层缩回卡片矩形 → 卡片出现 → 回弹
+   *
+   * 几何收缩交给系统（`heroOpen = false` 触发 geometryTransition 的 out 过渡）——
+   * 它按卡片的真实矩形插值，**位置和尺寸必然准确**。
+   * 之前用手动 scale/translate 反而三轮都没对准（坐标系、等比、父容器偏移各种坑）。
+   *
+   * 代价：系统的 out 阶段会让离场组件轻微淡出，这是它固有的行为，参数改不动。
+   */
   private closeHero(): void {
     if (!this.heroOpen) {
       return;
     }
     BackGuard.unregister();
-    // ① 内容淡出（只看到中性底）
-    this.getUIContext().animateTo({ duration: 120, curve: Curve.EaseIn }, () => {
+    // ① 倒放第一步：页面淡出 + 颜色回来 + 圆角长回（与打开时的「褪色/收圆角/淡入」镜像）
+    this.getUIContext().animateTo({ duration: 140, curve: Curve.EaseIn }, () => {
       this.heroContentOpacity = 0;
+      this.heroAccentOpacity = 1;
+      this.heroCorner = this.tileRadius;
     });
-    // ② 紧接着开始缩，颜色同时补到实心
+    // ② 触发反向几何：系统把浮层缩回卡片矩形
     setTimeout(() => {
-      const bounds: number[] | undefined = this.tileBounds.get(this.heroIndex);
-      const winW: number = AppStorage.get<number>(KEY_WINDOW_WIDTH_VP) ?? 375;
-      const navW: number = useSideNav(this.bp) ? sideNavWidthOf(this.bp) : 0;
-      const winH: number = AppStorage.get<number>(KEY_WINDOW_HEIGHT_VP) ?? 800;
-      const fullW: number = winW - navW;
-      let sx: number = 0.16;
-      let sy: number = 0.33;
-      if (bounds !== undefined && fullW > 0 && winH > 0) {
-        // 非等比：宽度按卡片宽/全屏宽，高度按卡片高/全屏高
-        sx = bounds[2] / fullW;
-        sy = bounds[3] / winH;
-        // 全屏原位左上角就是屏幕 (0,0)，平移到卡片左上角即可（都是屏幕坐标）
-        this.heroTransX = bounds[0];
-        this.heroTransY = bounds[1];
-      }
-      this.getUIContext().animateTo({ duration: 110, curve: Curve.EaseOut }, () => {
-        this.heroAccentOpacity = 1;
-      });
-      this.getUIContext().animateTo(
-        {
-          curve: curves.springMotion(0.34, 0.86),
-          onFinish: () => {
+      // 卡片先复位：out 过渡需要一个可见的 in 组件作目标
+      this.heroHideTile = false;
+      setTimeout(() => {
+        this.getUIContext().animateTo(
+          { curve: curves.springMotion(0.38, 0.78) },
+          () => {
             this.heroOpen = false;
-            this.heroTransX = 0;
-            this.heroTransY = 0;
-            this.heroScaleX = 1;
-            this.heroScaleY = 1;
-            this.heroCorner = this.tileRadius;
-            this.bounceIndex = this.heroIndex;
-            this.bounceTick = this.bounceTick + 1;
           }
-        },
-        () => {
-          this.heroScaleX = sx;
-          this.heroScaleY = sy;
-          // 圆角补偿：scale 之后视觉圆角 ≈ corner × scale（按 X 方向算）
-          this.heroCorner = Math.min(this.tileRadius / (sx > 0 ? sx : 1), 300);
-        }
-      );
-    }, 120);
+        );
+        // ③ 收缩落地（约 400ms）→ 卡片回弹
+        setTimeout(() => {
+          this.bounceIndex = this.heroIndex;
+          this.bounceTick = this.bounceTick + 1;
+        }, 380);
+      }, 16);
+    }, 140);
   }
 
   private columnsTemplate(items: FeatureItem[]): string {
