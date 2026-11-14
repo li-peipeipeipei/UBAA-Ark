@@ -1,5 +1,6 @@
 import { AppRouter } from '../../common/AppRouter';
-import { FeatureHero, HERO_BOUNCE_TICK, KEY_FEATURE_HERO_CLOSE } from '../../common/FeatureHero';
+import { FeatureHero, HERO_BOUNCE_TICK } from '../../common/FeatureHero';
+import { KEY_HERO_TILE_BOUNCE, KEY_HERO_TILE_SHOW, NavHero } from '../../common/NavHero';
 import { HeroMorph, MorphRect } from '../../common/HeroMorph';
 import curves from '@ohos.curves';
 import { Toast } from '../../common/Toast';
@@ -7,8 +8,6 @@ import { Logger } from '../../common/Logger';
 import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { FeatureTile, tileFillColor } from '../../components/CommonViews';
-import { HeroDetailLayer } from '../../components/HeroDetailLayer';
-import { ExamPage } from '../academic/ExamPage';
 import { RouteName } from '../../common/AppRouter';
 import { BackGuard } from '../../common/BackGuard';
 import { FeatureItem, allFeatures } from '../../components/FeatureRegistry';
@@ -67,24 +66,7 @@ export struct FeaturePage {
   @State private tileRadius: number = 28;
   /** 自身实测宽度（含内边距），算卡片位置要用。 */
   @State private paneWidth: number = 0;
-  /** 卡片展开的浮层（同树 geometryTransition 才会生效，见 HeroDetailLayer 注释）。 */
-  @State private heroOpen: boolean = false;
-  @State private heroTitle: string = '';
-  @State private heroRoute: string = '';
   @State private heroIndex: number = -1;
-  /** 卡片实际显示色（展开的起点色）。 */
-  @State private heroAccent: string = '#1976D2';
-  /** 页面层透明度：转场里由 0 推到 1（反过来收）。 */
-  @State private heroContentOpacity: number = 0;
-  /** 彩色层透明度：展开时先褪、收起时后现 —— 与内容错峰。 */
-  @State private heroAccentOpacity: number = 1;
-  /**
-   * 展开页的视觉圆角（vp）。
-   *
-   * 系统的共享元素不跨 TabContent 同步圆角，所以这里用真正的圆角值驱动动画：
-   * 展开 卡片圆角 → 0，收起 0 → 卡片圆角。
-   */
-  @State private heroCorner: number = 0;
   /** 被展开的那张卡片是否隐藏（展开后由浮层接管，收起前还原）。 */
   @State private heroHideTile: boolean = false;
   /** 收起时浮层的几何：相对全屏原位的平移 + 非等比缩放（全屏 = 0 / 1）。 */
@@ -111,11 +93,21 @@ export struct FeaturePage {
    * 收到后取 `FeatureHero.takeBounce()` —— 记住的是**哪一张**卡片要弹。
    */
   @StorageProp(HERO_BOUNCE_TICK) @Watch('onBounceSignal') private bounceSignal: number = 0;
-  /** 点页签「功能」时由 MainPage 发信号：收起展开的卡片，回到功能主页。 */
-  @StorageProp(KEY_FEATURE_HERO_CLOSE) @Watch('onCloseRequest') private closeSignal: number = 0;
+  /** 目的地开始收缩：原卡片先显示出来（此刻画面还是全屏不透明，看不到变化）。 */
+  @StorageProp(KEY_HERO_TILE_SHOW) @Watch('onTileShow') private tileShowTick: number = 0;
+  /** 收缩落地：原卡片回弹一次。 */
+  @StorageProp(KEY_HERO_TILE_BOUNCE) @Watch('onTileBounce') private tileBounceTick: number = 0;
 
-  onCloseRequest(): void {
-    this.closeHero();
+  onTileShow(): void {
+    this.heroHideTile = false;
+  }
+
+  onTileBounce(): void {
+    if (this.heroIndex < 0) {
+      return;
+    }
+    this.bounceIndex = this.heroIndex;
+    this.bounceTick = this.bounceTick + 1;
   }
 
   onBounceSignal(): void {
@@ -159,71 +151,38 @@ export struct FeaturePage {
       Toast.show(item.title + ' · 敬请期待');
       return;
     }
-    // 转场：一块「卡片色」从卡片矩形变形到全屏，页面在它之上交叉淡入。
-    // push 仍然是硬切 —— 变形动画由 MainPage 的色块层演，跟路由无关。
-    // 先只接管「考试安排」这一页（跑通链路后再逐个接入其余入口）。
-    // 其余入口维持原来的导航跳转，不受影响。
-    if (item.route === RouteName.EXAM) {
-      const dark: boolean = AppStorage.get<boolean>('isDarkMode') ?? false;
-      this.heroTitle = item.title;
-      this.heroRoute = item.route;
-      this.heroIndex = index;
-      this.heroAccent = tileFillColor(item.colorValue, dark);
-      this.heroContentOpacity = 0;
-      this.heroAccentOpacity = 1;
-      this.heroCorner = this.tileRadius;
-      this.heroTransX = 0;
-      this.heroTransY = 0;
-      this.heroScaleX = 1;
-      this.heroScaleY = 1;
-      BackGuard.register(() => {
-        this.closeHero();
-        return true;
-      });
-      // 共享元素转场：状态变更必须包在 animateTo 里，系统才会做几何过渡。
-      // 0.38 / 0.78 比默认慢一档，末端有一次轻微的过冲（Apple 的那种手感）。
-      // ⚠️ 圆角必须**晚一帧**再收平：和 `heroOpen = true` 写进同一个 animateTo 的话，
-      // 浮层创建时收到的 corner 已经是终值 0，等于从直角开始 —— 看不出圆角过渡。
-      this.getUIContext().animateTo(
-        { curve: curves.springMotion(0.38, 0.78) },
-        () => {
-          this.heroOpen = true;
-        }
-      );
-      // ⚠️ 60ms 而不是 16ms：浮层是这次事务里新建的，16ms 时它可能还没画出来，
-      // 圆角就被改成终值 0 —— 结果整段动画都是直角（上一版就是这样退化的）。
-      setTimeout(() => {
-        this.getUIContext().animateTo(
-          { curve: curves.springMotion(0.38, 0.78) },
-          () => {
-            this.heroCorner = 0;
-          }
-        );
-      }, 60);
-      // 颜色先走、内容后到：
-      //   0~70ms     颜色**保持实心**（最接近卡片位置的那几帧必须是「这张卡本身」）
-      //   70~210ms   快速褪干净
-      //   40~280ms   页面层淡入（与褪色交叉）
-      // 卡片尽早隐藏：只要浮层已经在放大（第一帧之后），它就没有存在价值了，
-      // 留着只会「透过正在褪色的彩色层被看见」，观感是浮层半透明。
-      setTimeout(() => {
-        this.heroHideTile = true;
-      }, 16);
-      // 颜色保持实心到 90ms 再快速褪，保证「最接近卡片」的那段时间是实心的这张卡
-      setTimeout(() => {
-        this.getUIContext().animateTo({ duration: 130, curve: Curve.EaseIn }, () => {
-          this.heroAccentOpacity = 0;
+    // 原生导航 + 自定义转场：把卡片矩形交给 NavHero，
+    // 目的地（NativeHeroDest）会以它为首帧，从这张卡放大到全屏。
+    if (NavHero.isHeroRoute(item.route)) {
+      const rect: MorphRect | null = this.cardRect(index);
+      if (rect !== null) {
+        const dark: boolean = AppStorage.get<boolean>('isDarkMode') ?? false;
+        // 深色主题用深色那份字面值，否则遮罩会比卡片暗一档
+        const color: string = tileFillColor(dark ? item.colorDark : item.colorValue, dark);
+        // 记两处：NavHero 给目的地（取色/序号），HeroMorph 给 MainPage 的遮罩（矩形动画）
+        NavHero.setCard({
+          x: rect.x,
+          y: rect.y,
+          w: rect.w,
+          h: rect.h,
+          radius: rect.radius,
+          color: color,
+          index: index
         });
-      }, 90);
-      setTimeout(() => {
-        this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseOut }, () => {
-          this.heroContentOpacity = 1;
-        });
-      }, 40);
+        HeroMorph.startExpand(color, rect, index);
+        this.heroIndex = index;
+        // 遮罩首帧就是这张卡（同色同位置同圆角），所以把它藏起来看不出差别；
+        // 30ms 是给遮罩一帧布局的时间。
+        setTimeout(() => {
+          this.heroHideTile = true;
+        }, 30);
+      }
+      // ⚠️ 必须 animated = true：`false` 时系统不播转场，
+      // `customNavContentTransition` 不会被调用（踩过，会误以为链路不通）。
+      AppRouter.push(this.stack, item.route, undefined, true);
       return;
     }
-    // 其余入口暂时维持普通导航跳转（待卡片展开方案验证通过后逐个接入）
-    AppRouter.open(this.stack, item.route, undefined, false);
+    AppRouter.open(this.stack, item.route, undefined, true);
   }
 
   /**
@@ -235,115 +194,6 @@ export struct FeaturePage {
    * 这里只按目标宽度取列，残行怎么都躲不掉（10 个块不可能被 3 整除）。
    */
   /** 收起展开的卡片（返回按钮 / 系统返回都走这里）。 */
-  /**
-   * 收起展开的卡片 —— 与打开完全对称的一段式：
-   *
-   * ```
-   * t=0    内容淡出 + 颜色浮现 + 圆角长回（同一段，200ms）
-   * t=120  开始收缩（此时颜色/圆角已到位，不会出现「先变圆再收缩」的错位）
-   * t=420  收缩落地 → 原卡片回弹（固定延时，不再依赖 animateTo 的 onFinish：
-   *        滚动/销毁会让它不回调，之前靠 520ms 兜底，所以回弹总是慢半拍）
-   * ```
-   */
-  /**
-   * 收起：浮层自己缩回卡片，**不走系统的 out 过渡**。
-   *
-   * `geometryTransition` 的 out 阶段会强制让离场组件淡出、并按终值渲染圆角 ——
-   * 无论怎么调参数，收起时都是「半透明 + 直角」。所以这里保持浮层在场（heroOpen 仍为 true），
-   * 用 scale 把它缩到卡片矩形，动画结束才一次性切走 —— 此刻两者像素级重合，看不出切换。
-   *
-   * 时序与展开镜像：
-   *   0~150ms   内容淡出（只剩中性底）
-   *   150~260ms 颜色快速到实心
-   *   280ms     开始缩（spring 0.32），圆角按 1/scale 补偿，视觉上仍是卡片圆角
-   *   ~600ms    切换 + 回弹
-   */
-  /**
-   * 收起：内容淡出 → **紧接着**就开始缩（同时颜色到实心），不走系统 out 过渡。
-   *
-   * 之前的顺序是「淡出 → 整屏变紫 → 再缩」，中间那一段全屏变色是多余的，
-   * 看起来就是「先刷一层紫再收」。现在淡出与收缩只隔 120ms，颜色在收缩头 110ms 里补上，
-   * 观感是「页面淡去的同时，紫块已经在往回缩」。
-   */
-  /**
-   * 收起 = **完全反向的打开**（同一套机制，只是状态倒着走）。
-   *
-   * 打开：卡片隐藏 → 浮层以卡片矩形出现 → 圆角收平 → 颜色褪去 → 页面淡入
-   * 收起：页面淡出 → 颜色回来 → 圆角长回 → 浮层缩回卡片矩形 → 卡片出现 → 回弹
-   *
-   * 几何收缩交给系统（`heroOpen = false` 触发 geometryTransition 的 out 过渡）——
-   * 它按卡片的真实矩形插值，**位置和尺寸必然准确**。
-   * 之前用手动 scale/translate 反而三轮都没对准（坐标系、等比、父容器偏移各种坑）。
-   *
-   * 代价：系统的 out 阶段会让离场组件轻微淡出，这是它固有的行为，参数改不动。
-   */
-  /**
-   * 收起 = 打开过程的**逐帧镜像**（含页面透明度的延迟与时长）。
-   *
-   * 打开的透明度时间轴：0~40ms 保持 0 → 40~280ms 淡入（240ms）。
-   * 镜像到 380ms 的几何时长上：
-   *   100~340ms 淡出（240ms）—— 先保持不透明 100ms，再花 240ms 淡出。
-   *
-   * 所以收起不是「立刻淡出」，而是：
-   *   0ms    颜色回来 + 圆角长回（200ms）
-   *   100ms  页面才开始淡出（240ms），与几何收缩（340ms 起）交叠
-   *   340ms  触发系统 out 过渡，浮层缩回卡片
-   *   ~720ms 卡片回弹
-   */
-  /**
-   * 收起：**自己缩放**（不用系统 out 过渡）+ 与淡出**重叠**。
-   *
-   * 两个约束互相打架，只能这样解：
-   * 1. 不能等「页面淡完 + 颜色铺满」再缩 —— 那中间会有一段整屏紫停在那里
-   *    （上一版的 200~340ms 就是这样，用户看到「先全屏变紫」）。
-   *    所以收缩提前到 60ms，与淡出重叠。
-   * 2. 不能交给系统 out 过渡 —— 它会强制离场组件淡出，「缩小过程中太透明」就是它。
-   *    所以用 translate + scale 自己缩，浮层全程保持不透明。
-   *
-   * 位置：`translate` 相对自身原位（全屏左上角 = 屏幕 (0,0)），直接取卡片左上角；
-   *      `scale` 的 centerX/centerY = 0（从左上角缩），位置不会漂。
-   */
-  /**
-   * 收起：几何交给系统的 out 过渡（`heroOpen = false`）。
-   *
-   * 只倒放**状态**，不自己缩放：
-   *   0~160ms  页面淡出 + 颜色回来 + 圆角长回（三者重叠，避免出现「整屏变紫」的空档）
-   *   160ms    触发 out 过渡 —— 系统按卡片的真实矩形把浮层缩回去（位置尺寸必然准确）
-   *   ~540ms   落地 + 卡片回弹
-   *
-   * 已知取舍：系统的 out 阶段会让离场组件淡出（收缩过程中偏透），
-   * 这个行为不由业务侧控制。要完全不透只能自己 scale，但那会引入坐标系误差，
-   * 详见 docs/tech/feature-tile-transition.md 的「为什么做不到完全反向」。
-   */
-  private closeHero(): void {
-    if (!this.heroOpen) {
-      return;
-    }
-    BackGuard.unregister();
-    // 三者同时倒放，避免「页面还在淡出、颜色已经铺满」的空档
-    this.getUIContext().animateTo({ duration: 160, curve: Curve.EaseIn }, () => {
-      this.heroContentOpacity = 0;
-      this.heroAccentOpacity = 1;
-      this.heroCorner = this.tileRadius;
-    });
-    setTimeout(() => {
-      // 卡片先复位：out 过渡需要一个可见的 in 组件作目标
-      this.heroHideTile = false;
-      setTimeout(() => {
-        this.getUIContext().animateTo(
-          { curve: curves.springMotion(0.38, 0.78) },
-          () => {
-            this.heroOpen = false;
-          }
-        );
-        setTimeout(() => {
-          this.bounceIndex = this.heroIndex;
-          this.bounceTick = this.bounceTick + 1;
-        }, 380);
-      }, 16);
-    }, 160);
-  }
-
   private columnsTemplate(items: FeatureItem[]): string {
     if (this.columns <= 0) {
       return tileColumnsTemplateFor(this.bp, items.length);
@@ -369,7 +219,7 @@ export struct FeaturePage {
                 radius: this.tileRadius,
                 index: index,
                 bounceTick: this.bounceIndex === index ? this.bounceTick : 0,
-                hidden: this.heroOpen && this.heroHideTile && this.heroIndex === index,
+                hidden: this.heroHideTile && this.heroIndex === index,
                 onBounds: (x: number, y: number, w: number, h: number) => {
                   this.onTileBounds(index, x, y, w, h);
                 },
@@ -446,30 +296,6 @@ export struct FeaturePage {
     // 把滚动内容整体上移（实测反而顶到时钟上）；留白写在滚动内容的内边距里。
     .backgroundColor(AppColor.pageBackground)
 
-      // 卡片展开的详情浮层：与点击的那张卡片共用 geometryTransition id
-      if (this.heroOpen) {
-        HeroDetailLayer({
-          title: this.heroTitle,
-          heroId: HeroMorph.cardId(this.heroIndex),
-          accent: this.heroAccent,
-          contentOpacity: this.heroContentOpacity,
-          accentOpacity: this.heroAccentOpacity,
-          corner: this.heroCorner,
-          transX: this.heroTransX,
-          transY: this.heroTransY,
-          scaleX: this.heroScaleX,
-          scaleY: this.heroScaleY,
-          topInset: this.shellTop,
-          fullHeight: AppStorage.get<number>(KEY_WINDOW_HEIGHT_VP) ?? 800,
-          onBack: () => {
-            this.closeHero();
-          }
-        }) {
-          if (this.heroRoute === RouteName.EXAM) {
-            ExamPage()
-          }
-        }
-      }
     }
     .width('100%')
     .height('100%')

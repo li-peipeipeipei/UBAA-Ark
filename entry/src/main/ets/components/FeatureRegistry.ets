@@ -28,6 +28,14 @@ export interface FeatureItem {
    * 转场色块才能从「卡片色」平滑过渡到「页面底色」。
    */
   colorValue: string;
+  /**
+   * 深色主题下的同色值。
+   *
+   * 主题切换时颜色的**字面值**也换了（深色下主色更亮），而转场遮罩要拿一个真实色值做插值，
+   * 不能只存浅色那份 —— 否则深色下遮罩明显比卡片暗一档（实测卡片 (136,119,215)、
+   * 遮罩算出来 (101,80,209)）。
+   */
+  colorDark: string;
   /** 目标路由名；为空表示暂未实现。 */
   route: string;
 }
@@ -45,6 +53,8 @@ export function allFeatures(): FeatureItem[] {
       icon: $r('app.media.ic_event'),
       color: AppColor.accentPurple,
       colorValue: '#7B61FF',
+
+      colorDark: '#9E8AFF',
       route: RouteName.EXAM
     },
     {
@@ -52,6 +62,8 @@ export function allFeatures(): FeatureItem[] {
       icon: $r('app.media.ic_grade'),
       color: AppColor.accentGreen,
       colorValue: '#30A46C',
+
+      colorDark: '#4FBF8B',
       route: RouteName.GRADE
     },
     {
@@ -59,6 +71,8 @@ export function allFeatures(): FeatureItem[] {
       icon: $r('app.media.ic_meeting_room'),
       color: AppColor.accentYellow,
       colorValue: '#FFB300',
+
+      colorDark: '#FFC94A',
       route: RouteName.CLASSROOM
     },
     {
@@ -66,6 +80,8 @@ export function allFeatures(): FeatureItem[] {
       icon: $r('app.media.ic_schedule'),
       color: AppColor.brand,
       colorValue: '#1976D2',
+
+      colorDark: '#5AA9F0',
       route: RouteName.SIGNIN
     },
     {
@@ -73,6 +89,8 @@ export function allFeatures(): FeatureItem[] {
       icon: $r('app.media.ic_menu_book'),
       color: AppColor.accentPink,
       colorValue: '#E64A7B',
+
+      colorDark: '#F0779F',
       route: RouteName.BYKC
     },
     {
@@ -80,6 +98,8 @@ export function allFeatures(): FeatureItem[] {
       icon: $r('app.media.ic_schedule'),
       color: AppColor.accentPurple,
       colorValue: '#7B61FF',
+
+      colorDark: '#9E8AFF',
       route: RouteName.LIBBOOK_HOME
     },
     {
@@ -87,6 +107,8 @@ export function allFeatures(): FeatureItem[] {
       icon: $r('app.media.ic_school'),
       color: AppColor.brandLight,
       colorValue: '#1E88E5',
+
+      colorDark: '#5AA9F0',
       route: RouteName.SPOC
     },
     {
@@ -94,6 +116,8 @@ export function allFeatures(): FeatureItem[] {
       icon: $r('app.media.ic_assignment'),
       color: AppColor.accentGreen,
       colorValue: '#30A46C',
+
+      colorDark: '#4FBF8B',
       route: RouteName.EVALUATION
     },
     {
@@ -101,6 +125,8 @@ export function allFeatures(): FeatureItem[] {
       icon: $r('app.media.ic_person'),
       color: AppColor.accentYellow,
       colorValue: '#FFB300',
+
+      colorDark: '#FFC94A',
       route: RouteName.IHOME
     },
     {
@@ -108,6 +134,8 @@ export function allFeatures(): FeatureItem[] {
       icon: $r('app.media.ic_home'),
       color: AppColor.accentPink,
       colorValue: '#E64A7B',
+
+      colorDark: '#F0779F',
       route: RouteName.YGDK
     }
   ];

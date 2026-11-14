@@ -6,6 +6,7 @@ import { ImmersiveUtil } from '../common/ImmersiveUtil';
 import { Logger } from '../common/Logger';
 import { TokenStore } from '../network/TokenStore';
 import { KEY_MAIN_TAB_INDEX } from '../common/NavStacks';
+import { NavHero } from '../common/NavHero';
 import { HERO_BOUNCE_TICK, HERO_EXIT_TICK } from '../common/FeatureHero';
 import { KEY_HERO_PAGE_OPACITY, KEY_MORPH_TICK } from '../common/HeroMorph';
 import {
@@ -60,6 +61,8 @@ export default class EntryAbility extends UIAbility {
     AppStorage.setOrCreate<number>(HERO_BOUNCE_TICK, 0);
     AppStorage.setOrCreate<number>(KEY_MORPH_TICK, 0);
     AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 1);
+    // 原生导航「卡片展开」转场的三个信号键（见 common/NavHero.ets）
+    NavHero.initKeys();
     // 「回到前台」的翻转计数（SchedulePage 订阅它做静默刷新）
     AppStorage.setOrCreate<boolean>('appForegroundTick', false);
     this.foregroundTick = false;

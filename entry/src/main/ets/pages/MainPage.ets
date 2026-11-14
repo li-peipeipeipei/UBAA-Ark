@@ -1,6 +1,7 @@
 import { BackGuard } from '../common/BackGuard';
 import { Toast } from '../common/Toast';
 import { FeatureHero, HERO_BOUNCE_TICK, KEY_FEATURE_HERO_CLOSE } from '../common/FeatureHero';
+import { NavHero } from '../common/NavHero';
 import { HeroMorph, KEY_HERO_PAGE_OPACITY, KEY_MORPH_TICK, MorphPhase, MorphRect } from '../common/HeroMorph';
 import curves from '@ohos.curves';
 import { FEATURE_STACK, HOME_STACK, KEY_MAIN_TAB_INDEX, MINE_STACK, SCHEDULE_STACK } from '../common/NavStacks';
@@ -18,7 +19,7 @@ import { webview } from '@kit.ArkWeb';
 import { Logger } from '../common/Logger';
 import { AppColor, AppFont, AppSize } from '../components/AppTheme';
 import { ScheduleDayHeader, ScheduleHeaderModel, ScheduleTermChip, ScheduleWeekChips } from '../components/ScheduleHeader';
-import { routeBuilder } from './RouteBuilder';
+import { nativeFeatureRoute, routeBuilder } from './RouteBuilder';
 import { HomePage } from './home/HomePage';
 import { SchedulePage } from './academic/SchedulePage';
 import { FeaturePage } from './home/FeaturePage';
@@ -150,6 +151,29 @@ export struct MainPage {
    * 入场：色块从卡片矩形放大到全屏、圆角→0、颜色→页面底色；放到一半时页面 0→1 淡入。
    * 退场：色块铺满 → 页面淡出 → pop → 色块缩回卡片、圆角复原、颜色变回卡片色。
    */
+  /** 放大收尾只做一次（onFinish 与兜底定时器都会调）。 */
+  private expandDone: boolean = false;
+  /** 收起收尾只做一次（onFinish 与兜底定时器都会调）。 */
+  private shrinkDone: boolean = false;
+
+  /**
+   * 「卡片 → 全屏」的遮罩动画（打开 / 收起共用一套矩形动画）。
+   *
+   * ## 为什么用导航**外面**的一层遮罩
+   *
+   * 直接在 `NavDestination` 的内容上做 scale/translate 实测无效：日志显示动画正常播完、
+   * 状态也确实是终值，但画面停在初始大小（系统在转场期间冻结了目的地的渲染）。
+   * 而这一层是 MainPage 的普通子节点，`animateTo` 改 width/height/position 稳定可靠
+   * （前面几轮真机验证过）。
+   *
+   * ## 两个阶段各自看到什么
+   *
+   * - 打开：遮罩 = 那张卡（实心卡片色 + 卡片圆角），从卡片矩形长到全屏；
+   *   周围一直是**系统保留的功能页快照**，所以「其他功能块可见」；
+   *   长到全屏后遮罩淡出，露出早就铺好的真实页面（交叉过渡）。
+   * - 收起：遮罩先铺满（页面底色）并立刻把页面隐去 → 缩回卡片矩形（颜色/圆角复原）
+   *   → 结束后才让系统移除目的地，此刻遮罩与真实卡片像素级重合，看不出切换。
+   */
   onMorphTick(): void {
     const phase: MorphPhase = HeroMorph.getPhase();
     if (phase === MorphPhase.IDLE) {
@@ -163,25 +187,26 @@ export struct MainPage {
     const card: MorphRect = HeroMorph.getCard();
 
     if (phase === MorphPhase.EXPAND) {
+      this.shrinkDone = false;
+      // ① 首帧就是「这张卡」：实心卡片色、卡片圆角、卡片矩形
       this.morphX = card.x;
       this.morphY = card.y;
       this.morphW = card.w;
       this.morphH = card.h;
       this.morphRadius = card.radius;
       this.morphColor = HeroMorph.getColor();
-      // 起步不是纯色块，而是**半透明的彩色光层**：放大过程中它逐渐溶解，
-      // 底下的功能页（其他卡片）一直透得出来，才会是「卡片发光展开」而不是「盖一块色板」。
-      this.morphOpacity = 0.75;
+      this.morphOpacity = 1;
       this.morphVisible = true;
-      // ⚠️ 必须等一帧：初值与 animateTo 在同一帧内提交会被合并成「直接到终值」，
-      // 动画整段丢失（踩过）。32ms 足够让色块先以卡片矩形画出来。
+      // 目的地一开始不可见：等遮罩铺满并开始淡出时它才登场
+      AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 0);
+      // ⚠️ 必须等一帧：初值与 animateTo 在同一帧内提交会被合并成「直接到终值」
       setTimeout(() => {
         this.getUIContext().animateTo(
           {
             // Apple 式非线性：快起步 + 轻微过冲 + 干净收尾
             curve: curves.springMotion(0.32, 0.82),
             onFinish: () => {
-              HeroMorph.finish();
+              this.finishExpand();
             }
           },
           () => {
@@ -191,38 +216,39 @@ export struct MainPage {
             this.morphH = winH;
             this.morphRadius = 0;
             this.morphColor = this.pageBg();
-            // 与放大同一段动画里溶解到完全透明
-            this.morphOpacity = 0;
           }
         );
-        // 页面稍晚一点、用更长的时间淡入：让「彩色层还亮着」的观感先建立起来
+        // 页面在遮罩仍是实心时就淡入（被遮罩盖着看不见），
+        // 随后遮罩淡出 —— 两者在这一段交叉，观感是「色块融进页面」
         setTimeout(() => {
-          this.getUIContext().animateTo({ duration: 320, curve: Curve.EaseOut }, () => {
+          this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, () => {
             AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 1);
           });
-        }, 120);
+        }, 160);
+        // 兜底：几何动画的 onFinish 因故没来也要放行
+        setTimeout(() => {
+          this.finishExpand();
+        }, 700);
       }, 32);
       return;
     }
 
-    // SHRINK
+    // SHRINK：遮罩先铺满并立刻把页面隐去 ——
+    // 收缩时遮罩外露出的应该是功能页，而不是这一页。
+    this.shrinkDone = false;
     this.morphX = navW;
     this.morphY = 0;
     this.morphW = winW - navW;
     this.morphH = winH;
     this.morphRadius = 0;
     this.morphColor = this.pageBg();
-    // 退场从「几乎看不见」开始：页面还盖着，色块浮现的瞬间页面正好淡出
-    this.morphOpacity = 0;
+    this.morphOpacity = 1;
     this.morphVisible = true;
-    this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseIn }, () => {
-      AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 0);
-    });
+    AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 0);
     setTimeout(() => {
-      FeatureHero.completeExit();
       this.getUIContext().animateTo(
         {
-          curve: curves.springMotion(0.28, 0.9),
+          curve: curves.springMotion(0.34, 0.86),
           onFinish: () => {
             this.finishShrink();
           }
@@ -234,20 +260,54 @@ export struct MainPage {
           this.morphH = card.h;
           this.morphRadius = card.radius;
           this.morphColor = HeroMorph.getColor();
-          this.morphOpacity = 0.75;
         }
       );
-    }, 160);
+      setTimeout(() => {
+        this.finishShrink();
+      }, 700);
+    }, 32);
   }
 
-  private finishShrink(): void {
-    HeroMorph.finish();
-    AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 1);
-    const index: number = HeroMorph.getCardIndex();
-    if (index >= 0) {
-      const current: number = AppStorage.get<number>(HERO_BOUNCE_TICK) ?? 0;
-      AppStorage.setOrCreate<number>(HERO_BOUNCE_TICK, current + 1);
+  /** 放大到位：遮罩淡出，露出已经铺好的页面（真正的交叉过渡）。 */
+  private finishExpand(): void {
+    if (this.expandDone) {
+      return;
     }
+    this.expandDone = true;
+    this.getUIContext().animateTo(
+      {
+        duration: 140,
+        curve: Curve.EaseOut,
+        onFinish: () => {
+          this.morphVisible = false;
+          HeroMorph.finish();
+          // 页面已经完全可见，这时才让系统移除功能页快照（看不出变化）
+          NavHero.finishTransition();
+        }
+      },
+      () => {
+        this.morphOpacity = 0;
+      }
+    );
+    setTimeout(() => {
+      this.morphVisible = false;
+      HeroMorph.finish();
+      NavHero.finishTransition();
+    }, 400);
+  }
+
+  /** 收缩落地：移除目的地 → 真实卡片露出，再让它弹一下。 */
+  private finishShrink(): void {
+    if (this.shrinkDone) {
+      return;
+    }
+    this.shrinkDone = true;
+    // 遮罩此刻与真实卡片像素级重合，直接隐藏看不出切换
+    this.morphVisible = false;
+    AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 1);
+    HeroMorph.finish();
+    NavHero.finishTransition();
+    NavHero.notifyBounce();
   }
 
   /**
@@ -378,6 +438,12 @@ export struct MainPage {
     routeBuilder(name, param, this.stackOf(this.currentIndex));
   }
 
+  /** 功能页签的原生路由表（`Navigation` 专用，见 RouteBuilder.nativeFeatureRoute）。 */
+  @Builder
+  nativeRouteMap(name: string, param: object) {
+    nativeFeatureRoute(name, param, this.featureStack);
+  }
+
   /** 按页签序号取对应的导航栈（「再点一次回主页」时清空它）。 */
   private stackOf(index: number): NavPathStack {
     if (index === 0) {
@@ -415,10 +481,76 @@ export struct MainPage {
 
   private clearStack(index: number): void {
     if (index === 2) {
-      this.stackOf(index).clear(false);
+      const stack: NavPathStack = this.stackOf(index);
+      // 栈里可能停着一张「卡片展开页」。清栈前必须把原卡片放出来：
+      // `clear(false)` 不播转场，也就没有 POP 回调去通知功能页 —— 卡片会一直保持隐藏
+      // （实测：点「功能」回到网格后，考试安排那张卡是空的）。
+      NavHero.notifyTileShow();
+      if (NavHero.isTopHero() && stack.size() === 1) {
+        // 只有一层时带动画清栈，正好走上「缩回卡片」的转场
+        stack.clear(true);
+      } else {
+        stack.clear(false);
+      }
     } else {
       this.stackOf(index).clear();
     }
+  }
+
+  /**
+   * 功能页签的自定义转场。
+   *
+   * 只接管两种情况，其余一律 `undefined`（走系统默认滑入/滑出）：
+   * - **PUSH**：本次点击记录了卡片矩形（`NavHero.hasCard()`）→ 目的地从卡片位置放大；
+   * - **POP**：当前栈顶是「卡片展开页」（`NavHero.hasActive()`）→ 让它缩回卡片。
+   *
+   * 两个关键点：
+   * 1. 我们只负责**存住 proxy**，动画由目的地 `NativeHeroDest` 自己演，
+   *    演完它调 `NavHero.finishTransition()`。系统在那之前不会移除页面。
+   * 2. `timeout` 是兜底：万一动画回调没来，系统也会在超时后强制结束，
+   *    不会把用户卡在「转场中」的不可交互状态。
+   */
+  private heroTransition(from: NavContentInfo, to: NavContentInfo,
+    operation: NavigationOperation): NavigationAnimatedTransition | undefined {
+    Logger.info('HERO op=' + operation + ' from=' + (from.name ?? '-') + ' to=' + (to.name ?? '-') +
+      ' heroRoute=' + NavHero.isHeroRoute(to.name ?? '') + ' card=' + NavHero.hasCard() +
+      ' active=' + NavHero.isTopHero());
+    if (operation === NavigationOperation.PUSH) {
+      // 只有「支持卡片展开的路由」+ 刚记过卡片矩形才接管
+      if (!NavHero.isHeroRoute(to.name ?? '') || !NavHero.hasCard()) {
+        return undefined;
+      }
+      const push: NavigationAnimatedTransition = {
+        timeout: 900,
+        transition: (proxy: NavigationTransitionProxy) => {
+          NavHero.holdProxy(proxy);
+        }
+      };
+      return push;
+    }
+    if (operation === NavigationOperation.POP) {
+      if (!NavHero.isTopHero()) {
+        return undefined;
+      }
+      // ⚠️ 这个回调是在**渲染管线里同步调用**的，此处直接改 AppStorage / @State 会抛
+      // JS Error（实测：点返回直接崩进程，exit 254，栈顶就落在这一行）。
+      // 所以状态改动统统延后一帧。
+      this.expandDone = false;
+      setTimeout(() => {
+        // 遮罩开始收缩（MainPage 自己演），系统保留功能页快照作为露出内容
+        HeroMorph.startShrink();
+        // 真实卡片先放出来：此刻遮罩全屏不透明，看不到变化
+        NavHero.notifyTileShow();
+      }, 0);
+      const pop: NavigationAnimatedTransition = {
+        timeout: 900,
+        transition: (proxy: NavigationTransitionProxy) => {
+          NavHero.holdProxy(proxy);
+        }
+      };
+      return pop;
+    }
+    return undefined;
   }
 
   private onWideSelect(index: number): void {
@@ -656,24 +788,26 @@ export struct MainPage {
       .tabBar(new BottomTabBarStyle($r('app.media.ic_schedule'), $r('app.string.tab_schedule')))
 
       TabContent() {
-        HdsNavigation(this.featureStack) {
+        // 功能页签用**原生 Navigation**：只有它能给到 `customNavContentTransition`
+        // （完全接管 push/pop）与跨页共享元素。其余三个页签仍是 HdsNavigation，
+        // 保留 HDS 的标题栏与沉浸光感。
+        Navigation(this.featureStack) {
           PageShell() {
             FeaturePage({
               stack: this.featureStack,
             })
           }
         }
-        .navDestination(this.routeMap)
-        .titleBar(this.titleBar())
-        .titleMode(HdsNavigationTitleMode.MINI)
-        .hideBackButton(true)
+        .navDestination(this.nativeRouteMap)
         .mode(NavigationMode.Stack)
-        // 功能页没有标题栏（一级页只有卡片网格），但 HdsNavigation 默认会为 MINI 标题栏
-        // 避让约 96vp —— 卡片展开的浮层要盖到屏幕顶，就会超出父容器边界，
-        // 顶部的返回按钮**点不到**（ArkUI 的命中测试不越界）。
-        // 隐藏标题栏后内容从屏幕顶开始，浮层不用上移，按钮恢复正常；
-        // 网格自身的顶部留白由页面内的 destTopInset 补齐，位置不变。
+        // 功能页一级页没有标题栏（只有卡片网格），内容从屏幕顶开始，
+        // 网格位置由页面内的 destTopInset 自己补
         .hideTitleBar(true)
+        // 转场完全由我们接管（HDS 的 HdsNavigation 不会回调这个，原生 Navigation 会）。
+        // ⚠️ 必须用箭头函数包一层：直接把方法引用传进去时 `this` 不会绑定，
+        // 回调里访问 `this.xxx` 会抛 `TypeError: Obj is not a Valid object` 并崩进程（踩过）。
+        .customNavContentTransition((from: NavContentInfo, to: NavContentInfo,
+          operation: NavigationOperation) => this.heroTransition(from, to, operation))
       }
       .tabBar(new BottomTabBarStyle($r('app.media.ic_apps'), $r('app.string.tab_feature')))
 
@@ -856,8 +990,10 @@ export struct MainPage {
     Stack({ alignContent: Alignment.Start }) {
       this.narrowTabs()
 
-      // 转场色块：盖在内容区之上、侧栏之下（侧栏始终可见）
-      if (false && this.morphVisible) {
+      // 转场遮罩：盖在内容区之上、侧栏之下（侧栏始终可见）。
+      // 它是 MainPage 的普通子节点 —— 不在 Navigation 的转场里，animateTo 改
+      // width/height/position 一定生效（目的页内容上的 transform 会被系统冻结）。
+      if (this.morphVisible) {
         Column()
           .width(this.morphW)
           .height(this.morphH)

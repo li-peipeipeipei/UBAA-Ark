@@ -5,6 +5,8 @@ import {
   hdsMaterial
 } from '@kit.UIDesignKit';
 import { AppRouter, RouteName } from '../common/AppRouter';
+import { NativeHeroDest } from '../components/NativeHeroDest';
+import { AppColor } from '../components/AppTheme';
 import { FeatureHero } from '../common/FeatureHero';
 import { HeroMorph, KEY_HERO_PAGE_OPACITY } from '../common/HeroMorph';
 import curves from '@ohos.curves';
@@ -586,6 +588,484 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     })
     // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
     // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
+  }
+}
+
+/**
+ * 原生 `Navigation` 用的路由 builder（功能页签专用）。
+ *
+ * ## 为什么单独一套
+ *
+ * 功能页签要的是「完全可控的共享元素转场」，而 HDS 把转场控制权收走了：
+ * `HdsNavigation.customNavContentTransition` 不回调、跨 `HdsNavDestination` 的
+ * `geometryTransition` 不生效。原生 `Navigation` 两者都支持。
+ *
+ * ## 外壳
+ *
+ * 用 `NativeHeroDest`（内部包 `HeroDetailLayer` 的自绘标题栏）：
+ * 它自己算「从卡片矩形放大到全屏」的几何，动画播完才通知系统转场结束。
+ *
+ * ## 当前阶段
+ *
+ * 只接 `EXAM`。`customNavContentTransition` 已验证会回调（PUSH op=1 / POP op=2，
+ * 前提是 push/pop 必须 `animated = true`）。其余路由先给占位页，
+ * 逐个补全时只需换内容组件与标题（注意还有博雅/iHome/图书馆/评教的二级页）。
+ */
+/**
+ * 原生 `Navigation` 用的路由表（功能页签专用）。
+ *
+ * ## 为什么功能页签单独一套
+ *
+ * 它要「完全可控的卡片展开转场」，而 HDS 把转场控制权收走了：
+ * `HdsNavigation.customNavContentTransition` 不回调、跨 `HdsNavDestination` 的
+ * `geometryTransition` 不生效。原生 `Navigation` 两者都支持
+ * （实测回调正常：PUSH op=1 / POP op=2，前提是 push/pop 必须 `animated = true`）。
+ *
+ * ## 两种外壳
+ *
+ * - 功能页 10 个大按钮 → `hero: true`：参与「从卡片放大 / 缩回卡片」的转场；
+ * - 页内二级页（博雅 → 选择课程 …）→ `hero: false`：返回走系统默认滑出，
+ *   否则二级页的返回会被误判成「缩回某张卡片」。
+ *
+ * 两者都是自绘标题栏（样式对齐 HDS MINI：56vp 高、40vp 圆按钮、24vp Bold 标题）。
+ */
+/**
+ * 原生 `Navigation` 用的路由表（功能页签专用）。
+ *
+ * ## 为什么功能页签单独一套
+ *
+ * 它要「完全可控的卡片展开转场」，而 HDS 把转场控制权收走了：
+ * `HdsNavigation.customNavContentTransition` 不回调、跨 `HdsNavDestination` 的
+ * `geometryTransition` 不生效。原生 `Navigation` 两者都支持
+ * （实测回调正常：PUSH op=1 / POP op=2，前提是 push/pop 必须 `animated = true`）。
+ *
+ * ## 两种外壳
+ *
+ * - 功能页 10 个大按钮 → `hero: true`：参与「从卡片放大 / 缩回卡片」的转场；
+ * - 页内二级页（博雅 → 选择课程 …）→ `hero: false`：返回走系统默认滑出，
+ *   否则二级页的返回会被误判成「缩回某张卡片」。
+ *
+ * 两者都是自绘标题栏（对齐 HDS MINI：56vp 高、40vp 圆按钮、24vp Bold 标题）。
+ *
+ * ⚠️ `NativeHeroDest` / `HeroDetailLayer` 都有两个 `@BuilderParam`
+ * （`trailing` + `content`），**不能**用尾随闭包调用，所以下面每个页面都写了一个
+ * 具名 `@Builder`，用 `content: xxxBody` 传入。
+ */
+
+
+/**
+ * 原生 `Navigation` 用的路由表（功能页签专用）。
+ *
+ * ## 为什么功能页签单独一套
+ *
+ * 它要「完全可控的卡片展开转场」，而 HDS 把转场控制权收走了：
+ * `HdsNavigation.customNavContentTransition` 不回调、跨 `HdsNavDestination` 的
+ * `geometryTransition` 不生效。原生 `Navigation` 两者都支持
+ * （实测回调正常：PUSH op=1 / POP op=2，**前提是 push/pop 必须 `animated = true`**，
+ * 否则系统根本不播转场、回调也不会来）。
+ *
+ * ## 两种目的地
+ *
+ * - 功能页 10 个大按钮 → `hero: true`：参与「从卡片放大 / 缩回卡片」的转场；
+ * - 页内二级页（博雅 → 选择课程 …）→ `hero: false`：返回走系统默认滑出，
+ *   否则二级页的返回会被误判成「缩回某张卡片」。
+ *
+ * 两者共用 `NativeHeroDest` 外壳（自绘标题栏，对齐 HDS MINI：56vp 高、40vp 圆按钮、
+ * 24vp Bold 标题），页面内容由 `FeatureDestBody` 按 `routeName` 分派。
+ */
+@Builder
+export function nativeFeatureRoute(name: string, param: object, stack: NavPathStack) {
+  if (name === RouteName.EXAM) {
+    NavDestination() {
+      NativeHeroDest({
+        title: '考试安排',
+        hero: true,
+        routeName: RouteName.EXAM,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.CLASSROOM) {
+    NavDestination() {
+      NativeHeroDest({
+        title: '空闲教室',
+        hero: true,
+        routeName: RouteName.CLASSROOM,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.SIGNIN) {
+    NavDestination() {
+      NativeHeroDest({
+        title: '课堂签到',
+        hero: true,
+        routeName: RouteName.SIGNIN,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.EVALUATION) {
+    NavDestination() {
+      NativeHeroDest({
+        title: '自动评教',
+        hero: true,
+        routeName: RouteName.EVALUATION,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.SPOC) {
+    NavDestination() {
+      NativeHeroDest({
+        title: 'SPOC 作业',
+        hero: true,
+        routeName: RouteName.SPOC,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.YGDK) {
+    NavDestination() {
+      NativeHeroDest({
+        title: '阳光打卡',
+        hero: true,
+        routeName: RouteName.YGDK,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.IHOME) {
+    NavDestination() {
+      NativeHeroDest({
+        title: 'iHome',
+        hero: true,
+        routeName: RouteName.IHOME,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.IHOME_DETAIL) {
+    NavDestination() {
+      NativeHeroDest({
+        title: '诉求详情',
+        hero: false,
+        routeName: RouteName.IHOME_DETAIL,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.JUDGE) {
+    NavDestination() {
+      NativeHeroDest({
+        title: '希冀作业',
+        hero: false,
+        routeName: RouteName.JUDGE,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.JUDGE_DETAIL) {
+    NavDestination() {
+      NativeHeroDest({
+        title: '作业详情',
+        hero: false,
+        routeName: RouteName.JUDGE_DETAIL,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.BYKC) {
+    NavDestination() {
+      NativeHeroDest({
+        title: '博雅课程',
+        hero: true,
+        routeName: RouteName.BYKC,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.BYKC_COURSES) {
+    NavDestination() {
+      NativeHeroDest({
+        title: '选择课程',
+        hero: false,
+        routeName: RouteName.BYKC_COURSES,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.BYKC_CHOSEN) {
+    NavDestination() {
+      NativeHeroDest({
+        title: '我的课程',
+        hero: false,
+        routeName: RouteName.BYKC_CHOSEN,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.BYKC_STATISTICS) {
+    NavDestination() {
+      NativeHeroDest({
+        title: '课程统计',
+        hero: false,
+        routeName: RouteName.BYKC_STATISTICS,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.BYKC_DETAIL) {
+    NavDestination() {
+      NativeHeroDest({
+        title: '课程详情',
+        hero: false,
+        routeName: RouteName.BYKC_DETAIL,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.LIBBOOK_HOME) {
+    NavDestination() {
+      NativeHeroDest({
+        title: '图书馆座位',
+        hero: true,
+        routeName: RouteName.LIBBOOK_HOME,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.LIBBOOK_RESERVE) {
+    NavDestination() {
+      NativeHeroDest({
+        title: '预约座位',
+        hero: false,
+        routeName: RouteName.LIBBOOK_RESERVE,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.LIBBOOK_BOOKINGS) {
+    NavDestination() {
+      NativeHeroDest({
+        title: '我的座位预约',
+        hero: false,
+        routeName: RouteName.LIBBOOK_BOOKINGS,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.GRADE) {
+    GradeNativeDestination({ stack: stack })
+  } else {
+    NavDestination() {
+      Column() {
+        Text('该页面尚未接入原生路由：' + name)
+          .fontSize(15)
+          .fontColor(AppColor.textSecondary)
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor(AppColor.pageBackground)
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+  }
+}
+
+/**
+ * 成绩查询的原生目的地。
+ *
+ * 与其它页的区别：标题栏右侧要挂「2026秋季」学期切换器，它和页面共用同一个
+ * `GradeHeaderModel`（换学期时两边一起刷新）—— 必须在同一个组件里持有它，
+ * 所以这里显式传 `content`（`contentProvided: true`）。
+ */
+@Component
+struct GradeNativeDestination {
+  stack: NavPathStack = new NavPathStack();
+  @State private header: GradeHeaderModel = new GradeHeaderModel();
+
+  @Builder
+  termTitle() {
+    GradeTermTitle({ model: this.header });
+  }
+
+  @Builder
+  gradeBody() {
+    GradePage({ header: this.header })
+  }
+
+  build() {
+    NavDestination() {
+      NativeHeroDest({
+        title: '成绩查询',
+        hero: true,
+        routeName: RouteName.GRADE,
+        stack: this.stack,
+        trailing: (): void => { this.termTitle(); },
+        content: (): void => { this.gradeBody(); },
+        contentProvided: true,
+        // 整条标题栏由 GradeTermTitle 画（标题 + 学期 + 箭头），外壳不再重复画标题
+        titleVisible: false,
+        onBack: () => {
+          AppRouter.back(this.stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    .onBackPressed(() => {
+      AppRouter.back(this.stack);
+      return true;
+    })
     .backgroundColor(Color.Transparent)
   }
 }

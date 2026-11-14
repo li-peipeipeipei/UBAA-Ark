@@ -102,6 +102,22 @@ export struct HeroDetailLayer {
   empty() {
   }
 
+  /**
+   * 标题栏右侧插槽（可空）。
+   *
+   * 成绩查询页的「2026秋季」切换器在 HDS 里是挂在标题栏上的，换成自绘标题栏后
+   * 需要一个位置放它 —— 用命名参数传 @Builder 即可（不能再加尾随闭包，
+   * 尾随闭包已经被 `content` 占用）。
+   */
+  @BuilderParam trailing: () => void = this.empty;
+  /**
+   * 是否画本组件自己的标题文字。
+   *
+   * 成绩查询的标题栏整条都由 `GradeTermTitle` 画（标题 + 学期 + 上下学期箭头），
+   * 这里再画一次就重复了 —— 那一页传 false，把整条标题栏交给 `trailing`。
+   */
+  titleVisible: boolean = true;
+
   @BuilderParam content: () => void = this.empty;
 
   build() {
@@ -145,14 +161,22 @@ export struct HeroDetailLayer {
             this.onBack();
           })
 
-          Text(this.title)
-            .fontSize(AppFont.title)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(AppColor.textPrimary)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          if (this.titleVisible) {
+            Text(this.title)
+              .fontSize(AppFont.title)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(AppColor.textPrimary)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
 
-          Blank()
+          // 右侧区域吃掉剩余宽度：成绩页把整条标题栏（标题 + 学期 + 箭头）塞进来，
+          // 用 Blank 会把它挤到屏幕外（实测右边被裁）
+          Row() {
+            this.trailing()
+          }
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.End)
         }
         .width('100%')
         // 高度与 HDS 的 MINI 标题栏一致（56vp），不是 84（那是展开态标题栏）

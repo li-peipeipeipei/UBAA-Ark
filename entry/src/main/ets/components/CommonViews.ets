@@ -10,7 +10,9 @@ import { HeroMorph } from '../common/HeroMorph';
  * 太低（0.62）时真机上看得出两个问题：色相被材质压暗、按钮像蒙了一层灰；
  * 太高又看不见材质的通透感。0.82 是「色相鲜亮 + 边缘与高光仍透出材质」的折中点。
  */
-const FEATURE_TILE_COLOR_ALPHA: number = 0.82;
+// 卡片色块的透明度。真机实测：深色下紫色卡片像素 (136,119,215) ≈ 主色 #9E8AFF × 0.86，
+// 之前取 0.82 会让转场遮罩比卡片暗一档。
+const FEATURE_TILE_COLOR_ALPHA: number = 0.86;
 
 /**
  * 功能按钮圆角的默认值（vp）：还没量到块宽时的兜底。
