@@ -87,10 +87,11 @@ export struct FeaturePage {
   @State private heroCorner: number = 0;
   /** 被展开的那张卡片是否隐藏（展开后由浮层接管，收起前还原）。 */
   @State private heroHideTile: boolean = false;
-  /** 收起时浮层自己缩小的比例与平移量（1 / 0 = 全屏原位）。 */
-  @State private heroShrinkScale: number = 1;
-  @State private heroShrinkTx: number = 0;
-  @State private heroShrinkTy: number = 0;
+  /** 收起时浮层的几何：左上角位置 + 非等比缩放（全屏 = posY -shellTop / scale 1）。 */
+  @State private heroPosX: number = 0;
+  @State private heroPosY: number = 0;
+  @State private heroScaleX: number = 1;
+  @State private heroScaleY: number = 1;
 
   /**
    * 本页在屏幕上的真实起点 y（vp）。
@@ -171,7 +172,10 @@ export struct FeaturePage {
       this.heroContentOpacity = 0;
       this.heroAccentOpacity = 1;
       this.heroCorner = this.tileRadius;
-      this.heroShrinkScale = 1;
+      this.heroPosX = 0;
+      this.heroPosY = -this.shellTop;
+      this.heroScaleX = 1;
+      this.heroScaleY = 1;
       BackGuard.register(() => {
         this.closeHero();
         return true;
@@ -277,12 +281,15 @@ export struct FeaturePage {
       const navW: number = useSideNav(this.bp) ? sideNavWidthOf(this.bp) : 0;
       const winH: number = AppStorage.get<number>(KEY_WINDOW_HEIGHT_VP) ?? 800;
       const fullW: number = winW - navW;
-      let target: number = 0.16;
-      if (bounds !== undefined && fullW > 0) {
-        target = bounds[2] / fullW;
-        // 缩放后中心不动，平移到卡片中心（两个量都相对「全屏原位」）
-        this.heroShrinkTx = bounds[0] + bounds[2] / 2 - fullW / 2;
-        this.heroShrinkTy = bounds[1] + bounds[3] / 2 - winH / 2;
+      let sx: number = 0.16;
+      let sy: number = 0.33;
+      if (bounds !== undefined && fullW > 0 && winH > 0) {
+        // 非等比：宽度按卡片宽/全屏宽，高度按卡片高/全屏高
+        sx = bounds[2] / fullW;
+        sy = bounds[3] / winH;
+        // 左上角直接对到卡片左上角（position 是相对父容器，父容器顶 = shellTop）
+        this.heroPosX = bounds[0];
+        this.heroPosY = bounds[1] - this.shellTop;
       }
       this.getUIContext().animateTo({ duration: 110, curve: Curve.EaseOut }, () => {
         this.heroAccentOpacity = 1;
@@ -292,18 +299,20 @@ export struct FeaturePage {
           curve: curves.springMotion(0.34, 0.86),
           onFinish: () => {
             this.heroOpen = false;
-            this.heroShrinkScale = 1;
-            this.heroShrinkTx = 0;
-            this.heroShrinkTy = 0;
+            this.heroPosX = 0;
+            this.heroPosY = -this.shellTop;
+            this.heroScaleX = 1;
+            this.heroScaleY = 1;
             this.heroCorner = this.tileRadius;
             this.bounceIndex = this.heroIndex;
             this.bounceTick = this.bounceTick + 1;
           }
         },
         () => {
-          this.heroShrinkScale = target;
-          // 圆角补偿：scale 之后视觉圆角 = corner × scale
-          this.heroCorner = Math.min(this.tileRadius / (target > 0 ? target : 1), 200);
+          this.heroScaleX = sx;
+          this.heroScaleY = sy;
+          // 圆角补偿：scale 之后视觉圆角 ≈ corner × scale（按 X 方向算）
+          this.heroCorner = Math.min(this.tileRadius / (sx > 0 ? sx : 1), 300);
         }
       );
     }, 120);
@@ -420,9 +429,10 @@ export struct FeaturePage {
           contentOpacity: this.heroContentOpacity,
           accentOpacity: this.heroAccentOpacity,
           corner: this.heroCorner,
-          shrinkScale: this.heroShrinkScale,
-          shrinkTx: this.heroShrinkTx,
-          shrinkTy: this.heroShrinkTy,
+          posX: this.heroPosX,
+          posY: this.heroPosY,
+          scaleX: this.heroScaleX,
+          scaleY: this.heroScaleY,
           topInset: this.shellTop,
           fullHeight: AppStorage.get<number>(KEY_WINDOW_HEIGHT_VP) ?? 800,
           onBack: () => {
