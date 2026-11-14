@@ -236,26 +236,24 @@ export struct FeatureTile {
   /** 回弹峰值 1.035，随后由动画收回 1。 */
   @State private bounceScale: number = 1;
 
-  /**
-   * 按下 / 抬起的动画参数。
-   *
-   * 按下用固定 90ms 的 Friction（跟手、不能等）；回弹用弹簧（有轻微过冲）。
-   * ⚠️ 弹簧曲线不吃 `duration`，所以两者不能共用一个参数对象。
-   */
-  private pressAnim(): AnimateParam {
-    if (this.pressed) {
-      return { duration: TILE_PRESS_DOWN_MS, curve: Curve.Friction };
-    }
-    // 回弹用稍慢一点的弹簧：1.08 的峰值 + 约 250ms 的回落，肉眼才看得出「弹了一下」
-    return { curve: curves.springMotion(0.24, 0.6) };
-  }
-
   onBounce(): void {
-    // 先跳到峰值，下一帧回 1 —— 由上面的 spring 曲线演出「弹一下」
-    this.bounceScale = TILE_BOUNCE_SCALE;
+    // ⚠️ 只有 tick **递增**才是「该我弹」。
+    // 非目标卡片的 tick 会被置回 0 —— 那也是一次 @Watch 变化，不拦截的话，
+    // 每次别的卡回弹，之前弹过的卡都会跟着再弹一遍（用户实测：多张卡一起弹）。
+    if (this.bounceTick <= 0) {
+      return;
+    }
+    // ⚠️ 不能「瞬间跳到峰值」：收起的最后遮罩正好压在卡片上（1.0），
+    // 真卡片一出现就跳到 1.08，那 8% 的突跳看起来就是「错位 / 跳一下」。
+    // 改成平滑的两段：先涨到峰值，再弹性回落 —— 与缩回落地是连续的一段动作。
+    this.getUIContext().animateTo({ duration: 110, curve: Curve.EaseOut }, () => {
+      this.bounceScale = TILE_BOUNCE_SCALE;
+    });
     setTimeout(() => {
-      this.bounceScale = 1;
-    }, 16);
+      this.getUIContext().animateTo({ curve: curves.springMotion(0.28, 0.5) }, () => {
+        this.bounceScale = 1;
+      });
+    }, 110);
   }
 
   /** 沉浸材质是否可用（只查一次；不可用时退化为不透明纯色）。 */
@@ -311,19 +309,24 @@ export struct FeatureTile {
     .width('100%')
     // 竖长：宽 / 高 = 0.8，高度比宽度大 25%
     .aspectRatio(0.8)
-    // 按下缩放 + 回来时的一次回弹，都作用在整块上
+    // 按下缩放 + 回来时的一次回弹，都作用在整块上。
+    // ⚠️ 不用 `.animation()`：它给所有变化套同一条曲线，而「按下」要快（90ms Friction）、
+    // 「抬起」要弹（spring）、「回弹」要先涨后落 —— 各自不同，只能用显式 animateTo。
     .scale({
       x: this.pressed ? TILE_PRESS_SCALE : this.bounceScale,
       y: this.pressed ? TILE_PRESS_SCALE : this.bounceScale
     })
-    .animation(this.pressAnim())
     // ⚠️ 不能用 onClick 做按压反馈：onClick 在**抬手**才触发，
     // 按下去的那 100ms 里没有任何视觉回应，手感是「点不动」。
     .onTouch((event: TouchEvent) => {
       if (event.type === TouchType.Down) {
-        this.pressed = true;
+        this.getUIContext().animateTo({ duration: TILE_PRESS_DOWN_MS, curve: Curve.Friction }, () => {
+          this.pressed = true;
+        });
       } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-        this.pressed = false;
+        this.getUIContext().animateTo({ curve: curves.springMotion(0.18, 0.55) }, () => {
+          this.pressed = false;
+        });
       }
     })
     // 正在展开时自己消失（分层由展开页接管），收起前会被父级还原
