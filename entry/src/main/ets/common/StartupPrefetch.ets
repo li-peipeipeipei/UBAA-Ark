@@ -1,6 +1,6 @@
 import { ApiService } from '../network/ApiService';
 import { TokenStore } from '../network/TokenStore';
-import { ExamArrangementData, Term, Week, WeeklySchedule } from '../model/ApiTypes';
+import { ExamArrangementData, Term, Week } from '../model/ApiTypes';
 import { CardDataBuilder } from './CardDataBuilder';
 import { Logger } from './Logger';
 
@@ -91,6 +91,12 @@ export class StartupPrefetch {
     const startAt: number = Date.now();
     const deadline: number = startAt + StartupPrefetch.BUDGET_MS;
     try {
+      // 定时器排上之后、真正跑起来之前，App 可能已经切到后台（`cancel()` 只在
+      // finished=false 时生效）。这一步必须先判：否则会白跑一次 CAS 换取 + 请求，
+      // 才在下面第一步的 shouldStop 里收手。
+      if (StartupPrefetch.cancelled) {
+        return;
+      }
       // ① 学期列表：同时把教务（byxt）会话打通 —— 后面三步都复用这一次换取
       const terms: Term[] = await ApiService.fetchTerms();
       if (StartupPrefetch.shouldStop(deadline)) {
@@ -127,8 +133,14 @@ export class StartupPrefetch {
         return;
       }
 
-      // ⑤ 本学期成绩：最重的一步（要额外换一次 app 门户会话），放最后，
-      //    预算不够就不做 —— 成绩页自己会加载，只是慢一点。
+      // ⑤ 本学期成绩：最重的一步（要额外换一次 app 门户会话），放最后。
+      //    再加一道自适应闸门：前面几步已经花掉一半预算，说明网络/设备偏慢，
+      //    这时再插一条 CAS 链只会把启动阶段的 IO 拖长 —— 直接放弃，成绩页自己会加载。
+      if (Date.now() - startAt > StartupPrefetch.BUDGET_MS / 2) {
+        Logger.info('启动预取：前几步已用 ' + (Date.now() - startAt).toString() +
+          'ms（超过预算一半），跳过成绩预取');
+        return;
+      }
       await ApiService.fetchGrades(termCode);
       Logger.info('启动预取完成，共 ' + (Date.now() - startAt).toString() + 'ms');
     } catch (error) {

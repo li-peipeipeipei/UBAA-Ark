@@ -349,20 +349,22 @@ export struct HomePage {
    * @param showLoading 首次进入（true）：整页切加载态，失败显示错误页 + 重试；
    *                    下拉刷新（false）：**保持现有内容**后台拉新，失败只轻提示 ——
    *                    刷新的语义是「更新」，把用户正在看的内容清空反而是打扰。
+   * @param force 是否绕开内存缓存。**用户显式刷新 / 点重试必须传 true** ——
+   *              否则会拿到 TTL 内的旧值，表现为「点了没反应」。
    */
-  private async loadHome(showLoading: boolean): Promise<void> {
+  private async loadHome(showLoading: boolean, force: boolean = false): Promise<void> {
     if (showLoading) {
       this.loadState = LoadState.LOADING;
     }
     try {
-      const classes: TodayClass[] = await ApiService.fetchTodayClasses(!showLoading);
+      const classes: TodayClass[] = await ApiService.fetchTodayClasses(force);
       // 接口返回的顺序是乱的，按开始时间重排（早的在上）
       this.todayClasses = sortTodayClasses(classes);
 
       // 首次登录时还没有缓存学期，此时不能直接跳过考试 —— 否则首页会缺掉倒计时卡片
       const termCode: string = await this.resolveTermCode();
       if (termCode.length > 0) {
-        const data = await ApiService.fetchExams(termCode, !showLoading);
+        const data = await ApiService.fetchExams(termCode, force);
         this.pickNextExam(data.arranged);
       }
       this.loadState = LoadState.SUCCESS;
@@ -388,7 +390,7 @@ export struct HomePage {
     }
     this.refreshInFlight = true;
     try {
-      await this.loadHome(false);
+      await this.loadHome(false, true);
     } finally {
       this.refreshInFlight = false;
       this.refreshing = false;
@@ -748,7 +750,7 @@ export struct HomePage {
             ErrorView({
               message: this.errorMessage,
               onRetry: () => {
-                this.loadHome(true);
+                this.loadHome(true, true);
               }
             })
           } else {

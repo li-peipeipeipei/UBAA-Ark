@@ -147,8 +147,14 @@ export function transparentOf(argbHex: string): string {
  */
 export class ImmersiveUtil {
   private static mainWindow: window.Window | null = null;
-  /** 窗口监听是否已注册（`apply()` 重复调用时不再重复 on）。 */
-  private static listenersBound: boolean = false;
+  /**
+   * 已经挂过监听的那个窗口实例。
+   *
+   * 不能用布尔标记：`onWindowStageDestroy` → 重新 `onWindowStageCreate`（能力重启、
+   * 多窗口）时会拿到**新的** Window 对象，布尔标记已置位，新窗口就再也挂不上监听，
+   * 安全区与断点从此不再更新。按实例比对才是对的。
+   */
+  private static boundWindow: window.Window | null = null;
 
   /**
    * 方向策略：**必须在 `windowStage.loadContent()` 之前**调用。
@@ -203,10 +209,10 @@ export class ImmersiveUtil {
         });
 
       // 避让区变化（折叠屏展开、旋转、手势导航切换等）
-      // ⚠️ 只注册一次：`apply()` 若被重复调用（能力重建 / 重新 loadContent），
-      // 每调一次都会在同一窗口上再挂一套监听，回调按倍数增长且无法解绑。
-      if (!ImmersiveUtil.listenersBound) {
-        ImmersiveUtil.listenersBound = true;
+      // ⚠️ 同一个窗口只注册一次：`apply()` 若被重复调用，会在同一窗口上再挂一套监听，
+      // 回调按倍数增长且无法解绑；但**换了窗口实例必须重新挂**（见 boundWindow 的说明）。
+      if (ImmersiveUtil.boundWindow !== win) {
+        ImmersiveUtil.boundWindow = win;
         win.on('avoidAreaChange', () => {
           ImmersiveUtil.refreshAvoidArea(win);
         });

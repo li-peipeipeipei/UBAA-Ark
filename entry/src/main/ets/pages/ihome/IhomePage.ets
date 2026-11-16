@@ -164,8 +164,11 @@ export struct IhomePage {
     this.keyword = '';
     this.filter = IhomeFilter.ALL;
     this.categoryId = 0;
-    this.expandedNoticeId = 0;
-    BackGuard.unregister();
+    // ⚠️ 这里原来是无条件 `BackGuard.unregister()`：用户**没展开过公告**时，
+    // 它会把别的页面（别的页签）注册的那一层弹掉 —— 那一层的关闭动作就永远丢了，
+    // 表现为「某个面板关不掉 / 返回键只关面板不退页面」。
+    // 只有自己真的注册过才注销。
+    this.collapseNotice();
     this.load(true);
   }
 

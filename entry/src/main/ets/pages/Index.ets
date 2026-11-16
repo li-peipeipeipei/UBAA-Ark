@@ -22,6 +22,17 @@ import { UserData } from '../model/ApiTypes';
  * 早先那版「先探测、探测完再进主页」已经被「先亮界面 + 后台自检」取代
  * （探测要往返上游，横竖屏重建时会闪一段「正在恢复登录状态…」）。
  */
+/**
+ * 上次成功自检的时刻（模块级）。
+ *
+ * 横竖屏切换会重建 `Index`，而 `aboutToAppear` 每次都会发一次 `status()` ——
+ * 平板来回转几次屏就是好几次多余往返。成功过一次就 5 分钟内不再重复；
+ * 失败不记录，下次重建还会重试（网络抖动时自我修复）。
+ */
+let lastVerifiedAt: number = 0;
+/** 复检间隔。 */
+const VERIFY_INTERVAL_MS: number = 5 * 60 * 1000;
+
 @Entry
 @Component
 struct Index {
@@ -50,6 +61,10 @@ struct Index {
     // 于是横竖屏切换重建 Index 时会闪一段「正在恢复登录状态…」——那也是「APP 重载了」
     // 的一部分。改成先亮界面、后台自检：401 才回登录页，其余情况不打扰用户。
     this.loggedIn = true;
+    // 5 分钟内成功自检过就不再重复（转屏会重建本组件）
+    if (Date.now() - lastVerifiedAt < VERIFY_INTERVAL_MS) {
+      return;
+    }
     const seq: number = ++this.verifySeq;
     void this.verifyInBackground(seq);
   }
@@ -62,6 +77,8 @@ struct Index {
         return; // 已被更新的状态取代（例如用户刚刚登录成功）
       }
       ApiService.persistUser(status.user);
+      // 只有成功才记时间：失败不记，下次重建还会重试
+      lastVerifiedAt = Date.now();
     } catch (error) {
       if (seq !== this.verifySeq) {
         return;
@@ -70,6 +87,8 @@ struct Index {
       if (apiError instanceof ApiError && apiError.status === 401) {
         TokenStore.clear();
         TokenStore.clearAllLocalSessions();
+        // 已确认失效：清掉时间戳，下次进主页（重新登录后）立刻再校验一次
+        lastVerifiedAt = 0;
         Logger.warn('会话已失效，需要重新登录');
         this.loggedIn = false;
       } else {
@@ -85,6 +104,8 @@ struct Index {
         MainPage({
           onLogout: () => {
             this.verifySeq++;
+            // 换账号后要重新校验：清掉时间戳
+            lastVerifiedAt = 0;
             this.loggedIn = false;
           }
         })
@@ -93,6 +114,8 @@ struct Index {
           onLoginSuccess: (user: UserData) => {
             // 登录成功：作废可能还在飞的自检（它带的是旧会话的结论）
             this.verifySeq++;
+            // 刚登录成功本身就是最强的会话证明，不必立刻再自检一次
+            lastVerifiedAt = Date.now();
             this.loggedIn = true;
           }
         })

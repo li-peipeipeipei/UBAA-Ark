@@ -27,6 +27,15 @@ interface MemoEntry {
 }
 
 export class MemoCache {
+  /**
+   * 条目上限。超过就顺手清掉已过期的。
+   *
+   * 正常的 key 数量是有界的（学期数 × 周数 + 若干当日 key），但「周课表」一类条目
+   * 单个就有几十 KB —— 用户滑遍整个学期、再翻几个学期，内存会明显涨。
+   * 这里不追求精确 LRU，只在超过上限时回收过期项，足够。
+   */
+  private static readonly MAX_ENTRIES: number = 32;
+
   private static entries: Map<string, MemoEntry> = new Map<string, MemoEntry>();
   private static inflight: Map<string, Promise<Object>> = new Map<string, Promise<Object>>();
 
@@ -52,6 +61,7 @@ export class MemoCache {
     try {
       const value: Object = await task;
       MemoCache.entries.set(key, { value: value, expireAt: Date.now() + ttlMs } as MemoEntry);
+      MemoCache.prune();
       return value as T;
     } finally {
       // 失败也要摘掉，否则一次网络错误会让这个 key 永远「在途」。
@@ -66,6 +76,32 @@ export class MemoCache {
   /** 预热：直接写入一份结果（预取器用它把数据塞进缓存）。 */
   static put(key: string, value: Object, ttlMs: number): void {
     MemoCache.entries.set(key, { value: value, expireAt: Date.now() + ttlMs } as MemoEntry);
+    MemoCache.prune();
+  }
+
+  /** 超过上限时回收：先清过期项，还不够就按插入顺序丢最旧的（Map 保证插入顺序）。 */
+  private static prune(): void {
+    if (MemoCache.entries.size <= MemoCache.MAX_ENTRIES) {
+      return;
+    }
+    const now: number = Date.now();
+    const keys: string[] = [];
+    MemoCache.entries.forEach((entry: MemoEntry, key: string) => {
+      keys.push(key);
+    });
+    // 第一轮：过期项
+    for (let i = 0; i < keys.length; i++) {
+      const entry: MemoEntry | undefined = MemoCache.entries.get(keys[i]);
+      if (entry !== undefined && entry.expireAt <= now) {
+        MemoCache.entries.delete(keys[i]);
+      }
+    }
+    // 第二轮：仍超上限就丢最旧的
+    let index: number = 0;
+    while (MemoCache.entries.size > MemoCache.MAX_ENTRIES && index < keys.length) {
+      MemoCache.entries.delete(keys[index]);
+      index++;
+    }
   }
 
   /** 是否有仍然新鲜的缓存（不触发加载）。 */
