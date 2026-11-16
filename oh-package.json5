@@ -2,9 +2,9 @@
   "modelVersion": "6.1.0",
   "name": "ubaa-harmony",
   "version": "0.1.0",
-  "description": "UBAA 鸿蒙原生客户端（HarmonyOS 6.1.0 / API 23+）",
+  "description": "UBAA 鸿蒙原生客户端（HarmonyOS 6.1.0 / API 23+），基于开源项目 UBAA 开发",
   "main": "",
-  "author": "BUAASubnet",
+  "author": "li-peipeipeipei",
   "license": "MIT",
   "dependencies": {},
   "devDependencies": {

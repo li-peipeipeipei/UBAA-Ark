@@ -58,6 +58,15 @@ export class HeroMorph {
   private static phase: MorphPhase = MorphPhase.IDLE;
   private static color: string = '#1976D2';
   private static card: MorphRect = { x: 0, y: 0, w: 0, h: 0, radius: 0 };
+  /**
+   * 卡片矩形的**最新实测值**（FeaturePage 在每次 `onAreaChange` 里刷新，只记当前这张卡）。
+   *
+   * `card` 是点开那一刻的快照，而功能页在展开期间可能因为内容加载让网格整体位移几 vp ——
+   * 收起时沿用旧坐标，遮罩就会停在偏一点的位置（真机实测：最后一帧整体下移 19px，
+   * 尺寸还完全正确，说明是坐标过期而不是动画没到位）。
+   * 收起终点优先用它；展开起点仍用 `card` 快照（否则新一轮起点会被上一轮的实测污染）。
+   */
+  private static liveCard: MorphRect | null = null;
   /** 卡片在网格里的序号（退场后回弹用）。 */
   private static cardIndex: number = -1;
   /** 卡片上的文字与图标 —— 遮罩要带着它们一起放大，才有「这张卡本身展开」的观感。 */
@@ -71,12 +80,26 @@ export class HeroMorph {
     title: string, icon: Resource, alpha: number): void {
     HeroMorph.color = color;
     HeroMorph.card = card;
+    // 新一轮开始：丢掉上一轮的实测值，否则展开起点会用到「上一张卡」的旧位置
+    HeroMorph.liveCard = null;
     HeroMorph.cardIndex = index;
     HeroMorph.title = title;
     HeroMorph.icon = icon;
     HeroMorph.alpha = alpha;
     HeroMorph.phase = MorphPhase.EXPAND;
     HeroMorph.bump();
+  }
+
+  /**
+   * 记录卡片的最新实测矩形（只接受当前这张卡的上报）。
+   *
+   * 序号不匹配就丢弃：别的卡片在滚动/布局变化时也会 onAreaChange，
+   * 用它会把终点带到另一张卡上。
+   */
+  static noteLiveCard(index: number, rect: MorphRect): void {
+    if (index === HeroMorph.cardIndex) {
+      HeroMorph.liveCard = rect;
+    }
   }
 
   /** 退场：用上次记下的卡片矩形反向缩回。 */
@@ -102,8 +125,18 @@ export class HeroMorph {
     return HeroMorph.color;
   }
 
+  /** 点开那一刻的卡片矩形（展开起点的权威值）。 */
   static getCard(): MorphRect {
     return HeroMorph.card;
+  }
+
+  /**
+   * 收起落点的卡片矩形：有实测值就用实测，否则退回点开时的快照。
+   *
+   * 只在 SHRINK 用 —— 展开起点必须用 `getCard()`，否则上一轮的实测会污染新一轮。
+   */
+  static getLandingCard(): MorphRect {
+    return HeroMorph.liveCard !== null ? HeroMorph.liveCard : HeroMorph.card;
   }
 
   static getCardIndex(): number {

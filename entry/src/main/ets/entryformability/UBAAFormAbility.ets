@@ -8,35 +8,6 @@ const DOMAIN_NUMBER: number = 0x0100;
 const TAG: string = 'UBAAForm';
 
 /**
- * 推给卡片的扁平数据。
- *
- * ⚠️ 官方明确：卡片侧 `@LocalStorageProp` 收到的值**会被转换成 string**，
- * 所以这里只放 string，复杂结构（课表数组）由主应用 `JSON.stringify` 后传过来，
- * 卡片侧再 `JSON.parse`。这样最稳，避开任何序列化差异。
- *
- * 另注：ArkTS 不允许把对象字面量直接赋给 `Record<K, V>`，
- * 所以要先声明 interface 再写字面量。
- */
-interface CardPayload {
-  /** 今天概览 + 课程数组的 JSON 串；没有缓存时为空串。 */
-  scheduleJson: string;
-  /** 形如 `第6周 · 10月15日 周三`。 */
-  weekLabel: string;
-  /** 数据更新时间，形如 `10月15日 07:30`。 */
-  updatedAt: string;
-  /** 最近一场考试的 JSON 串（考试卡用）。 */
-  examJson: string;
-  /** 本学期成绩概览的 JSON 串（成绩卡用）。 */
-  gradeJson: string;
-  /** 空闲教室的 JSON 串（教室卡用）。 */
-  classroomJson: string;
-  /** 周课表（一整周七天）的 JSON 串（周课表卡用）。 */
-  weekViewJson: string;
-  /** 日课表（某一天全天）的 JSON 串（日课表卡用）。 */
-  dayViewJson: string;
-}
-
-/**
  * 桌面服务卡片的提供方（FormExtensionAbility）。
  *
  * ## 职责边界（很重要）
@@ -65,14 +36,14 @@ export default class UBAAFormAbility extends FormExtensionAbility {
     const params = want.parameters;
     if (params === undefined) {
       hilog.warn(DOMAIN_NUMBER, TAG, 'onAddForm: want.parameters 为空');
-      return formBindingData.createFormBindingData(this.buildPayload());
+      return this.payload();
     }
     const formId = params[formInfo.FormParam.IDENTITY_KEY] as string;
     const name = params[formInfo.FormParam.NAME_KEY] as string;
     hilog.info(DOMAIN_NUMBER, TAG, 'onAddForm: name=%{public}s formId=%{public}s', name, formId);
     // 记下这张卡片，主应用之后才知道该往哪些 formId 推数据
     CardCache.addFormId(this.context, formId);
-    return formBindingData.createFormBindingData(this.buildPayload());
+    return this.payload();
   }
 
   /**
@@ -102,30 +73,19 @@ export default class UBAAFormAbility extends FormExtensionAbility {
     return formInfo.FormState.READY;
   }
 
-  /** 组一份扁平数据（**只放 string**）。 */
-  private buildPayload(): CardPayload {
-    const today = CardCache.loadToday(this.context);
-    const exam = CardCache.loadExam(this.context);
-    const grade = CardCache.loadGrade(this.context);
-    const room = CardCache.loadClassroom(this.context);
-    const weekView = CardCache.loadWeekView(this.context);
-    const dayView = CardCache.loadDayView(this.context);
-    const payload: CardPayload = {
-      scheduleJson: today === null ? '' : JSON.stringify(today),
-      weekLabel: CardCache.weekLabel(this.context),
-      updatedAt: CardCache.updatedAt(this.context),
-      examJson: exam === null ? '' : JSON.stringify(exam),
-      gradeJson: grade === null ? '' : JSON.stringify(grade),
-      classroomJson: room === null ? '' : JSON.stringify(room),
-      weekViewJson: weekView === null ? '' : JSON.stringify(weekView),
-      dayViewJson: dayView === null ? '' : JSON.stringify(dayView)
-    };
-    return payload;
+  /**
+   * 组一份扁平数据（**只放 string**）。
+   *
+   * 实际实现在 `CardCache` —— 主应用推送时用的是同一份。
+   * 早先这里和主应用各拼一遍，字段一旦增删就会悄悄漂移，故收敛到单一实现。
+   */
+  private payload(): formBindingData.FormBindingData {
+    return formBindingData.createFormBindingData(CardCache.buildPayload(this.context));
   }
 
   /** 把缓存推给指定卡片。 */
   private push(formId: string): void {
-    const data = formBindingData.createFormBindingData(this.buildPayload());
+    const data = this.payload();
     formProvider.updateForm(formId, data).catch((error: BusinessError) => {
       hilog.error(DOMAIN_NUMBER, TAG, 'updateForm 失败：code=%{public}d', error.code);
     });

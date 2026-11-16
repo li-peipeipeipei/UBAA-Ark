@@ -84,8 +84,90 @@ interface WeekViewData {
 const DAYS: number = 7;
 /** 网格行数上限。 */
 const MAX_ROWS: number = 14;
-/** 左列（节次号 + 时间）占卡宽比例 —— 官方实测 14.5%。 */
-const SIDE_COL_RATIO: string = '15%';
+/**
+ * 左列（节次号）占卡宽比例。
+ *
+ * 官方实测 14.5%，这里取 **4%**（用户用可视化调节器拖定）：
+ * 节次列压到极窄，把宽度尽量让给七天列。
+ * 4% 在 4×4 卡上约 12vp，两位数节次（10~13）刚好占满 —— 所以配合下面的
+ * `SECTION_LABEL_OFFSET` 把数字整体左移，避免和课程块视觉上挤在一起。
+ *
+ * ⚠️ 表头占位与网格左列共用这个常量，改一处两边自动对齐。
+ */
+const SIDE_COL_RATIO: string = '4%';
+
+/**
+ * 节次号水平偏移（vp，负数左移）。
+ *
+ * 列宽压到 4% 后数字正好填满整列，贴着课程块显得挤；
+ * 左移一点让它「浮在节次列左外侧」，视觉上更透气。数值由调节器拖定。
+ */
+const SECTION_LABEL_OFFSET: number = -6;
+
+/* ==================== 视觉参数（用调节器拖定） ==================== */
+const FONT_COURSE_NAME: number = 9;
+const FONT_COURSE_PLACE: number = 8;
+const FONT_SECTION: number = 11;
+const FONT_WEEKDAY: number = 11;
+const FONT_DATE: number = 9;
+const FONT_TERM: number = 17;
+const FONT_WEEK_LABEL: number = 15;
+
+const BLOCK_RADIUS: number = 7.5;
+const BLOCK_PAD_X: number = 3;
+const BLOCK_PAD_Y: number = 3.5;
+const BLOCK_MARGIN_X: number = 1.5;
+const BLOCK_MARGIN_Y: number = 2;
+
+const CARD_PADDING: number = 11;
+
+/**
+ * 深色模式下的课程块色板 —— **莫奈色调**：低饱和、偏灰的暗色。
+ *
+ * 上游给的块色是浅黄/浅粉这类高明度色，铺在深色卡片上会把整张卡点亮，
+ * 眼睛很累。这里换成一组暗调，配米白文字，深色下耐看很多。
+ * 同一门课按名字哈希固定取一色，不会每次渲染变色。
+ */
+const MONET_DARK_W: string[] = [
+  '#602030',  // 酒红
+  '#284848',  // 墨绿青
+  '#583830',  // 暗棕
+  '#304058',  // 靛蓝
+  '#304830',  // 橄榄绿
+  '#504828',  // 土黄
+  '#383840',  // 灰紫
+  '#582030'   // 暗玫
+];
+/** 深色色块上的文字色（暖白，不用纯白以免发灰）。 */
+const MONET_TEXT_W: string = '#EDE8E0';
+
+const LIGHT_PALETTE_W: string[] = [
+  '#FCF0F0',  // 淡粉（理论力学）
+  '#F0F8F8',  // 淡青（基础物理）
+  '#FCF4F0',  // 淡桃（常微分/毛概）
+  '#F4F4F8',  // 淡蓝紫（概率统计）
+  '#F8F4F0',  // 淡米
+  '#FCF0F4',  // 淡玫
+  '#F4F8F0',  // 淡黄绿（体育）
+  '#F4F4F4'   // 淡灰
+];
+/**
+ * 浅色块上的文字色（与 LIGHT_PALETTE_W 同索引配对）。
+ * ⚠️ 卡片不能 import 项目文件，两张卡各存一份；**改配色时三处要同步**。
+ */
+const LIGHT_TEXT_W: string[] = [
+  '#BA5A4E', '#247E72', '#A8663C', '#486CA8',
+  '#A2963C', '#BA7284', '#4E7848', '#5A5A5A'
+];
+
+/**
+ * 浅色模式的块色：直接从产品参考图取色 —— 它是「深色以约 5% 叠在白底」的效果，
+ * 所以看起来像半透明，实际是实色，**底下的网格线不会透出来**。
+ */
+
+
+/** 节次号的绘制宽度（vp）：比 4% 列宽略大，保证「10~13」两位数字完整显示。 */
+const SECTION_LABEL_WIDTH: number = 15;
 
 /* ------------------------- 以下设计参数全部等比取自 App 内课表页 -------------------------
  * App 侧（`SchedulePage.ets`）：`SCHEDULE_COLUMN_WIDTH = 24`（左列宽 vp）、
@@ -108,12 +190,24 @@ let weekCardStorage: LocalStorage = new LocalStorage();
 @Entry(weekCardStorage)
 @Component
 struct ScheduleWeekCard {
-  @LocalStorageProp(KEY_WEEK_VIEW) weekViewJson: string = '';
+  @LocalStorageProp(KEY_WEEK_VIEW) @Watch('onPayloadChanged') weekViewJson: string = '';
   @LocalStorageProp(KEY_UPDATED_W) updatedAt: string = '';
+  /** 主应用推来：`'1'` = 深色模式，课程块换莫奈暗色板 + 浅色文字。 */
+  /**
+   * ⚠️ 必须挂 `@Watch`：卡片的 `@LocalStorageProp` 单独变化**不会触发重绘**，
+   * 只有字段变了 + 有 Watch 才会重新走 parse → build。少了它，切深浅色后
+   * 块色和背景都还停在上一种主题。
+   */
+  @LocalStorageProp('darkMode') @Watch('onPayloadChanged') darkMode: string = '0';
 
   @State private view: WeekViewData | null = null;
 
   aboutToAppear(): void {
+    this.parse();
+  }
+
+  /** `@Watch` 回调：卡片数据在组件创建之后才注入，变化时必须重新解析一次。 */
+  onPayloadChanged(): void {
     this.parse();
   }
 
@@ -221,8 +315,66 @@ struct ScheduleWeekCard {
 
   /** 这门课的底色（上游给空/ 格式异常时退回深棕）。 */
   private blockColor(slot: WeekViewSlot): string {
-    return slot.color.length >= 7 ? slot.color : '#583830';
+    const idx: number = this.monetIndex(slot.courseName);
+    if (this.darkMode === '1') {
+      // 深色：把色板以 0.92 预混到卡片底色上 —— 等效「带一点透明度」，
+      // 但算出来是实色，网格横线不会从块里透出来（用户明确要求）。
+      return this.blendOn('#2F3034', MONET_DARK_W[idx], 0.92);
+    }
+    return LIGHT_PALETTE_W[idx];
   }
+
+  /** 把 color 以 alpha 预混到底色 bg 上，返回不透明实色。 */
+  private blendOn(bg: string, color: string, alpha: number): string {
+    const br: number = this.channelOf(bg, 0);
+    const bgc: number = this.channelOf(bg, 1);
+    const bb: number = this.channelOf(bg, 2);
+    const r: number = Math.round(br + (this.channelOf(color, 0) - br) * alpha);
+    const g: number = Math.round(bgc + (this.channelOf(color, 1) - bgc) * alpha);
+    const b: number = Math.round(bb + (this.channelOf(color, 2) - bb) * alpha);
+    return '#' + this.hex2(r) + this.hex2(g) + this.hex2(b);
+  }
+
+  private hex2(v: number): string {
+    const clamped: number = v < 0 ? 0 : (v > 255 ? 255 : v);
+    return clamped < 16 ? '0' + clamped.toString(16).toUpperCase() : clamped.toString(16).toUpperCase();
+  }
+
+  /** 课程名 → 稳定的色板下标（同名课永远同色，不同课尽量分散）。 */
+  private monetIndex(name: string): number {
+    let h: number = 7;
+    for (let i = 0; i < name.length; i++) {
+      h = (h * 31 + name.charCodeAt(i)) % 100003;
+    }
+    return h % MONET_DARK_W.length;
+  }
+  /**
+   * 卡片自己的主题色（**不用 `$r()` 资源**）。
+   *
+   * 资源解析跟随**卡片进程**的主题，而它跟系统走；主应用可能是深色、卡片却是浅色，
+   * 结果就是「深色块贴在白底上」。所以统一按 payload 的 darkMode 给纯色，保证卡片
+   * 和应用永远一致。
+   */
+  private bg(): string {
+    return this.darkMode === '1' ? '#2F3034' : '#FFFFFF';
+  }
+
+  private tPri(): string {
+    return this.darkMode === '1' ? '#E6E6E6' : '#1A1A1A';
+  }
+
+  private tSec(): string {
+    return this.darkMode === '1' ? '#8C8C8C' : '#6B6B6B';
+  }
+
+  private tTer(): string {
+    return this.darkMode === '1' ? '#6E6E6E' : '#9A9A9A';
+  }
+
+  private line(): string {
+    return this.darkMode === '1' ? '#3B3C40' : '#E6E6E6';
+  }
+
 
   /**
    * 课程块上的文字色 —— **按底色亮度自动选黑/白**。
@@ -231,6 +383,14 @@ struct ScheduleWeekCard {
    * 卡片里不能调任何系统 API，所以纯字符串解析 + WCAG 相对亮度公式。
    */
   private textColorOn(slot: WeekViewSlot): string {
+    if (this.darkMode === '1') {
+      return MONET_TEXT_W;
+    }
+    // 浅色：用与块底配对的高饱和色，不是黑字
+    return LIGHT_TEXT_W[this.monetIndex(slot.courseName)];
+  }
+
+  private textColorOnLegacy(slot: WeekViewSlot): string {
     const hex: string = this.blockColor(slot);
     const lum: number = (0.299 * this.channelOf(hex, 0) + 0.587 * this.channelOf(hex, 1) +
       0.114 * this.channelOf(hex, 2)) / 255;
@@ -239,6 +399,9 @@ struct ScheduleWeekCard {
 
   /** 次要文字（地点）色。 */
   private subTextColorOn(slot: WeekViewSlot): string {
+    if (this.darkMode === '1') {
+      return '#B3EDE8E0';
+    }
     return this.textColorOn(slot) === '#FFFFFF' ? '#CCFFFFFF' : '#661A1A1A';
   }
 
@@ -283,10 +446,10 @@ struct ScheduleWeekCard {
         .fontColor($r('app.color.card_accent'))
       Text('打开 App 获取本学期课表')
         .fontSize(12)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(this.tSec())
       Text(this.updatedAt.length > 0 ? '更新于 ' + this.updatedAt : '')
         .fontSize(9)
-        .fontColor($r('app.color.text_tertiary'))
+        .fontColor(this.tTer())
     }
     .width('100%')
     .height('100%')
@@ -306,46 +469,71 @@ struct ScheduleWeekCard {
    * 教室按自然高度完整占位，课程名拿剩下的空间，不够时自己收成省略号。
    * 反过来写（课程名固定行数、教室兜底）就会出现「教室名被截断」。
    */
+  /** 同时段多门课合并出来的块（文案形如 `2节课`）。 */
+  private isMergedSlot(slot: WeekViewSlot): boolean {
+    return slot.courseName.endsWith('节课');
+  }
+
   @Builder
   courseBlock(slot: WeekViewSlot) {
-    Column() {
-      // 课程名贴顶，占满可用宽度；撑高时显式贴顶（盒子被 layoutWeight 撑开默认会居中）
-      Text(slot.courseName)
-        .fontSize(8)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.textColorOn(slot))
-        .maxLines(9)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
-        .layoutWeight(1)
-        .align(Alignment.TopStart)
-      // 教室贴底：给足行数优先完整显示
-      if (slot.place.length > 0) {
-        Text(slot.place)
-          .fontSize(7)
-          .fontColor(this.subTextColorOn(slot))
-          .maxLines(3)
+    if (this.isMergedSlot(slot)) {
+      // 同时段多节课：只有这一行字，**上下左右都居中**（原来跟着课程名左对齐贴顶，很难看）
+      Column() {
+        Text(slot.courseName)
+          .fontSize(FONT_COURSE_NAME)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.textColorOn(slot))
+          .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
-          .align(Alignment.BottomStart)
+          .textAlign(TextAlign.Center)
       }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .margin({ left: BLOCK_MARGIN_X, right: BLOCK_MARGIN_X, top: BLOCK_MARGIN_Y, bottom: BLOCK_MARGIN_Y })
+      .borderRadius(BLOCK_RADIUS)
+      .backgroundColor(this.blockColor(slot))
+      .clip(true)
+    } else {
+      Column() {
+        // 课程名贴顶，占满可用宽度；撑高时显式贴顶（盒子被 layoutWeight 撑开默认会居中）
+        Text(slot.courseName)
+          .fontSize(FONT_COURSE_NAME)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.textColorOn(slot))
+          .maxLines(9)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .layoutWeight(1)
+          .align(Alignment.TopStart)
+        // 教室贴底：给足行数优先完整显示
+        if (slot.place.length > 0) {
+          Text(slot.place)
+            .fontSize(FONT_COURSE_PLACE)
+            .fontColor(this.subTextColorOn(slot))
+            .maxLines(3)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+            .align(Alignment.BottomStart)
+        }
+      }
+      .width('100%')
+      .height('100%')
+      // 左侧贴紧节次列的竖线：线是 border（画在盒子内部），块从 0.5 起刚好压在线内侧，
+      // 视觉上「周一课程块紧挨着序号列」。原先留 2vp，看起来与序号列脱开一截。
+      .margin({ left: BLOCK_MARGIN_X, right: BLOCK_MARGIN_X, top: BLOCK_MARGIN_Y, bottom: BLOCK_MARGIN_Y })
+      .padding({ left: BLOCK_PAD_X, right: BLOCK_PAD_X, top: BLOCK_PAD_Y, bottom: BLOCK_PAD_Y })
+      .alignItems(HorizontalAlign.Start)
+      // 不写 SpaceBetween —— 课程名靠 layoutWeight 撑满，教室自然被顶到最底部
+      .justifyContent(FlexAlign.Start)
+      .backgroundColor(this.blockColor(slot))
+      // ⚠️ **`borderRadius` 必须写在 `clip` 之前声明** —— 顺序反了 clip 会作用在
+      // 未圆角的矩形上（用户实机看到课程块左侧「圆角外还有文字」的乱象）。
+      .borderRadius(BLOCK_RADIUS)
+      .clip(true)
     }
-    .width('100%')
-    .height('100%')
-    // **块间距用 margin，且要大于竖线宽（0.5）** —— 这样块的左边缘正好停在
-    // 竖线内侧，整块完全落在「竖线 × 下一条竖线」围成的格子里，
-    // 既不压线，宽度又几乎顶满（用户要求「加宽 + 左侧更接近数字列」）。
-    // 用 margin 不用 padding：margin 落在 border 之外，不影响分隔线的绘制。
-    .margin({ left: 2, right: 1, top: 1.5, bottom: 1.5 })
-    .padding({ left: 2, right: 2, top: 1, bottom: 1 })
-    .alignItems(HorizontalAlign.Start)
-    // 不写 SpaceBetween —— 课程名靠 layoutWeight 撑满，教室自然被顶到最底部
-    .justifyContent(FlexAlign.Start)
-    .backgroundColor(this.blockColor(slot))
-    // ⚠️ **`borderRadius` 必须写在 `clip` 之前声明** —— 顺序反了 clip 会作用在
-    // 未圆角的矩形上（用户实机看到课程块左侧「圆角外还有文字」的乱象）。
-    .borderRadius(5)
-    .clip(true)
   }
 
   /**
@@ -378,7 +566,7 @@ struct ScheduleWeekCard {
           .layoutWeight(1)
           .border({
             width: { bottom: CARD_GRID_LINE_WIDTH },
-            color: $r('app.color.card_divider'),
+            color: this.line(),
             style: BorderStyle.Solid
           })
       }, (row: number) => 'line' + row.toString())
@@ -429,7 +617,7 @@ struct ScheduleWeekCard {
     // 这样块能紧贴竖线内侧，宽度也顶满 —— 独立竖条元素会把块推开 0.5vp
     .border({
       width: { left: CARD_GRID_LINE_WIDTH },
-      color: $r('app.color.card_divider'),
+      color: this.line(),
       style: BorderStyle.Solid
     })
     .alignItems(HorizontalAlign.Start)
@@ -443,7 +631,7 @@ struct ScheduleWeekCard {
         // 顶部：左学期名（品牌橙粗体）· 右「‹ 第 N 周 ›」周次控件
         Row() {
           Text(this.view?.termName ?? '')
-            .fontSize(16)
+            .fontSize(FONT_TERM)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.card_accent'))
             .layoutWeight(1)
@@ -453,9 +641,9 @@ struct ScheduleWeekCard {
           // 周次：**纯文本，不做互动控件**（用户明确要求 —— 卡片里的箭头
           // 只能靠 postCardAction 拉起 App，交互路径太长，体验反而差）
           Text(this.view?.weekLabel ?? '')
-            .fontSize(14)
+            .fontSize(FONT_WEEK_LABEL)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(this.tPri())
             .maxLines(1)
         }
         .width('100%')
@@ -470,15 +658,15 @@ struct ScheduleWeekCard {
             (day: number) => {
               Column({ space: 1 }) {
                 Text(this.weekdayText(day))
-                  .fontSize(11)
+                  .fontSize(FONT_WEEKDAY)
                   .fontWeight(FontWeight.Medium)
                   .fontColor(this.isToday(day) ?
-                    $r('app.color.card_accent') : $r('app.color.text_primary'))
+                    $r('app.color.card_accent') : this.tPri())
                   .maxLines(1)
                 Text(this.dateOf(day))
-                  .fontSize(9)
+                  .fontSize(FONT_DATE)
                   .fontColor(this.isToday(day) ?
-                    $r('app.color.card_accent') : $r('app.color.text_secondary'))
+                    $r('app.color.card_accent') : this.tSec())
                   .maxLines(1)
               }
               .layoutWeight(1)
@@ -499,18 +687,21 @@ struct ScheduleWeekCard {
 
           // ② 上层：左列节次号 + 七天课块（透明，只放内容）
           Row() {
-            // 左列：只显示节次号，**贴左**（App 里是 `width(SCHEDULE_COLUMN_WIDTH)` 居中，
-            // 这里左对齐是用户上一轮明确要求的）
+            // 左列：只显示节次号，**水平居中**（列窄到 6% 后左对齐会贴着左边显得歪，
+            // 居中与 App 内课表页一致）
             Column() {
               ForEach(this.rowList(), (row: number) => {
                 Text(row.toString())
-                  .fontSize(11)
+                  .fontSize(FONT_SECTION)
                   .fontWeight(FontWeight.Medium)
-                  .fontColor($r('app.color.text_secondary'))
+                  .fontColor(this.tSec())
                   .maxLines(1)
-                  .width('100%')
+                  // 列宽只有 4%，数字几乎填满整列；用固定宽度而不是 100%，
+                  // 免得被列宽裁掉一角，再靠 translate 摆到想要的位置
+                  .width(SECTION_LABEL_WIDTH)
                   .layoutWeight(1)
-                  .align(Alignment.Start)
+                  .textAlign(TextAlign.Center)
+                  .translate({ x: SECTION_LABEL_OFFSET })
               }, (row: number) => 'sec' + row.toString())
             }
             .width(SIDE_COL_RATIO)
@@ -518,7 +709,7 @@ struct ScheduleWeekCard {
             // 左列右边界竖线（同样用 border 画，不占布局宽度）
             .border({
               width: { right: CARD_GRID_LINE_WIDTH },
-              color: $r('app.color.card_divider'),
+              color: this.line(),
               style: BorderStyle.Solid
             })
 
@@ -542,9 +733,9 @@ struct ScheduleWeekCard {
     }
     .width('100%')
     .height('100%')
-    .padding(12)
+    .padding(CARD_PADDING)
     .alignItems(HorizontalAlign.Start)
-    .backgroundColor($r('app.color.card_surface'))
+    .backgroundColor(this.bg())
     .onClick(() => {
       this.openApp();
     })

@@ -28,12 +28,17 @@ let classroomCardStorage: LocalStorage = new LocalStorage();
 @Entry(classroomCardStorage)
 @Component
 struct ClassroomCard {
-  @LocalStorageProp(KEY_CLASSROOM) classroomJson: string = '';
+  @LocalStorageProp(KEY_CLASSROOM) @Watch('onPayloadChanged') classroomJson: string = '';
   @LocalStorageProp(KEY_ROOM_UPDATED) updatedAt: string = '';
 
   @State private room: ClassroomCardData | null = null;
 
   aboutToAppear(): void {
+    this.parse();
+  }
+
+  /** `@Watch` 回调：卡片数据在组件创建之后才注入，变化时必须重新解析一次。 */
+  onPayloadChanged(): void {
     this.parse();
   }
 

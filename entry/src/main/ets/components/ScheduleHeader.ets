@@ -1,6 +1,7 @@
 import { AppColor, AppFont, AppMaterial, AppSize } from './AppTheme';
 import { Week } from '../model/ApiTypes';
 import { DateUtil } from '../common/DateUtil';
+import { CardDataBuilder } from '../common/CardDataBuilder';
 
 /**
  * 课表页顶部「学期 / 周次」选择器的共享状态。
@@ -65,7 +66,21 @@ export struct ScheduleTermChip {
   @ObjectLink model: ScheduleHeaderModel;
 
   /** 当前选中的这一周是不是「本周」（教学周列表里带 curWeek 标记的那一周）。 */
+  /**
+   * 当前选中的这一周是不是「本周」。
+   *
+   * ⚠️ **不能只看 `weeks[].curWeek`**：那份列表常来自本地缓存，
+   * `curWeek` 标记停留在写缓存那一刻。隔一周再打开，本周是第 11 周、
+   * 而标记还指着第 10 周 —— 于是右上角一直显示「回本周」，
+   * 点一下反倒跳到上周去。
+   *
+   * 校历 `startDate`/`endDate` 是权威，先按今天实算；算不出来才退回标记。
+   */
   private isCurrentWeek(): boolean {
+    const real: number = CardDataBuilder.weekOfToday(this.model.weeks);
+    if (real > 0) {
+      return real === this.model.currentWeek;
+    }
     for (let i = 0; i < this.model.weeks.length; i++) {
       const item: Week = this.model.weeks[i];
       if (item.serialNumber === this.model.currentWeek) {

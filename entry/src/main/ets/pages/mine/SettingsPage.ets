@@ -192,11 +192,11 @@ export struct SettingsPage {
           .width('100%')
         }
 
-        SectionCard({ title: '演示模式', subtitle: '服务端不可用时，用本地示例数据把界面跑通' }) {
+        SectionCard({ title: '开发者调试', subtitle: '开发联调用：改用本地示例数据，不请求学校系统' }) {
           Column({ space: AppSize.gapSmall }) {
             Row() {
               Column({ space: 2 }) {
-                Text('启用演示数据')
+                Text('启用示例数据')
                   .fontSize(AppFont.body)
                   .fontColor(AppColor.textPrimary)
                 Text('开启后所有接口调用返回本地示例，不发起任何网络请求')
@@ -211,14 +211,14 @@ export struct SettingsPage {
                 .onChange((isOn: boolean) => {
                   this.demoMode = isOn;
                   TokenStore.setDemoMode(isOn);
-                  Toast.show(isOn ? '演示模式已开启' : '演示模式已关闭');
+                  Toast.show(isOn ? '示例数据已开启' : '示例数据已关闭');
                 })
             }
             .width('100%')
 
             if (this.demoMode) {
-              Text('提示：演示模式下任意学号 + 密码均可登录，用于界面验收；' +
-                '真实联调前请关闭本开关。')
+              Text('当前为示例数据模式：界面上的人名、课表、成绩等均为开发者内置的假数据，' +
+                '并非从学校系统获取。正式使用前请关闭本开关。')
                 .fontSize(AppFont.caption)
                 .fontColor(AppColor.warning)
                 .width('100%')

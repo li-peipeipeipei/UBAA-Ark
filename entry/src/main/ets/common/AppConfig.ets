@@ -60,7 +60,7 @@ export class AppConfig {
    * 留占位符或不可达地址会以「隐私政策不合规」驳回。替换时同步修改
    * `docs/legal/privacy-policy.md` 末尾的同一项。
    */
-  static readonly CONTACT_EMAIL: string = '请填写联系邮箱';
+  static readonly CONTACT_EMAIL: string = '2064465763@qq.com';
 
   /** 隐私政策 / 用户协议生效日期（与 docs/legal 下的文档保持一致）。 */
   static readonly POLICY_EFFECTIVE_DATE: string = '2026 年 11 月 11 日';

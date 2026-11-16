@@ -41,12 +41,17 @@ let examCardStorage: LocalStorage = new LocalStorage();
 @Entry(examCardStorage)
 @Component
 struct ExamCard {
-  @LocalStorageProp(KEY_EXAM) examJson: string = '';
+  @LocalStorageProp(KEY_EXAM) @Watch('onPayloadChanged') examJson: string = '';
   @LocalStorageProp(KEY_EXAM_UPDATED) updatedAt: string = '';
 
   @State private exam: ExamCardData | null = null;
 
   aboutToAppear(): void {
+    this.parse();
+  }
+
+  /** `@Watch` 回调：卡片数据在组件创建之后才注入，变化时必须重新解析一次。 */
+  onPayloadChanged(): void {
     this.parse();
   }
 

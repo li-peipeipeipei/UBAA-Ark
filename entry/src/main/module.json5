@@ -6,8 +6,7 @@
     "mainElement": "EntryAbility",
     "deviceTypes": [
       "phone",
-      "tablet",
-      "2in1"
+      "tablet"
     ],
     "deliveryWithInstall": true,
     "installationFree": false,
@@ -17,9 +16,15 @@
         "name": "EntryAbility",
         "srcEntry": "./ets/entryability/EntryAbility.ets",
         "description": "$string:EntryAbility_desc",
-        "icon": "$media:app_icon",
+        // 分层图标（AppScope/resources/base/media/layered_image.json）。
+        // 入口 UIAbility 的 icon 优先级高于 app.json5，故此处必须同样指向分层资源，
+        // 否则桌面图标回落到单层资源，上架自检仍判「图标未分层」。
+        "icon": "$media:layered_image",
         "label": "$string:EntryAbility_label",
-        "startWindowIcon": "$media:app_icon",
+        // 启动页图标：带圆角裁切的单层图（半径 185/1024，与原设计一致）。
+        // 启动窗口与冷启动转场不做遮罩裁切，用满幅直角图会在动画里露出直角蓝块，
+        // 故此处单独使用预裁圆角的 startIcon，与桌面分层图标的视觉圆角对齐。
+        "startWindowIcon": "$media:startIcon",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
         /*

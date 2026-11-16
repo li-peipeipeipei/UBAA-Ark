@@ -5,6 +5,7 @@ import {
   hdsMaterial
 } from '@kit.UIDesignKit';
 import { AppRouter, RouteName } from '../common/AppRouter';
+import { systemBarStyleFor, currentIsDark } from '../common/ImmersiveUtil';
 import { NativeHeroDest } from '../components/NativeHeroDest';
 import { AppColor } from '../components/AppTheme';
 import { FeatureHero } from '../common/FeatureHero';
@@ -103,6 +104,8 @@ struct GradeDestination {
       }
     }
     .titleBar(this.titleBarOptions())
+    // 同上：状态栏内容色显式托管给 HDS（否则下拉滚动时被默认白覆盖）
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     // 显式接管返回：分栏下 HDS 自己画的返回按钮不一定能弹栈（实测无效），
     // 由目的地主动 pop 才可靠；返回 true 表示事件已消费、不再冒泡到系统。
     .onBackPressed(() => {
@@ -231,6 +234,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('考试安排'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -247,6 +253,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('空闲教室'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -261,6 +270,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('iHome'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -275,6 +287,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('诉求详情'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -289,6 +304,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('希冀作业'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -303,6 +321,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('作业详情'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -317,6 +338,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('自动评教'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -331,6 +355,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('课堂签到'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -345,6 +372,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('SPOC 作业'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -359,6 +389,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('阳光打卡'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -373,6 +406,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('博雅课程'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -387,6 +423,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('选择课程'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -401,6 +440,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('我的课程'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -415,6 +457,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('课程统计'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -429,6 +474,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('课程详情'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -443,6 +491,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('图书馆座位'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -457,6 +508,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('预约座位'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -471,6 +525,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('我的座位预约'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -485,6 +542,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('个人资料'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -499,6 +559,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('设置'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -513,6 +576,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('关于'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -527,6 +593,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('隐私政策'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -541,6 +610,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('开源许可'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -558,6 +630,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar(''))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -580,6 +655,9 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('出错了'))
+    // HDS 不设 systemBarStyle 时按 SystemBarStyle 默认值 #E5FFFFFF（白）托管状态栏，
+    // 页面一下拉/滚动就会被刷回白。官方不建议与 window 接口混用 → 显式托管。
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -687,6 +765,8 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
       })
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -705,6 +785,8 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
       })
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -723,6 +805,8 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
       })
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -741,6 +825,8 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
       })
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -759,6 +845,8 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
       })
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -777,6 +865,8 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
       })
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -795,6 +885,8 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
       })
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -813,6 +905,8 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
       })
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -831,6 +925,8 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
       })
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -849,6 +945,8 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
       })
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -867,6 +965,8 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
       })
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -885,6 +985,8 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
       })
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -903,6 +1005,8 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
       })
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -921,6 +1025,8 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
       })
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -939,6 +1045,8 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
       })
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -957,6 +1065,8 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
       })
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -975,6 +1085,8 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
       })
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -993,6 +1105,8 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
       })
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -1013,6 +1127,8 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
       .backgroundColor(AppColor.pageBackground)
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
       return true;
@@ -1033,11 +1149,6 @@ struct GradeNativeDestination {
   @State private header: GradeHeaderModel = new GradeHeaderModel();
 
   @Builder
-  termTitle() {
-    GradeTermTitle({ model: this.header });
-  }
-
-  @Builder
   gradeBody() {
     GradePage({ header: this.header })
   }
@@ -1049,17 +1160,19 @@ struct GradeNativeDestination {
         hero: true,
         routeName: RouteName.GRADE,
         stack: this.stack,
-        trailing: (): void => { this.termTitle(); },
         content: (): void => { this.gradeBody(); },
         contentProvided: true,
-        // 整条标题栏由 GradeTermTitle 画（标题 + 学期 + 箭头），外壳不再重复画标题
-        titleVisible: false,
+        // 标题用外壳的标准标题栏（与考试安排等页同一位置：返回钮右侧、56vp 栏内）。
+        // 学期切换已经从标题栏移进「本学期」卡片，titleVisible 不再需要关掉。
+        titleVisible: true,
         onBack: () => {
           AppRouter.back(this.stack);
         }
       })
     }
     .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(this.stack);
       return true;

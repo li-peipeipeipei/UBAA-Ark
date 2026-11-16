@@ -1,6 +1,7 @@
 import { Logger } from '../common/Logger';
 import { ApiError } from './ApiError';
-import { UpstreamClient, UpstreamResponse } from './UpstreamClient';
+import { UpstreamClient, UpstreamResponse, resolveLocation } from './UpstreamClient';
+import { LocalWebVpn } from './LocalWebVpn';
 import { TokenStore } from './TokenStore';
 import {
   EvaluationCourse,
@@ -35,6 +36,31 @@ const PJXT_BASE: string = 'https://spoc.buaa.edu.cn/pjxt';
 
 /** 评教任务的默认分页大小（原版写死 10）。 */
 const TASK_PAGE_SIZE: number = 10;
+
+/** CAS 握手最多跟几跳（与登录流程同一量级，防死循环）。 */
+const MAX_CAS_HOPS: number = 8;
+
+/**
+ * 判断一个**逻辑地址**（已从 WebVPN 网关还原）是不是 pjxt 子系统自己的地址。
+ *
+ * 上游 `ensure_activation_terminal` 用的就是这套判据：
+ * host 必须是 `spoc.buaa.edu.cn`，且 path 等于 `/pjxt` 或以 `/pjxt/` 开头。
+ */
+function isPjxtUrl(logicalUrl: string): boolean {
+  const marker: string = '://spoc.buaa.edu.cn/pjxt';
+  const at: number = logicalUrl.indexOf(marker);
+  if (at < 0) {
+    return false;
+  }
+  const rest: string = logicalUrl.substring(at + marker.length);
+  // `/pjxt` 结尾，或 `/pjxt/xxx`（允许带查询串）
+  return rest.length === 0 || rest.startsWith('/') || rest.startsWith('?');
+}
+
+/** 是否落到了统一身份认证登录页（含 WebVPN 网关包装的情况）。 */
+function isSsoUrl(logicalUrl: string): boolean {
+  return logicalUrl.indexOf('sso.buaa.edu.cn') >= 0;
+}
 
 /** 上游通用信封：`code` 为 200 / 0 / "success" 时表示成功。 */
 interface EvalEnvelope<T> {
@@ -314,21 +340,72 @@ export class LocalEvaluationService {
 
   /* ---------------------------- 会话 ---------------------------- */
 
-  /** 打通 /pjxt 的 CAS 会话（一次性）。 */
+  /**
+   * 打通 `/pjxt` 的 CAS 会话（一次性）。
+   *
+   * ## 🔴 为什么必须「逐跳」而不是自动跟随（2026-11-17 修）
+   *
+   * 原实现：`UpstreamClient.get(PJXT_BASE + '/cas', true)` —— 让 RCP 自动跟随重定向。
+   * 这条链路是**跨域**的（spoc.buaa.edu.cn → sso.buaa.edu.cn → spoc），
+   * 而 `UpstreamClient.absorbCookies()` 是按**请求地址的 host** 存 cookie；
+   * 自动跟随时我们只拿得到「首发地址」，中间跳下发/需要的 Cookie 归属就错位了，
+   * 统一认证的会话拿不回来 —— 表现为**每次都判「登录状态已失效」**，
+   * 而同一账号下 SPOC 作业、希冀都正常（它们用的是逐跳）。
+   *
+   * 现在是：不跟随重定向，自己一跳一跳走，每跳都让 `UpstreamClient` 正常吸收 Cookie
+   * （与 `LocalSpocService.fetchLoginTokens` 同一套做法），并按上游
+   * `ensure_activation_terminal` 的判据校验**终点**：
+   * 还原成逻辑地址后，host 必须是 spoc.buaa.edu.cn 且 path 在 `/pjxt` 下。
+   *
+   * 这样判断不再依赖 HTML 里的 `name="execution"` 等易变文本 —— 之前那套 body 匹配
+   * 只要学校改版登录页就失效，是「一直失效」的第二重原因。
+   */
   private static async ensureActivated(): Promise<void> {
     if (LocalEvaluationService.activated) {
       return;
     }
-    const response = await UpstreamClient.get(PJXT_BASE + '/cas', true);
-    if (LocalEvaluationService.sessionExpired(response)) {
-      LocalEvaluationService.activated = false;
-      throw new ApiError(401, 'invalid_token', '评教服务会话未建立，请重新登录后再试');
-    }
-    if (!response.isOk()) {
+    let current: string = PJXT_BASE + '/cas';
+    for (let hop = 0; hop < MAX_CAS_HOPS; hop++) {
+      const response = await UpstreamClient.get(current, false);
+      // 3xx：继续跟下一跳，并在跳向统一认证时立刻判定为「确实没会话」
+      if (response.isRedirect()) {
+        const next: string = resolveLocation(response.url, response.location);
+        const nextLogical: string = await LocalWebVpn.fromWebVpnUrl(next);
+        if (isSsoUrl(nextLogical)) {
+          LocalEvaluationService.activated = false;
+          throw new ApiError(401, 'invalid_token',
+            '统一身份认证会话已失效，请重新登录后再试');
+        }
+        current = next;
+        continue;
+      }
+      if (response.status === 401) {
+        LocalEvaluationService.activated = false;
+        throw new ApiError(401, 'invalid_token', '评教服务会话未建立，请重新登录后再试');
+      }
+      if (response.isOk()) {
+        // 终点校验：必须落回 pjxt 自己（先还原 WebVPN 网关地址）
+        const finalLogical: string = await LocalWebVpn.fromWebVpnUrl(response.url);
+        if (isPjxtUrl(finalLogical)) {
+          LocalEvaluationService.activated = true;
+          Logger.info('评教会话就绪（' + hop + ' 跳，终点 ' + finalLogical + '）');
+          return;
+        }
+        if (isSsoUrl(finalLogical)) {
+          LocalEvaluationService.activated = false;
+          throw new ApiError(401, 'invalid_token',
+            '统一身份认证会话已失效，请重新登录后再试');
+        }
+        // 200 但落在别处：多半是学校改版把登录页返成了 200
+        LocalEvaluationService.activated = false;
+        throw new ApiError(401, 'invalid_token',
+          '评教服务会话未建立（终点异常：' + finalLogical + '），请重新登录后再试');
+      }
       throw new ApiError(response.status, 'evaluation_error',
         '评教服务暂时不可用（HTTP ' + response.status + '），请稍后重试');
     }
-    LocalEvaluationService.activated = true;
+    LocalEvaluationService.activated = false;
+    throw new ApiError(401, 'invalid_token', '评教服务会话建立失败（跳转过多），请重新登录后再试');
   }
 
   /* ---------------------------- 取数 ---------------------------- */

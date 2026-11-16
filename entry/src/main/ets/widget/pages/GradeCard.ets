@@ -28,12 +28,17 @@ let gradeCardStorage: LocalStorage = new LocalStorage();
 @Entry(gradeCardStorage)
 @Component
 struct GradeCard {
-  @LocalStorageProp(KEY_GRADE) gradeJson: string = '';
+  @LocalStorageProp(KEY_GRADE) @Watch('onPayloadChanged') gradeJson: string = '';
   @LocalStorageProp(KEY_GRADE_UPDATED) updatedAt: string = '';
 
   @State private grade: GradeCardData | null = null;
 
   aboutToAppear(): void {
+    this.parse();
+  }
+
+  /** `@Watch` 回调：卡片数据在组件创建之后才注入，变化时必须重新解析一次。 */
+  onPayloadChanged(): void {
     this.parse();
   }
 

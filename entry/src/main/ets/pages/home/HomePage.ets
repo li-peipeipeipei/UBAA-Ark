@@ -4,9 +4,11 @@ import { Logger } from '../../common/Logger';
 import { Toast } from '../../common/Toast';
 import { ApiError } from '../../network/ApiError';
 import { ApiService } from '../../network/ApiService';
+import { CardDataBuilder } from '../../common/CardDataBuilder';
 import { TokenStore } from '../../network/TokenStore';
 import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
+import { KEY_IS_DARK, surfaceArgbHex, transparentOf } from '../../common/ImmersiveUtil';
 import {
   EmptyView,
   ErrorView,
@@ -68,25 +70,141 @@ function sortTodayClasses(list: TodayClass[]): TodayClass[] {
   return sorted;
 }
 
-/**
- * 在课表里按课程名找课。
- *
- * 先精确匹配；不一致时退化为「包含」匹配 —— 今日课程接口有时用简称，
- * 与课表里的全称不完全一致。
- */
-function findCourseByName(list: CourseClass[], name: string): CourseClass | null {
-  for (let i = 0; i < list.length; i++) {
-    if (list[i].courseName === name) {
-      return list[i];
-    }
+/** 课表项的时间串，格式与「今日课程」接口的 `time` 一致：`HH:mm-HH:mm`。 */
+function courseTimeOf(course: CourseClass): string {
+  const begin: string = course.beginTime === undefined ? '' : course.beginTime;
+  const end: string = course.endTime === undefined ? '' : course.endTime;
+  if (begin.length > 0 && end.length > 0) {
+    return begin + '-' + end;
   }
+  return begin.length > 0 ? begin : end;
+}
+
+/**
+ * 按「课程名 + 当天 + 时间」在课表里找课，必要时合并同日多节记录。
+ *
+ * ## 三级匹配 + 一次合并（2026-11-17）
+ *
+ * 上游对「连上两节」的课有两种写法，同一门课可能同时出现：
+ *   - 合并写法：`0102`、`08:00-09:35` 一条记录
+ *   - 拆分写法：`0101`、`08:00-08:45` + `0202`、`08:50-09:35` 两条记录
+ * 「今日课程」接口会把这些合并成一行（`08:00-09:35`），于是按时间精确匹配
+ * 在拆分写法下必然落空，只能退化到「只按名字」—— 那样很容易命中**别的星期**的同名课
+ * （例如周一也有 08:00-09:35 的常微分方程），弹出来的时间/节次跟卡片上写的对不上。
+ *
+ * 所以这里显式按 `dayOfWeek === 今天` 收窄，并且：
+ *   1. 先找「同一天 + 名字 + 时间全等」的那条；
+ *   2. 找不到就把**同一天同名**的若干条合成一条（起止节次取并集、起止时间取最早最晚），
+ *      合成结果的 spans 与卡片一致时直接用；
+ *   3. 都不行才退回「同一天 + 名字」，最后才允许跨天。
+ *
+ * 返回 `null` 表示课表里确实没有（今日课程接口有但本周课表没有的临时课程）。
+ */
+function findCourseByNameAndTime(list: CourseClass[], name: string, time: string,
+  weekday: number): CourseClass | null {
+  const hasTime: boolean = time.length > 0;
+  const sameDay: CourseClass[] = [];
+  const sameName: CourseClass[] = [];
   for (let i = 0; i < list.length; i++) {
     const candidate: string = list[i].courseName;
-    if (candidate.length > 0 && (candidate.indexOf(name) >= 0 || name.indexOf(candidate) >= 0)) {
-      return list[i];
+    if (candidate.length === 0) {
+      continue;
+    }
+    const nameHit: boolean = candidate === name || candidate.indexOf(name) >= 0 || name.indexOf(candidate) >= 0;
+    if (!nameHit) {
+      continue;
+    }
+    sameName.push(list[i]);
+    if (list[i].dayOfWeek !== undefined && list[i].dayOfWeek === weekday) {
+      sameDay.push(list[i]);
     }
   }
-  return null;
+
+  // ① 同一天 + 时间全等
+  if (hasTime) {
+    for (let i = 0; i < sameDay.length; i++) {
+      if (courseTimeOf(sameDay[i]) === time) {
+        return sameDay[i];
+      }
+    }
+  }
+  // ② 同一天多条记录 → 合成一条（与「今日课程」的合并口径对齐）
+  if (hasTime && sameDay.length > 1) {
+    const merged: CourseClass | null = mergeSameDay(sameDay, name, time, weekday);
+    if (merged !== null) {
+      return merged;
+    }
+  }
+  // ③ 同一天 + 名字（时间对不上，但至少是同一天的课）
+  if (sameDay.length > 0) {
+    return sameDay[0];
+  }
+  // ④ 跨天兜底
+  if (hasTime) {
+    for (let i = 0; i < sameName.length; i++) {
+      if (courseTimeOf(sameName[i]) === time) {
+        return sameName[i];
+      }
+    }
+  }
+  return sameName.length > 0 ? sameName[0] : null;
+}
+
+/** 把同一天同一门课的若干条记录合成一条；并集与 `time` 不吻合时返回 null。 */
+function mergeSameDay(items: CourseClass[], name: string, time: string,
+  weekday: number): CourseClass | null {
+  let beginSection: number = Number.MAX_SAFE_INTEGER;
+  let endSection: number = 0;
+  let beginTime: string = '';
+  let endTime: string = '';
+  let anchor: CourseClass = items[0];
+  let teacherSrc: CourseClass = items[0];
+  for (let i = 0; i < items.length; i++) {
+    const it: CourseClass = items[i];
+    const bs: number = it.beginSection !== undefined && it.beginSection > 0 ? it.beginSection : 0;
+    const es: number = it.endSection !== undefined && it.endSection > 0 ? it.endSection : bs;
+    if (bs > 0 && bs < beginSection) {
+      beginSection = bs;
+      anchor = it;
+      if (it.beginTime !== undefined && it.beginTime.length > 0) {
+        beginTime = it.beginTime;
+      }
+    }
+    if (es > endSection) {
+      endSection = es;
+      if (it.endTime !== undefined && it.endTime.length > 0) {
+        endTime = it.endTime;
+      }
+    }
+    if (it.weeksAndTeachers !== undefined && it.weeksAndTeachers.length > 0) {
+      teacherSrc = it;
+    }
+  }
+  if (beginSection === Number.MAX_SAFE_INTEGER || endSection === 0) {
+    return null;
+  }
+  const mergedTime: string = beginTime.length > 0 && endTime.length > 0 ? beginTime + '-' + endTime : '';
+  // 并集必须正好等于卡片上写的那一段，否则合并反而制造错误信息
+  if (time.length > 0 && mergedTime !== time) {
+    return null;
+  }
+  const merged: CourseClass = {
+    courseCode: anchor.courseCode,
+    courseName: name,
+    courseSerialNo: anchor.courseSerialNo,
+    credit: anchor.credit,
+    beginTime: beginTime,
+    endTime: endTime,
+    beginSection: beginSection,
+    endSection: endSection,
+    placeName: anchor.placeName,
+    weeksAndTeachers: teacherSrc.weeksAndTeachers,
+    teachingTarget: anchor.teachingTarget,
+    color: anchor.color,
+    dayOfWeek: weekday,
+    titleDetail: anchor.titleDetail
+  };
+  return merged;
 }
 
 /**
@@ -100,6 +218,14 @@ export struct HomePage {
   stack: NavPathStack = new NavPathStack();
   /** 当前宽度断点：决定磁贴列数与是否双列并排。 */
   @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
+  /**
+   * 是否深色模式。
+   *
+   * 必须是 `@StorageProp` 而不是在 builder 里裸读 `AppStorage` ——
+   * 教室文字的尾部渐隐条颜色要跟着主题换（深色 `#1A1A1A` / 浅色 `#FFFFFF`），
+   * 没有订阅关系时切主题不会重绘，渐变会停在旧配色上。
+   */
+  @StorageProp(KEY_IS_DARK) private isDark: boolean = false;
   @State private loadState: LoadState = LoadState.LOADING;
   @State private errorMessage: string = '';
   @State private todayClasses: TodayClass[] = [];
@@ -121,6 +247,22 @@ export struct HomePage {
    */
   private preloadedCourses: CourseClass[] = [];
   private preloadDone: boolean = false;
+  /**
+   * 在途的预加载任务。
+   *
+   * 点击课程时如果预加载还没完成（首页是 fire-and-forget 拉取的，用户可能很快就点），
+   * 这里 `await` 同一个任务而不是直接用空数组 —— 否则会退化成只有「时间 / 地点」两行，
+   * 与课表页点开的完整详情对不上。并发点击共用一次请求，不重复打接口。
+   */
+  private preloadTask: Promise<void> | null = null;
+  /**
+   * 已解析的当前学期编码（本页内缓存）。
+   *
+   * `loadHome` 与 `preloadCourses` 都要用学期编码，缓存一次省掉重复拉学期列表。
+   * **只在本页生命周期内有效** —— 换学期要重启应用或重新进首页，可接受；
+   * 不写进 TokenStore 当「真相」，那个位置只用于跨启动兜底。
+   */
+  private termCodeCache: string = '';
 
 
   aboutToAppear(): void {
@@ -132,12 +274,26 @@ export struct HomePage {
   /**
    * 预加载本周课表（与课表页取的是同一份数据）。
    *
-   * 失败不影响首页（只是点开课程时退化成「时间 / 地点」两行），所以这里只记日志。
+   * 幂等且可并发：已完成直接返回，在途则复用同一个 Promise。
+   * 失败不抛错（首页不该因为课表拉不到就报错），下次点击会重试。
    */
-  private async preloadCourses(): Promise<void> {
+  private preloadCourses(): Promise<void> {
     if (this.preloadDone) {
-      return;
+      return Promise.resolve();
     }
+    if (this.preloadTask !== null) {
+      return this.preloadTask;
+    }
+    const task: Promise<void> = this.loadCoursesOnce().then(() => {
+      this.preloadTask = null;
+    }).catch(() => {
+      this.preloadTask = null;
+    });
+    this.preloadTask = task;
+    return task;
+  }
+
+  private async loadCoursesOnce(): Promise<void> {
     try {
       const termCode: string = await this.resolveTermCode();
       if (termCode.length === 0) {
@@ -149,8 +305,17 @@ export struct HomePage {
       this.preloadDone = true;
       Logger.info('首页预加载本周课表：' + this.preloadedCourses.length + ' 门（第 ' + week + ' 周）');
     } catch (error) {
+      // 不置 preloadDone，下次点击会重试
       Logger.warn('首页预加载课表失败：' + (error as Error).message);
     }
+  }
+
+  /** 确保课表已就绪再返回（供点击课程时调用，最多阻塞一次网络往返）。 */
+  private async ensureCourses(): Promise<CourseClass[]> {
+    if (!this.preloadDone) {
+      await this.preloadCourses();
+    }
+    return this.preloadedCourses;
   }
 
   /**
@@ -158,6 +323,10 @@ export struct HomePage {
    *
    * **必须用「当前教学周」而不是「用户记住的周次」优先**：课表页会把用户翻看的周次记下来
    * （比如翻到第 10 周），若按它取，今天的课自然找不到。
+   *
+   * ⚠️ 上游没标 `curWeek` 时，**按校历日期实算**，最后才退回「记住的周次」。
+   * 早先这里直接用 `TokenStore.getSelectedWeek()` 兜底，用户上次翻到第 5 周，
+   * 首页就会一直把「今天」当成第 5 周 —— 看到的今日课程全是错的。
    */
   private async resolveCurrentWeek(termCode: string): Promise<number> {
     const weeks: Week[] = await ApiService.fetchWeeks(termCode);
@@ -165,6 +334,10 @@ export struct HomePage {
       if (weeks[i].curWeek) {
         return weeks[i].serialNumber;
       }
+    }
+    const byCalendar: number = CardDataBuilder.weekOfToday(weeks);
+    if (byCalendar > 0) {
+      return byCalendar;
     }
     const remembered: number = TokenStore.getSelectedWeek();
     return remembered > 0 ? remembered : 1;
@@ -222,25 +395,58 @@ export struct HomePage {
     }
   }
 
-  /** 取当前学期编码：优先用已缓存的，没有就拉一次学期列表并记住。 */
+  /**
+   * 取当前学期编码。
+   *
+   * 🔴 **必须「上游 selected 优先、记忆兜底」**，与课表页 `SchedulePage` 的选学期规则一致。
+   *
+   * 原先写的是「TokenStore 里记过就直接返回」—— 一旦记的是**过期学期**就永远不纠正。
+   * 实测后果（2026-11-17）：记忆里是 `2025-2026-2`（上一学年），而实际在读 `2026秋季`，
+   * 于是首页预加载到上学期的课表（工科数学分析/理科高等代数/数据结构…），
+   * 点「今日课程」按名字匹配全部落空 → 详情退化成「时间 / 地点」两行，
+   * 与课表页点开的完整卡片对不上。这就是「两个入口弹出的详情不一致」的真正根因。
+   *
+   * 缓存一次结果，避免 loadHome / preloadCourses 各拉一遍学期列表。
+   */
   private async resolveTermCode(): Promise<string> {
+    if (this.termCodeCache.length > 0) {
+      return this.termCodeCache;
+    }
     const remembered = TokenStore.getSelectedTerm();
-    if (remembered[0].length > 0) {
+    try {
+      const terms: Term[] = await ApiService.fetchTerms();
+      if (terms.length === 0) {
+        return remembered[0];
+      }
+      let picked: Term | null = null;
+      // 1) 上游明确标了「当前学期」的最权威
+      for (let i = 0; i < terms.length; i++) {
+        if (terms[i].selected) {
+          picked = terms[i];
+          break;
+        }
+      }
+      // 2) 没有标记时，用记忆里的学期（但要能在列表里找到，防止已下架的老学期）
+      if (picked === null && remembered[0].length > 0) {
+        for (let i = 0; i < terms.length; i++) {
+          if (terms[i].itemCode === remembered[0]) {
+            picked = terms[i];
+            break;
+          }
+        }
+      }
+      // 3) 都没有就取第一个
+      if (picked === null) {
+        picked = terms[0];
+      }
+      this.termCodeCache = picked.itemCode;
+      TokenStore.setSelectedTerm(picked.itemCode, picked.itemName);
+      return picked.itemCode;
+    } catch (error) {
+      // 断网：退回记忆里的学期，首页至少还能显示（考试/课表可能对不上，但不会白屏）
+      Logger.warn('取学期列表失败，用记忆学期兜底：' + (error as Error).message);
       return remembered[0];
     }
-    const terms: Term[] = await ApiService.fetchTerms();
-    if (terms.length === 0) {
-      return '';
-    }
-    let picked: Term = terms[0];
-    for (let i = 0; i < terms.length; i++) {
-      if (terms[i].selected) {
-        picked = terms[i];
-        break;
-      }
-    }
-    TokenStore.setSelectedTerm(picked.itemCode, picked.itemName);
-    return picked.itemCode;
   }
 
   /** 取最近一场未结束的考试。 */
@@ -296,18 +502,24 @@ export struct HomePage {
   }
 
   /**
-   * 点击今日课程：**同步组装、直接弹出完整详情**。
+   * 点击今日课程：弹出与课表页**完全一致**的详情。
    *
-   * 完整详情来自 `preloadedCourses`（进页面就预加载好的本周课表），所以这里没有任何
-   * 异步等待 —— 与课表页点课程块的行为完全一致。只有预加载还没回来（或失败）时，
-   * 才退化成「时间 / 地点」两行，不会出现加载态。
+   * 两条路径都走 `buildCourseDetail`（任课教师 / 时间 / 地点 / 上课周次 / 课程编号 /
+   * 课序号 / 课程学分 / 上课节次 + 上游附加行），保证同一个课程在两个入口点开是同一张卡。
+   *
+   * 数据来自 `preloadedCourses`（进页面就预加载的本周课表）。若预加载还没回来，
+   * 这里会 `await` 那次在途请求（见 `ensureCourses`）—— 优先保证**内容完整**，
+   * 而不是像以前那样直接退化成两行。只有课表本身取不到时才用
+   * `buildSimpleDetail` 兜底（今日课程接口自带的时间 / 地点）。
    */
-  private openTodayDetail(item: TodayClass): void {
+  private async openTodayDetail(item: TodayClass): Promise<void> {
     const name: string = item.bizName;
     const time: string = item.time === undefined ? '' : item.time;
     const place: string = item.place === undefined ? '' : item.place;
 
-    const match: CourseClass | null = findCourseByName(this.preloadedCourses, name);
+    const courses: CourseClass[] = await this.ensureCourses();
+    const match: CourseClass | null =
+      findCourseByNameAndTime(courses, name, time, DateUtil.currentWeekday());
     const detail: CourseDetail = match === null ?
       buildSimpleDetail(name, time, place) : buildCourseDetail(match);
     this.courseDetail.apply(detail.title, detail.rows);
@@ -422,11 +634,39 @@ export struct HomePage {
               .fontColor(AppColor.textTertiary)
           }
           if (item.place !== undefined && item.place.length > 0) {
-            Text(item.place)
-              .fontSize(AppFont.caption)
-              .fontColor(AppColor.textTertiary)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            // 长地点：限制在块内 + 到达右缘**文字自身渐隐**（不是加一层看得见的遮罩）。
+            // 实现：文本裁切（Clip，不出省略号）+ 尾部一条 24vp 的渐变，颜色是
+            // **与卡片底色同 RGB、只降 alpha** —— 插值不会产生半透明黑/白，
+            // 观感就是字形逐个变淡。文本没顶到边缘时渐变叠在底色上（同色叠同色），完全不可见。
+            //
+            // 🔴 颜色**从 `app.color.surface` 资源里取**（见 `surfaceArgbHex`），不写死字面量。
+            // 2026-11-17 修的 bug：这里原先裸读 `AppStorage('isDarkMode')`，
+            // 而写入方用的是 `'isDark'` → 键名不一致，深色下恒定走浅色分支、
+            // 拿纯白渐变盖在 `#1A1A1A` 卡片上，糊出一块白斑。
+            // 现在改为订阅 `this.isDark`（`@StorageProp`），切主题会重绘。
+            //
+            // ⚠️ 渐变条必须用**固定高度**：写 '100%' 会在自动高度的 Stack 里解析成
+            // 整卡高度，把卡片撑爆（踩过）。
+            Stack({ alignContent: Alignment.End }) {
+              Text(item.place)
+                .fontSize(AppFont.caption)
+                .fontColor(AppColor.textTertiary)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Clip })
+                .width('100%')
+              Row()
+                .width(24)
+                .height(18)
+                .linearGradient({
+                  angle: 90,
+                  colors: [
+                    [transparentOf(surfaceArgbHex(this.isDark)), 0],
+                    [surfaceArgbHex(this.isDark), 1]
+                  ]
+                })
+                .hitTestBehavior(HitTestMode.None)
+            }
+            .layoutWeight(1)
           }
         }
         .width('100%')

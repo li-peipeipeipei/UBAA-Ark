@@ -13,10 +13,11 @@ import {
   ScrollEffectType,
   hdsMaterial
 } from '@kit.UIDesignKit';
-import { KEY_BOTTOM_SAFE_HEIGHT, topSafeInsetVp } from '../common/ImmersiveUtil';
+import { KEY_BOTTOM_SAFE_HEIGHT, topSafeInsetVp, systemBarStyleFor } from '../common/ImmersiveUtil';
 import { webview } from '@kit.ArkWeb';
 import { Logger } from '../common/Logger';
-import { AppColor, AppFont, AppSize } from '../components/AppTheme';
+import { ImmersiveUtil } from '../common/ImmersiveUtil';
+import { AppColor, AppFont, AppSize, HERO_EXPAND_MS, HERO_LAND_BOUNCE, heroExpandCurve, heroShrinkCurve } from '../components/AppTheme';
 import { ScheduleDayHeader, ScheduleHeaderModel, ScheduleTermChip, ScheduleWeekChips } from '../components/ScheduleHeader';
 import { nativeFeatureRoute, routeBuilder } from './RouteBuilder';
 import { HomePage } from './home/HomePage';
@@ -25,6 +26,10 @@ import { FeaturePage } from './home/FeaturePage';
 import { MinePage } from './mine/MinePage';
 import { KEY_BREAKPOINT, KEY_WINDOW_HEIGHT_VP, KEY_WINDOW_WIDTH_VP, sideNavWidthOf, useSideNav } from '../common/Breakpoint';
 import { WideSideNav } from '../components/WideSideNav';
+import { componentSnapshot } from '@kit.ArkUI';
+import { image } from '@kit.ImageKit';
+import { CardRefresher } from '../common/CardRefresher';
+import { GlobalContext } from '../common/GlobalContext';
 
 /**
  * 桌面卡片跳转用的 AppStorage key（写入方在 `EntryAbility`）。
@@ -95,6 +100,13 @@ export struct MainPage {
   @StorageLink(KEY_MAIN_TAB_INDEX) private currentIndex: number = 0;
   /** 宽度断点（AppStorage 由 ImmersiveUtil 的 windowSizeChange 写入）。 */
   @StorageProp(KEY_BREAKPOINT) @Watch('onBreakpointChange') private bp: string = 'sm';
+  /**
+   * 当前是否深色模式。
+   *
+   * 订阅它是为了让下方 HdsNavigation 的 `systemBarStyle` 在**切主题时重新求值** ——
+   * 不订阅的话属性只在首次构建时算一次，切到深色后状态栏文字会保持黑字、贴在深色底上看不见。
+   */
+  @StorageProp('isDark') private isDark: boolean = false;
 
   /**
    * 桌面卡片带过来的页签请求（`EntryAbility.onCreate` / `onNewWant` 写入 AppStorage）。
@@ -124,6 +136,11 @@ export struct MainPage {
    * 所以首次 onChange 不当作用户切换，而是让 Tabs 去跟随已保存的页签。
    */
   private tabsReady: boolean = false;
+  /**
+   * 上一帧的布局分支（底部页签 false ↔ 侧边栏 true）。
+   * 只有它翻转才说明 HdsTabs 被重建、需要重新吞一次初始化 onChange(0)。
+   */
+  private lastSideNav: boolean = false;
 
   /* ---------------- 卡片 → 全屏 的转场色块 ---------------- */
 
@@ -148,6 +165,26 @@ export struct MainPage {
   /** 卡片上的图标 + 文字：随色块一起拉伸，才有「这张卡本身展开」的一体感。 */
   @State private morphContentScale: number = 1;
   @State private morphContentOpacity: number = 1;
+  /**
+   * 页面外壳标题条（返回钮占位 + 标题）的不透明度。
+   *
+   * 与彩色层互补：彩色层满（0.86）时必须是 0 —— 半透明彩色层会把它透出来，
+   * 在卡片上留一枚幽灵标题（真机踩过）。彩色层褪去时它浮现 = 「主界面更早出现」，
+   * 收起凝结时反向隐去。
+   */
+  @State private morphShellTitleOpacity: number = 0;
+  /**
+   * 收起转场用的「页面快照」：POP 时对目的地整页 componentSnapshot 拍下，
+   * 放进遮罩里随块缩放 —— 收起缩的必须是**页面本身**（有内容），
+   * 缩「空壳」会先变黑再缩、看不出缩小效果（用户实测）。拍不到时为 null，走空壳兜底。
+   */
+  @State private morphPageShot: image.PixelMap | null = null;
+  /**
+   * 整页尺寸（vp）：页面骨架按这个尺寸排布，再等比缩到块宽（宽随块、上下裁）。
+   * 转场开始时从 AppStorage 的窗口尺寸写入。
+   */
+  @State private morphPageW: number = 0;
+  @State private morphPageH: number = 0;
   @State private morphTitle: string = '';
   private morphIcon: Resource | null = null;
   private morphAlpha: number = 1;
@@ -156,8 +193,9 @@ export struct MainPage {
 
   /** 页面底色：色块放大到位后要「融进」它，浅色 / 深色主题不同。 */
   private pageBg(): string {
-    const dark: boolean = AppStorage.get<boolean>('isDarkMode') ?? false;
-    return dark ? '#000000' : '#F1F3F5';
+    // 键名曾误写 'isDarkMode'（写入方是 'isDark'）→ 深色下取不到值，
+    // 转场时色块会「融进」浅灰底而不是黑底。用已订阅的 this.isDark。
+    return this.isDark ? '#000000' : '#F1F3F5';
   }
 
   /**
@@ -196,8 +234,11 @@ export struct MainPage {
    * ③ 图标 + 文字     —— 跟着色块一起放大 / 缩小，做出一体感
    * ```
    *
-   * 时序（打开）：几何 340ms；180ms 起遮罩整体淡出 260ms；440ms 收尾放行。
-   * 时序（收起）：几何 320ms 固定时长（弹簧的 onFinish 比视觉停稳晚很多，会显得回弹滞后）。
+   * 时序（打开）：几何 450ms（M3 DurationLong1；曲线由 `AppTheme.heroExpandCurve()` 决定，
+   *   `USE_APPLE_CURVES` 可一键切回 springMotion(0.3,0.82)）；色块 48~112ms 褪完（相对点按）；
+   *   270ms 页面就位、350ms 遮罩淡出 110ms、530ms 收尾放行。
+   * 时序（收起）：几何 450ms 固定时长（弹簧的 onFinish 比视觉停稳晚很多，会显得回弹滞后）；
+   *   颜色 100ms 起 160ms（260ms 盖满）；几何 onFinish 收尾（兜底 530ms）。
    */
   onMorphTick(): void {
     const phase: MorphPhase = HeroMorph.getPhase();
@@ -208,6 +249,9 @@ export struct MainPage {
     const navW: number = this.sideNavLayout() ? sideNavWidthOf(this.bp) : 0;
     const winW: number = AppStorage.get<number>(KEY_WINDOW_WIDTH_VP) ?? 375;
     const winH: number = AppStorage.get<number>(KEY_WINDOW_HEIGHT_VP) ?? 800;
+    // 页面骨架按整页尺寸排布（宽随块的换算基准）
+    this.morphPageW = winW;
+    this.morphPageH = winH;
     // card.x / card.y 是卡片的**屏幕坐标**（FeatureTile 上报），所以直接用
     const card: MorphRect = HeroMorph.getCard();
     const fullW: number = winW - navW;
@@ -232,16 +276,20 @@ export struct MainPage {
       this.morphAccentOpacity = this.morphAlpha;
       this.morphContentScale = 1;
       this.morphContentOpacity = 1;
+      this.morphShellTitleOpacity = 0;
+      // 上一轮收起若被打断，快照可能还在 —— 打开绝不能顶着旧快照
+      this.morphPageShot = null;
       this.morphOpacity = 1;
       this.morphBgOpacity = 1;
       this.morphVisible = true;
-      // 目的地一开始不可见：等遮罩铺满并开始淡出时它才登场
+      // 目的地一开始不可见：遮罩的「页面骨架」负责放大中的画面，真实页面到溶接时才登场
       AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 0);
       // ⚠️ 必须等一帧：初值与 animateTo 在同一帧内提交会被合并成「直接到终值」
       setTimeout(() => {
-        // ① 几何：色块从卡片矩形长到全屏（图标/文字同步拉伸）
+        // ① 几何：色块从卡片矩形长到全屏（图标/文字同步拉伸）。
+        //    时长见 `HERO_EXPAND_MS`（M3 DurationLong1 = 450ms，英雄转场档位）。
         this.getUIContext().animateTo(
-          { curve: curves.springMotion(0.32, 0.82) },
+          { duration: HERO_EXPAND_MS, curve: heroExpandCurve() },
           () => {
             this.morphX = navW;
             this.morphY = 0;
@@ -251,44 +299,84 @@ export struct MainPage {
             this.morphContentScale = endScale;
           }
         );
-        // ② 交叉：颜色褪去 + 图标文字淡出 + 遮罩淡出 + 页面淡入，**同一个 animateTo**。
-        //
-        // ⚠️ 这四件事必须在同一段时间里发生。逐帧实测过拆开的后果：
-        // 颜色先溶掉（150ms 左右就没了）而页面要到 230ms 才开始淡入，中间有一段
-        // 「遮罩是纯黑底、页面还没来」—— 打开时整整 0.2s 的黑场（#73~#78）。
-        // 现在四者同窗口，任何时刻都有一层在场，不会出现空档。
+        // ② 颜色更早淡出 + 图标文字同窗淡出 + 外壳标题条浮现。
+        //    相对**点按**：48ms 开始褪、112ms 完全消失（64ms 时长；外层还有 32ms 首帧错开，
+        //    所以这里的延时是 16ms）。
+        //    分窗是安全的：外壳层全程在场，任何时刻都有一层撑着，不会出黑场。
         setTimeout(() => {
           if (seq !== this.morphSeq) {
             return;
           }
-          this.getUIContext().animateTo({ duration: 240, curve: Curve.EaseOut }, () => {
+          this.getUIContext().animateTo({ duration: 64, curve: Curve.EaseOut }, () => {
             this.morphAccentOpacity = 0;
             this.morphContentOpacity = 0;
-            this.morphOpacity = 0;
-            // ⚠️ 页面透明度必须显式拉回 1：它在前一帧被设成 0（避免转场瞬间闪页面），
-            // 忘了拉回来的话，遮罩淡完就是**一片黑**（真机踩过）。
-            AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 1);
+            this.morphShellTitleOpacity = 1;
           });
-        }, 80);
-        // 收尾：交叉在 320ms 结束，这里留一档余量再放行
+        }, 16);
+        // ③ 真实内容接管，分两步 —— 先让页面就位，再撤遮罩。
+        //
+        // 为什么不能「页面淡入 + 遮罩淡出同窗」：真机连拍 6 帧显示，遮罩先变半透明、
+        // 而页面透明度还没上来，中间那几帧透出的是**背后的功能网格**（整屏发暗），
+        // 随后页面再渐显时又和骨架的转圈/字叠成两层 —— 观感是「先暗下去再渐显」。
+        //
+        // 正确做法：此时遮罩是**整块不透明**的（颜色层已褪、只剩底色 + 标题栏 + 圈），
+        // 把页面透明度直接拉回 1 用户完全看不见；随后遮罩淡出时，下面已经是画好的
+        // 真实页面 —— 交叉的只是「骨架内容淡出 ↔ 真实内容透出」，永远不会露出网格。
+        setTimeout(() => {
+          if (seq !== this.morphSeq) {
+            return;
+          }
+          AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 1);
+        }, 270);
+        //    ④ 解冻目的地：**必须早于遮罩淡出**。
+        //
+        //    自定义转场期间系统会冻结目的地的渲染（见 `NativeHeroDest` 头注释：
+        //    transform/状态都正常但「画面停在初始大小」）。所以上一步 270ms 设的
+        //    `pageOpacity = 1` 只是一次状态赋值，**画面不会更新** —— 目的地仍然
+        //    停在挂载首帧（那时 opacity 是 0，即全透明）。
+        //    若此时直接淡出遮罩，下面什么都没有：标题只能跟着遮罩一起变暗，
+        //    到 530ms `finishExpand` 解冻时页面突然出现 → 「放大到全屏后闪一下」。
+        //    300ms 时几何已走完 99.4%（差 2.3vp 满屏，缺口落在页面右侧 padding
+        //    之外，与遮罩同色看不出），放行后页面在遮罩后面正常绘制，淡出才安全。
+        setTimeout(() => {
+          if (seq !== this.morphSeq) {
+            return;
+          }
+          NavHero.finishTransition();
+        }, 300);
+        //    ⑤ 遮罩淡出：骨架与真实页此刻内容同构（同底色、同位置标题栏、同位置同尺寸
+        //    的加载圈），110ms 的重合过渡几乎是「内容原地浮现」；再短就成硬切了。
+        setTimeout(() => {
+          if (seq !== this.morphSeq) {
+            return;
+          }
+          Logger.info('HERO dissolve-in');
+          this.getUIContext().animateTo({ duration: 110, curve: Curve.EaseInOut }, () => {
+            this.morphOpacity = 0;
+          });
+        }, 350);
+        // 收尾：淡出在 460ms 结束，留一档余量再放行
         setTimeout(() => {
           if (seq !== this.morphSeq) {
             return;
           }
           this.finishExpand();
-        }, 440);
+        }, 530);
       }, 32);
       return;
     }
 
-    // SHRINK：页面先溶解进底色，色块再收缩成卡片。
+    // SHRINK：完全反向的打开 —— 页面溶进外壳，外壳块收缩，颜色最后凝结。
     //
-    // ⚠️ 不能一上来就把遮罩设成**不透明的页面底色**、同时把页面隐掉：
-    // 深色模式下页面底色就是纯黑，会出现「页面消失 → 纯黑 0.13s → 色块才显形」
-    // （逐帧实测：#1~#4 整屏黑）。所以遮罩从透明淡入，与页面淡出交叉。
+    // ① 的交叉是「全屏 ↔ 全屏」：页面与外壳此时**天然重合、圆角都是 0**，
+    // 满足「界面要和块重合、圆角符合」。之后壳块带着标题条收缩（界面始终在块内）。
     this.shrinkDone = false;
     this.morphSeq = this.morphSeq + 1;
     const seq: number = this.morphSeq;
+    // 落点用**实测矩形**（FeaturePage 每次 onAreaChange 刷新），不用点开时的快照：
+    // 展开期间网格若因内容加载位移几 vp，旧坐标会让遮罩停在偏一点的位置，最后跳到真卡片
+    // （真机实测：最后一帧尺寸正确但整体下移 19px）。
+    const land: MorphRect = HeroMorph.getLandingCard();
     this.morphX = navW;
     this.morphY = 0;
     this.morphW = fullW;
@@ -299,48 +387,90 @@ export struct MainPage {
     this.morphAccentOpacity = 0;
     this.morphContentScale = endScale;
     this.morphContentOpacity = 0;
-    // 底色层透明：收起时不能拿纯黑底去盖页面，否则溶解的目标就是黑屏
-    this.morphBgOpacity = 0;
-    // 遮罩先不可见：靠下面的交叉过渡一点点盖住页面，而不是瞬间换掉
-    this.morphOpacity = 0;
+    // 外壳在场：有页面快照时遮罩内容 = 整页快照（与真实页面像素一致）；
+    // 拍不到时退回「底色 + 标题条」空壳兜底。
+    this.morphShellTitleOpacity = 1;
+    this.morphBgOpacity = 1;
     this.morphVisible = true;
-    // ① 交叉：遮罩淡入 + 页面淡出（同一段动画、同一条曲线）——
-    //    因为底色层是透明的，这一段露出的是**背后的功能页网格**，不是黑
-    this.getUIContext().animateTo({ duration: 110, curve: Curve.EaseIn }, () => {
+    if (this.morphPageShot !== null) {
+      // 快照与页面像素一致：直接接管 —— 不经过任何「页面溶进外壳=变黑」的中间态
       this.morphOpacity = 1;
       AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 0);
-    });
-    // ② 底色铺满后再收缩（颜色与图标/文字同一条曲线一起回来）
+    } else {
+      // 空壳兜底：**页面不参与淡出**，只把遮罩淡入。
+      //
+      // ⚠️ 不能让页面 1→0 与遮罩 0→1 同时跑：两层各半透明时，白字的等效不透明度
+      // = a + (1−a)·b，中间帧只有 0.75 —— 标题栏会明显暗一档又亮回来（真机可见闪烁）。
+      // 页面保持不透明，遮罩淡入时合成恒为 1；等遮罩满值（110ms，此时切换不可见）
+      // 再把页面撤到 0，相当于一次不可见的硬切。
+      //
+      // 顺带修掉另一个隐患：页面淡到 0 时半透明遮罩会透出背后的功能网格
+      // （整屏发暗、隐约见卡片），页面常驻后永远不会露底。
+      this.morphOpacity = 0;
+      this.getUIContext().animateTo({ duration: 110, curve: Curve.EaseIn }, () => {
+        this.morphOpacity = 1;
+      });
+      setTimeout(() => {
+        if (seq !== this.morphSeq) {
+          return;
+        }
+        AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 0);
+      }, 110);
+    }
+    // ① 几何立刻开始：**页面快照随块缩放** = 「页面在缩小」，全程可见
+    //    （此前缩的是空壳：先变黑再缩，看不出缩小效果 —— 用户实测）。
     setTimeout(() => {
       if (seq !== this.morphSeq) {
         return;
       }
-      // ② 色块「凝结」：颜色与图标/文字同一条曲线一起回来（150ms）——
-      //    收起的前半段仍以网格为背景，颜色在此期间浮现 = 「颜色更晚出现」
-      this.getUIContext().animateTo({ duration: 150, curve: Curve.EaseOut }, () => {
-        this.morphAccentOpacity = this.morphAlpha;
-        this.morphContentOpacity = 1;
-      });
       this.getUIContext().animateTo(
-        // 固定时长：弹簧的 onFinish 明显滞后于视觉停稳，回弹会晚半拍（用户实测反馈）
-        { duration: 300, curve: Curve.FastOutSlowIn },
+        // 固定时长：弹簧的 onFinish 明显滞后于视觉停稳，回弹会晚半拍（用户实测反馈）。
+        // 收尾挂 onFinish（而不是定时器）：animateTo 的实际首帧比调用晚一帧，
+        // 固定时长定时器会比动画早到约 16ms —— FastOutSlowIn 尾部极慢，
+        // 那 16ms 还差 3~6% 路程，遮罩会在「高出一截、整体偏下」的状态被隐藏，
+        // 然后跳到真卡片（真机连拍：高度多 20px、底边多 26px 的那一帧）。
+        {
+          // 450 = M3 DurationLong1（与放大同一档，往返对称）
+          duration: 450,
+          curve: heroShrinkCurve(),
+          onFinish: () => {
+            if (seq !== this.morphSeq) {
+              return;
+            }
+            this.finishShrink();
+          }
+        },
         () => {
-          this.morphX = card.x;
-          this.morphY = card.y;
-          this.morphW = card.w;
-          this.morphH = card.h;
-          this.morphRadius = card.radius;
+          this.morphX = land.x;
+          this.morphY = land.y;
+          this.morphW = land.w;
+          this.morphH = land.h;
+          this.morphRadius = land.radius;
           this.morphContentScale = 1;
         }
       );
-      // 与几何同一时长收尾：落地即回弹，中间不留空档
+      // ② 颜色更晚出现（100ms 起 **160ms**，260ms 盖满 —— 比 450ms 几何早 190ms）；
+      //    页面快照同窗溶进颜色。标题条同步隐去（互补时序，杜绝幽灵标题）。
+      setTimeout(() => {
+        if (seq !== this.morphSeq) {
+          return;
+        }
+        this.getUIContext().animateTo({ duration: 160, curve: Curve.EaseOut }, () => {
+          this.morphAccentOpacity = this.morphAlpha;
+          this.morphContentOpacity = 1;
+          this.morphShellTitleOpacity = 0;
+          this.morphBgOpacity = 0;
+        });
+      }, 100);
+      // 兜底：onFinish 万一不回调（动画被系统打断等），也必须把卡片放出来 ——
+      // 否则卡片会一直保持隐藏（`finishShrink` 自带幂等，正常路径不会重复执行）
       setTimeout(() => {
         if (seq !== this.morphSeq) {
           return;
         }
         this.finishShrink();
-      }, 300);
-    }, 110);
+      }, 530);
+    }, 16);
   }
 
   /** 放大到位：遮罩已经淡到 0，移除目的地（此刻画面早已是页面本身）。 */
@@ -362,22 +492,41 @@ export struct MainPage {
     this.shrinkDone = true;
     // 遮罩此刻与真实卡片像素级重合，直接隐藏看不出切换
     this.morphVisible = false;
+    // 快照用完即清（PixelMap 占显存，也防止下一轮误用旧图）
+    this.morphPageShot = null;
+    // 真卡片此刻才登场：收起全程保持隐藏 —— 半透明的 0.86 彩色层下不会再透出
+    // 「同名卡片」，落地也没有双层边缘（此前的「收回最后稍有错位」就是它）
+    NavHero.notifyTileShow();
     AppStorage.setOrCreate<number>(KEY_HERO_PAGE_OPACITY, 1);
     HeroMorph.finish();
     NavHero.finishTransition();
-    // 回弹放在下一帧：先让 grid 真正露出来，弹动才看得见（同帧弹会被上面那层盖掉）
-    setTimeout(() => {
+    // 回弹由 `AppTheme.HERO_LAND_BOUNCE` 控制（当前关闭 → 卡片落位即静止）。
+    //
+    // 历史：早先延 16ms 触发（怕遮罩还盖着看不见），后来改成同帧 —— 遮罩在上一行
+    // 已经隐藏、真卡片同帧显示，弹动一定看得见；延后一帧反而多出一帧「停在原位」。
+    // ⚠️ 重新打开时注意：`FeatureTile.onBounce` 里的 16ms 不能动 —— 那里的用途是让
+    // 「缩到 0.98」先落一帧，否则「赋值 + 启动回弹」同帧合并，缩的动作会整个消失。
+    if (HERO_LAND_BOUNCE) {
       NavHero.notifyBounce();
-    }, 16);
+    }
   }
 
   /**
    * 断点变化 = 布局分支切换（侧边栏 ↔ 底部页签），两棵不同的组件树，
    * 竖屏那棵里的 `HdsTabs` 是**新创建**的，会再报一次 `onChange(0)`。
    * 把初始化标记归零，好让下一次回调被当成「初始化」而不是「用户切换」。
+   *
+   * ⚠️ 但**只有分支真的翻转**（useSideNav 前后不一致）才归零：
+   * 冷启动时窗口尺寸回调会让断点在 sm/md 之间抖动，两者都走底部页签、
+   * HdsTabs 根本没有重建 —— 这时归零会把用户紧随其后的一次点按
+   * 误当成初始化吞掉（冷启动「底栏第一时间点不动」的真因，真机复现过）。
    */
   onBreakpointChange(): void {
-    this.tabsReady = false;
+    const side: boolean = this.sideNavLayout();
+    if (side !== this.lastSideNav) {
+      this.lastSideNav = side;
+      this.tabsReady = false;
+    }
   }
 
   /* 站内网页提交浮层（覆盖底栏，全屏） */
@@ -412,10 +561,19 @@ export struct MainPage {
   private mineStack: NavPathStack = MINE_STACK;
 
   aboutToAppear(): void {
+    // 官方建议：状态栏样式要在页面生命周期里调用才稳定生效
+    // （窗口级 API 单独调用容易被后续页面/系统重置）
+    ImmersiveUtil.refreshSystemBar();
     // 诊断：横竖屏切换后重建 MainPage 时这条会出现，栈与页签仍应保留（见 common/NavStacks）
     Logger.info('MainPage aboutToAppear，currentIndex=' + this.currentIndex);
     // 冷启动路径：AppStorage 里已有值时，这里把它吃掉
     this.applyRoute(this.pendingRoute);
+    // 把桌面卡片对齐到「今天」。卡片数据原先只在课表页加载/切周时写，
+    // 不进课表页就会一直挂着几天前的快照（周次、日期、日卡的「明天」全错）。
+    // 这里只读本地缓存重算，不联网；延迟一拍让首屏先渲染完，别抢布局时间。
+    setTimeout(() => {
+      CardRefresher.refresh(GlobalContext.getContext());
+    }, 600);
   }
 
   private onPendingRoute(): void {
@@ -531,14 +689,14 @@ export struct MainPage {
   private clearStack(index: number): void {
     if (index === 2) {
       const stack: NavPathStack = this.stackOf(index);
-      // 栈里可能停着一张「卡片展开页」。清栈前必须把原卡片放出来：
-      // `clear(false)` 不播转场，也就没有 POP 回调去通知功能页 —— 卡片会一直保持隐藏
-      // （实测：点「功能」回到网格后，考试安排那张卡是空的）。
-      NavHero.notifyTileShow();
       if (NavHero.isTopHero() && stack.size() === 1) {
-        // 只有一层时带动画清栈，正好走上「缩回卡片」的转场
+        // 只有一层时带动画清栈，正好走上「缩回卡片」的转场；
+        // 真卡片由 finishShrink 放出（收起全程隐藏，防 0.86 彩色层透出同名卡片）
         stack.clear(true);
       } else {
+        // `clear(false)` 不播转场，没有 POP 回调 / finishShrink 去放卡片 ——
+        // 这里必须把原卡片放出来（实测：点「功能」回到网格后，考试安排那张卡是空的）。
+        NavHero.notifyTileShow();
         stack.clear(false);
       }
     } else {
@@ -573,6 +731,10 @@ export struct MainPage {
         timeout: 900,
         transition: (proxy: NavigationTransitionProxy) => {
           NavHero.holdProxy(proxy);
+          // ⚠️ 这里**绝对不能**调 componentSnapshot（或其它强制定格的手段）：
+          // 实测在 PUSH 的 hold 期间拍一次图，系统会把自己的默认「右侧滑入」放出来，
+          // 页面在遮罩外面从右侧滑进屏幕（19:32 版没有这段代码就完全不滑，加了才滑）。
+          // 遮罩的放大载体是「页面骨架」，本来也不需要打开时拍快照。
         }
       };
       return push;
@@ -586,10 +748,28 @@ export struct MainPage {
       // 所以状态改动统统延后一帧。
       this.expandDone = false;
       setTimeout(() => {
-        // 遮罩开始收缩（MainPage 自己演），系统保留功能页快照作为露出内容
-        HeroMorph.startShrink();
-        // 真实卡片先放出来：此刻遮罩全屏不透明，看不到变化
-        NavHero.notifyTileShow();
+        // 收起前先给目的页拍一张**整页快照**：遮罩里缩的是页面本身（含内容），
+        // 才有「页面在缩小」的观感（只缩空壳 = 先变黑再缩，看不出缩小 —— 用户实测）。
+        // 快照就绪才开演；80ms 还没回来就先开演（此时走空壳兜底），不让点击等拍。
+        // ⚠️ 真卡片这里**不能**放出来：遮罩彩色层是 0.86 半透明，收起全程会透出
+        // 下面的同名卡片（用户实测）。真卡片到 finishShrink（落地帧）才登场。
+        let started: boolean = false;
+        const go: () => void = (): void => {
+          if (started) {
+            return;
+          }
+          started = true;
+          HeroMorph.startShrink();
+        };
+        componentSnapshot.get('heroPageShot').then((shot: image.PixelMap): void => {
+          if (!started) {
+            this.morphPageShot = shot;
+          }
+          go();
+        }).catch(() => {
+          go();
+        });
+        setTimeout(go, 80);
       }, 0);
       const pop: NavigationAnimatedTransition = {
         timeout: 900,
@@ -818,6 +998,10 @@ export struct MainPage {
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
+        // HDS 未设 systemBarStyle 时按 SystemBarStyle 默认值 '#E5FFFFFF'（白）托管状态栏；
+        // 页面一下拉/滚动，HDS 动态样式重新生效，会把 window 接口设的黑色刷回白。
+        // 官方明确「不建议混合使用 systemBarStyle 和 window 接口」→ 这里显式托管。
+        .systemBarStyle(systemBarStyleFor(this.isDark), systemBarStyleFor(this.isDark))
         .mode(NavigationMode.Stack)
       }
       .tabBar(new BottomTabBarStyle($r('app.media.ic_home'), $r('app.string.tab_home')))
@@ -832,6 +1016,8 @@ export struct MainPage {
         .titleBar(this.scheduleTitleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
+        // 同上：状态栏内容色显式托管给 HDS，避免下拉滚动时被默认白覆盖
+        .systemBarStyle(systemBarStyleFor(this.isDark), systemBarStyleFor(this.isDark))
         .mode(NavigationMode.Stack)
       }
       .tabBar(new BottomTabBarStyle($r('app.media.ic_schedule'), $r('app.string.tab_schedule')))
@@ -849,6 +1035,9 @@ export struct MainPage {
         }
         .navDestination(this.nativeRouteMap)
         .mode(NavigationMode.Stack)
+        // 原生 Navigation 的 systemBarStyle 只收**一个**参数（不像 HdsNavigation 有两档）。
+        // 一级页没有标题栏、内容铺满屏幕，状态栏必须显式给色，否则同样被默认白接管。
+        .systemBarStyle(systemBarStyleFor(this.isDark))
         // 功能页一级页没有标题栏（只有卡片网格），内容从屏幕顶开始，
         // 网格位置由页面内的 destTopInset 自己补
         .hideTitleBar(true)
@@ -875,6 +1064,10 @@ export struct MainPage {
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
+        // HDS 未设 systemBarStyle 时按 SystemBarStyle 默认值 '#E5FFFFFF'（白）托管状态栏；
+        // 页面一下拉/滚动，HDS 动态样式重新生效，会把 window 接口设的黑色刷回白。
+        // 官方明确「不建议混合使用 systemBarStyle 和 window 接口」→ 这里显式托管。
+        .systemBarStyle(systemBarStyleFor(this.isDark), systemBarStyleFor(this.isDark))
         .mode(NavigationMode.Stack)
       }
       .tabBar(new BottomTabBarStyle($r('app.media.ic_person'), $r('app.string.tab_mine')))
@@ -906,9 +1099,11 @@ export struct MainPage {
     .barHeight(this.sideNavLayout() ? 0 : AppSize.tabBarHeight)
     .padding({ left: this.sideNavLayout() ? sideNavWidthOf(this.bp) : 0 })
     .onChange((index: number) => {
-      // 首次回调是 HdsTabs 的初始化（必然是 0），不是用户点的 ——
+      // 首次回调是 HdsTabs 的初始化（**必然是 0**），不是用户点的 ——
       // 不要据此改 currentIndex，而是让新建的 Tabs 跟随保存的页签。
-      if (!this.tabsReady) {
+      // ⚠️ 只有 index === 0 才允许走「初始化」分支：用户在冷启动窗口里的
+      // 第一次点按（index≠0）若是第一发回调，绝不能被当成初始化吞掉再拉回原页签。
+      if (!this.tabsReady && index === 0) {
         this.tabsReady = true;
         if (index !== this.currentIndex) {
           // changeIndex 会再回调一次 onChange（此时 tabsReady 已 true），
@@ -917,6 +1112,7 @@ export struct MainPage {
         }
         return;
       }
+      this.tabsReady = true;
       this.currentIndex = index;
       // 切到课表页时通知它刷新当前周。
       //
@@ -934,7 +1130,18 @@ export struct MainPage {
       // 点「功能」：无论当前在不在功能页，都先收起卡片浮层（它不在导航栈里）
       if (index === 2) {
       }
-      if (index === this.currentIndex) {
+      // ⚠️ 先把 currentIndex 落地再判分支：onChange 的「初始化回调必然是 0」
+      // 与「用户点了主页」在数据上无法区分 —— 冷启动时用户第一下点「主页」
+      // 会被初始化分支拉回原页签（真机复现：第一时间点不动）。onTabBarClick
+      // 只在真实点按时触发，这里先写入目标页签，初始化分支比对相等就不会拉回。
+      // 点按本身已经完成切换，**不需要** changeIndex（再调会让 onChange 双发、
+      // 课表的 onRefresh 跟着跑两遍）。
+      const was: number = this.currentIndex;
+      this.currentIndex = index;
+      // 「再点一次当前页签 → 回到该页主页」：
+      // 点的是当前页签，说明用户想「回顶部/回主页」，就把这个页签的导航栈清空
+      // （栈空了会退回根页面）。
+      if (index === was) {
         this.clearStack(index);
       }
     })
@@ -967,6 +1174,10 @@ export struct MainPage {
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
+        // HDS 未设 systemBarStyle 时按 SystemBarStyle 默认值 '#E5FFFFFF'（白）托管状态栏；
+        // 页面一下拉/滚动，HDS 动态样式重新生效，会把 window 接口设的黑色刷回白。
+        // 官方明确「不建议混合使用 systemBarStyle 和 window 接口」→ 这里显式托管。
+        .systemBarStyle(systemBarStyleFor(this.isDark), systemBarStyleFor(this.isDark))
         .mode(NavigationMode.Stack)
         .navBarPosition(NavBarPosition.Start)
         .layoutWeight(1)
@@ -980,6 +1191,8 @@ export struct MainPage {
         .titleBar(this.scheduleTitleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
+        // 同上：状态栏内容色显式托管给 HDS，避免下拉滚动时被默认白覆盖
+        .systemBarStyle(systemBarStyleFor(this.isDark), systemBarStyleFor(this.isDark))
         .mode(NavigationMode.Stack)
         .navBarPosition(NavBarPosition.Start)
         .layoutWeight(1)
@@ -995,6 +1208,10 @@ export struct MainPage {
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
+        // HDS 未设 systemBarStyle 时按 SystemBarStyle 默认值 '#E5FFFFFF'（白）托管状态栏；
+        // 页面一下拉/滚动，HDS 动态样式重新生效，会把 window 接口设的黑色刷回白。
+        // 官方明确「不建议混合使用 systemBarStyle 和 window 接口」→ 这里显式托管。
+        .systemBarStyle(systemBarStyleFor(this.isDark), systemBarStyleFor(this.isDark))
         .mode(NavigationMode.Stack)
         .navBarPosition(NavBarPosition.Start)
         .layoutWeight(1)
@@ -1013,6 +1230,10 @@ export struct MainPage {
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
+        // HDS 未设 systemBarStyle 时按 SystemBarStyle 默认值 '#E5FFFFFF'（白）托管状态栏；
+        // 页面一下拉/滚动，HDS 动态样式重新生效，会把 window 接口设的黑色刷回白。
+        // 官方明确「不建议混合使用 systemBarStyle 和 window 接口」→ 这里显式托管。
+        .systemBarStyle(systemBarStyleFor(this.isDark), systemBarStyleFor(this.isDark))
         .mode(NavigationMode.Stack)
         .navBarPosition(NavBarPosition.Start)
         .layoutWeight(1)
@@ -1042,13 +1263,88 @@ export struct MainPage {
       // 它是 MainPage 的普通子节点 —— 不在 Navigation 的转场里，animateTo 改
       // width/height/position 一定生效（目的页内容上的 transform 会被系统冻结）。
       if (this.morphVisible) {
-        // 三层：页面底色 → 彩色层（与卡片同透明度）→ 图标文字（随块一起拉伸）
+        // 三层：页面外壳（底色 + 标题条）→ 彩色层（与卡片同透明度）→ 图标文字（随块一起拉伸）
         Stack() {
-          Column()
-            .width('100%')
-            .height('100%')
+          // ① 页面外壳：页面底色 + 与 HeroDetailLayer 同构的标题条。
+          //    它被彩色层盖住时就是「这张卡」；彩色层褪去后它是「主界面」的壳 ——
+          //    天生就是块的矩形 + 块的圆角（外层 Stack 的 clip/borderRadius），
+          //    满足「界面要和块重合、圆角符合」。真实内容在块长满时无缝接管。
+          //    ⚠️ 底色必须满铺**不参与缩放**：跟内容一起缩放会只盖住左上一小块，
+          //    彩色层是 0.86 半透明，其余部分直接漏出网格（真机踩过：整块变半透明）。
+          Stack({ alignContent: Alignment.Center }) {
+            // 页面骨架：**按整页尺寸（morphPageW×morphPageH）排布**，再等比缩放到
+            // 「块宽 / 页宽」、居中 —— 宽度永远贴合块宽，块装不下的上下部分被外层裁掉，
+            // 与快照的 Cover 规则完全一致（用户要求：宽随块、裁上下、不许拉伸）。
+            // 为什么不直接用快照：展开期页面必须隐身（opacity≈0），componentSnapshot
+            // 会把祖先透明度一起算进图里 —— 拍出来是全透明图（真机两轮实测）。
+            // 收起方向页面 opacity=1，快照照常能拍，仍然叠在骨架上（能拍到就盖住它）。
+            Column() {
+              Row({ space: 8 }) {
+                // 返回钮占位（与 HeroDetailLayer 的圆形返回钮同尺寸同底色）
+                Column()
+                  .width(40)
+                  .height(40)
+                  .borderRadius(20)
+                  .backgroundColor(AppColor.circleButtonSurface)
+
+                Text(this.morphTitle)
+                  .fontSize(AppFont.title)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(AppColor.textPrimary)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+                Blank()
+              }
+              .width('100%')
+              // 与真实标题栏同高（56vp）、同内边距（16/16）、同间距（8）——
+              // 全屏时与真实标题栏逐像素重合（数值按 HDS 返回键的实拍位置量出）
+              .height(56)
+              .padding({ left: 16, right: 16 })
+              .alignItems(VerticalAlign.Center)
+
+              // 加载圈：位置必须与真实页的 LoadingView **完全一致**（内容顶下来 80vp、
+              // 水平居中、40×40、brand 色）—— 交叉过渡时两个圈完全重合，观感是
+              // 「一个圈」，不是上下错位的两个转圈。
+              // 不画「正在获取…」文字：各页文案不同（「正在获取考试安排…」等），
+              // 两条不同长度的灰字叠在一起是交叉期最刺眼的重影（真机连拍可见）。
+              Column() {
+                LoadingProgress()
+                  .width(40)
+                  .height(40)
+                  .color(AppColor.brand)
+              }
+              .width('100%')
+              .layoutWeight(1)
+              .padding({ top: 80 })
+              .alignItems(HorizontalAlign.Center)
+            }
+            .width(this.morphPageW)
+            .height(this.morphPageH)
             .backgroundColor(this.pageBg())
-            .opacity(this.morphBgOpacity)
+            .padding({ top: topSafeInsetVp() })
+            // 宽度贴块：缩放比 = 块宽 / 页宽（morphW 在动画中，这个比例随之变化）
+            .scale({
+              x: this.morphPageW > 0 ? this.morphW / this.morphPageW : 1,
+              y: this.morphPageW > 0 ? this.morphW / this.morphPageW : 1
+            })
+            // 受控浮现：彩色层满时为 0（防透过 0.86 彩色层留痕），彩色褪去后为 1
+            .opacity(this.morphShellTitleOpacity)
+
+            if (this.morphPageShot !== null) {
+              // 真快照（收起方向能拍到）：同样 Cover —— 宽随块、上下裁
+              Image(this.morphPageShot)
+                .width('100%')
+                .height('100%')
+                .objectFit(ImageFit.Cover)
+                .interpolation(ImageInterpolation.Medium)
+                .draggable(false)
+            }
+          }
+          .width('100%')
+          .height('100%')
+          .backgroundColor(this.pageBg())
+          .opacity(this.morphBgOpacity)
 
           Column()
             .width('100%')

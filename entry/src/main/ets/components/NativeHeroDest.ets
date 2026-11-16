@@ -94,6 +94,7 @@ export struct NativeHeroDest {
 
   build() {
     Column() {
+      Column() {
       HeroDetailLayer({
         title: this.title,
         titleVisible: this.titleVisible,
@@ -120,6 +121,14 @@ export struct NativeHeroDest {
           this.onBack();
         }
       })
+      }
+      .width('100%')
+      .height('100%')
+      // 「页面快照」取景点（MainPage 在 PUSH/POP 时 componentSnapshot.get）。
+      // ⚠️ 必须挂在 pageOpacity **之内**：打开时外层是 0（页面不可见），
+      // 连外层一起拍只会拍到一张全透明图；内层永远正常渲染，拍它才拿得到
+      // 「加载中/已加载」的真实画面。
+      .id('heroPageShot')
     }
     .width('100%')
     .height('100%')

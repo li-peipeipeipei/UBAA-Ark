@@ -68,6 +68,15 @@ function isMajorBoundary(section: number): boolean {
 @Component
 export struct ClassroomPage {
   @State private loadState: LoadState = LoadState.LOADING;
+  /**
+   * 是否已经点过「查询」。
+   *
+   * 打开页面时**不再自动查询**（用户要求：默认不加载所有教学楼）——
+   * 这个页面的数据量是「楼栋 × 房间 × 14 个节次」的表格，进页面就拉全量既慢，
+   * 也让卡片展开转场（整页快照）扛着上千节点一起栅格化。
+   * 现在由用户选好条件、点「查询」才开始加载。
+   */
+  @State private hasQueried: boolean = false;
   @State private errorMessage: string = '';
   @State private dates: string[] = [];
   @State private selectedDate: string = '';
@@ -95,10 +104,11 @@ export struct ClassroomPage {
       list.push(DateUtil.format(DateUtil.addDays(new Date(), i)));
     }
     this.dates = list;
-    this.query();
+    // ⚠️ 这里**不再** `this.query()`：进页面不加载，等用户点「查询」。
   }
 
   private async query(): Promise<void> {
+    this.hasQueried = true;
     this.loadState = LoadState.LOADING;
     this.selectedDate = this.pendingDate;
     this.campusId = this.pendingCampusId;
@@ -421,11 +431,7 @@ export struct ClassroomPage {
       // 左边距对齐上一行的色块（「说明：」标签宽 + 间距）
       .padding({ left: 44 })
       .alignItems(VerticalAlign.Center)
-
-      Text('当前时间以前的空教室不显示')
-        .fontSize(AppFont.caption)
-        .fontColor(AppColor.textTertiary)
-        .width('100%')
+      // 原第三行「当前时间以前的空教室不显示」已按用户要求移除
     }
     .width('100%')
     .padding(12)
@@ -532,7 +538,10 @@ export struct ClassroomPage {
         this.queryCard()
         this.helpCard()
 
-        if (this.loadState === LoadState.LOADING) {
+        if (!this.hasQueried) {
+          // 未查询态：进页面先给一句引导，不自动拉数据
+          EmptyView({ message: '选好校区和日期后，点上方「查询」查看空闲教室' })
+        } else if (this.loadState === LoadState.LOADING) {
           LoadingView({ message: '正在查询空闲教室…' })
         } else if (this.loadState === LoadState.ERROR) {
           ErrorView({

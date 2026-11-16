@@ -5,7 +5,13 @@
 ![HDS](https://img.shields.io/badge/UI_Design_Kit-HDS-purple.svg?style=flat)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat)
 
-**UBAA-HarmonyOS** 是 [智慧北航（UBAA）](https://github.com/BUAASubnet/UBAA) 的 HarmonyOS 原生客户端。
+**UBAA-HarmonyOS** 是 [UBAA](https://github.com/BUAASubnet/UBAA) 的 HarmonyOS 原生客户端。
+
+> **非官方声明**：本项目由个人开发者基于开源项目 UBAA 独立开发与维护，**不是**北京航空航天大学
+> 的官方应用，与学校及各校内系统的运营方无从属、代理或合作关系。应用内数据均由用户本人通过
+> 统一身份认证登录后自行访问学校系统获得；客户端无自建服务端，不收集、不存储、不转发用户数据。
+> 上游项目方已书面同意本版本发布，按 MIT 许可证要求保留原始版权声明（见 [LICENSE](LICENSE) 与
+> 应用内「关于 → 开源许可」）。
 
 它**不依赖自建服务端**：登录与取数全部由客户端直连校内上游系统（统一认证、教务、博雅、
 SPOC、图书馆等），ArkTS 侧完成请求编排与页面解析。UI 按鸿蒙设计规范重写，

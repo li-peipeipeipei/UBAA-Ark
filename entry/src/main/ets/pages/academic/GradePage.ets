@@ -39,6 +39,21 @@ export struct GradePage {
   /** 「全部成绩」还在后台加载（显示「统计中」，与原版一致）。 */
   @State private summaryLoading: boolean = false;
   @State private termName: string = '';
+  /**
+   * 学期切换的**状态镜像**（「本学期」卡里的箭头用它判断边界）。
+   *
+   * 为什么不直接用 `this.header.canPrev()/canNext()`：header 虽然是 @Observed，
+   * 但本组件不是 `@ObjectLink`，直接读它的属性不会建立依赖 —— 切完学期、
+   * 箭头该置灰时不会刷新（顶栏那版 `GradeTermTitle` 是 @ObjectLink，才没这个问题）。
+   */
+  @State private termIndex: number = -1;
+  @State private termCount: number = 0;
+  /**
+   * 切学期请求序号：连点箭头时只接受**最后一次**的结果。
+   *
+   * 否则先发出的慢请求后返回，会把已经切走的那个学期的成绩盖回来（显示错学期）。
+   */
+  private termSeq: number = 0;
 
   /** 各学期的成绩缓存（termCode → 该学期成绩），切学期时复用。 */
   private termGrades: Map<string, Grade[]> = new Map<string, Grade[]>();
@@ -66,6 +81,8 @@ export struct GradePage {
         this.loadState = LoadState.SUCCESS;
         this.header.terms = [];
         this.header.termIndex = -1;
+        this.termIndex = -1;
+        this.termCount = 0;
         this.termName = '';
         this.header.termName = '成绩查询';
         return;
@@ -73,8 +90,10 @@ export struct GradePage {
       this.header.terms = terms;
       const index: number = this.pickTermIndex(terms);
       this.header.termIndex = index;
+      this.termIndex = index;
+      this.termCount = terms.length;
       this.applyTerm(terms[index]);
-      await this.loadCurrentTerm();
+      await this.loadCurrentTerm(this.termSeq);
       this.loadState = LoadState.SUCCESS;
       // 「全部成绩」要遍历所有学期 —— 放后台，不挡当前学期出内容
       this.loadAllTerms(terms);
@@ -110,19 +129,30 @@ export struct GradePage {
     TokenStore.setSelectedTerm(term.itemCode, term.itemName);
   }
 
-  /** 拉当前学期的成绩。 */
-  private async loadCurrentTerm(): Promise<void> {
+  /**
+   * 拉当前学期的成绩。
+   *
+   * `seq` 是调用方的请求序号：`await` 回来后若已经切到别的学期（`termSeq` 变了），
+   * 这次结果只写缓存、不写界面 —— 防止连点箭头时慢请求把画面盖回旧学期。
+   */
+  private async loadCurrentTerm(seq: number): Promise<void> {
     const termCode: string = this.header.termCode;
     if (termCode.length === 0) {
       return;
     }
     const cached: Grade[] | undefined = this.termGrades.get(termCode);
     if (cached !== undefined) {
+      if (seq !== this.termSeq) {
+        return;
+      }
       this.grades = cached;
       return;
     }
     const data: GradeData = await ApiService.fetchGrades(termCode);
     this.termGrades.set(termCode, data.grades);
+    if (seq !== this.termSeq) {
+      return;
+    }
     this.grades = data.grades;
   }
 
@@ -170,17 +200,24 @@ export struct GradePage {
     this.allGrades = merged;
   }
 
-  /** 切换学期（顶栏 ‹ ›）。 */
+  /** 切换学期（「本学期」卡里的 ‹ ›）。 */
   private switchTerm(delta: number): void {
-    const index: number = this.header.termIndex + delta;
-    if (index < 0 || index >= this.header.terms.length) {
+    // 边界用 @State 镜像判断（header.termIndex 不会触发本组件刷新）
+    const index: number = this.termIndex + delta;
+    if (index < 0 || index >= this.termCount) {
       return;
     }
+    this.termIndex = index;
     this.header.termIndex = index;
     this.applyTerm(this.header.terms[index]);
-    this.loadCurrentTerm()
+    const seq: number = this.termSeq + 1;
+    this.termSeq = seq;
+    this.loadCurrentTerm(seq)
       .then(() => {
-        this.pushToCards();
+        // 只有最后一次切换才写桌面卡片，避免连点时用半路的数据覆盖
+        if (seq === this.termSeq) {
+          this.pushToCards();
+        }
       })
       .catch((error: Error) => {
         Logger.warn('切换学期后拉取成绩失败：' + error.message);
@@ -292,6 +329,72 @@ export struct GradePage {
     .backgroundColor(AppColor.surfaceSubtle)
   }
 
+  /**
+   * 「本学期」卡右上角：**学期名 + 上一/下一学期箭头**。
+   *
+   * 从标题栏移到这里（标题栏现在只放「成绩查询」，与其它页同一位置）：
+   * 字号取 body 以下（caption），箭头按钮 24×24、图标 14 —— 比标题栏那版小一号，
+   * 正好落在卡片的标题行里，不改变卡片内其它行的排版。
+   *
+   * ⚠️ 箭头必须内联（不能抽成带参数的 @Builder）：布尔参数按值传入、
+   * 不参与状态刷新，首帧算出的禁用态会一直留着（顶栏那版踩过）。
+   * 学期名用 `this.termName`（@State）而不是 `this.header.termName`：
+   * 前者换学期时会触发本组件重绘，后者只是普通属性。
+   */
+  /** 是否还有更早 / 更晚的学期（读 @State 镜像，切换后箭头状态才会刷新）。 */
+  private canPrevTerm(): boolean {
+    return this.termIndex > 0;
+  }
+
+  private canNextTerm(): boolean {
+    return this.termIndex >= 0 && this.termIndex < this.termCount - 1;
+  }
+
+  @Builder
+  termSwitch() {
+    Row({ space: 2 }) {
+      Text(this.termName.length > 0 ? this.termName : '—')
+        .fontSize(AppFont.caption)
+        .fontColor(AppColor.textSecondary)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .constraintSize({ maxWidth: 92 })
+
+      Button() {
+        SymbolGlyph($r('sys.symbol.chevron_left'))
+          .fontSize(14)
+          .fontColor([this.canPrevTerm() ? AppColor.textPrimary : AppColor.textTertiary])
+      }
+      .type(ButtonType.Normal)
+      .width(24)
+      .height(24)
+      .borderRadius(12)
+      .backgroundColor(Color.Transparent)
+      .enabled(this.canPrevTerm())
+      .stateEffect(this.canPrevTerm())
+      .onClick(() => {
+        this.switchTerm(-1);
+      })
+
+      Button() {
+        SymbolGlyph($r('sys.symbol.chevron_right'))
+          .fontSize(14)
+          .fontColor([this.canNextTerm() ? AppColor.textPrimary : AppColor.textTertiary])
+      }
+      .type(ButtonType.Normal)
+      .width(24)
+      .height(24)
+      .borderRadius(12)
+      .backgroundColor(Color.Transparent)
+      .enabled(this.canNextTerm())
+      .stateEffect(this.canNextTerm())
+      .onClick(() => {
+        this.switchTerm(1);
+      })
+    }
+    .alignItems(VerticalAlign.Center)
+  }
+
   /** 课程卡下面的一行明细（标签 + 值）。 */
   @Builder
   detailRow(label: string, value: string, withIcon: boolean) {
@@ -392,7 +495,7 @@ export struct GradePage {
             weightedText: this.weightedTextOf(this.allGrades),
             arithmeticText: this.arithmeticTextOf(this.allGrades)
           })
-          // 本学期
+          // 本学期（右上角挂学期切换：学期名 + 前后箭头）
           GradeSummaryCard({
             title: '本学期',
             showCourseAndCredits: true,
@@ -401,7 +504,10 @@ export struct GradePage {
             creditsText: this.creditsTextOf(this.grades),
             gpaText: this.gpaTextOf(this.grades),
             weightedText: this.weightedTextOf(this.grades),
-            arithmeticText: this.arithmeticTextOf(this.grades)
+            arithmeticText: this.arithmeticTextOf(this.grades),
+            trailing: (): void => {
+              this.termSwitch();
+            }
           })
 
           if (this.grades.length === 0) {

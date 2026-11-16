@@ -6,15 +6,15 @@
     },
     {
       "name": "EntryAbility_desc",
-      "value": "智慧北航 · 校园服务聚合客户端"
+      "value": "UBAA · 校园服务聚合客户端"
     },
     {
       "name": "EntryAbility_label",
-      "value": "智慧北航"
+      "value": "UBAA"
     },
     {
       "name": "permission_internet_reason",
-      "value": "用于连接北航校园服务，获取课表、成绩、考试等数据"
+      "value": "用于连接学校统一身份认证与教务服务，获取课表、成绩、考试等数据"
     },
     {
       "name": "permission_network_info_reason",
@@ -38,7 +38,7 @@
     },
     {
       "name": "UBAAFormAbility_label",
-      "value": "智慧北航服务卡片"
+      "value": "UBAA 服务卡片"
     },
     {
       "name": "UBAAFormAbility_desc",

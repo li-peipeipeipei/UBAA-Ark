@@ -53,6 +53,14 @@
       "value": "#66F1F3F5"
     },
     {
+      "name": "nav_scrim",
+      "value": "#66F1F3F5"
+    },
+    {
+      "name": "nav_scrim_end",
+      "value": "#00F1F3F5"
+    },
+    {
       "name": "text_primary",
       "value": "#E6000000"
     },

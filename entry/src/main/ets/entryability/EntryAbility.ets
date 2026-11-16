@@ -1,8 +1,12 @@
 import { AbilityConstant, Configuration, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
+import display from '@ohos.display';
 import { GlobalContext } from '../common/GlobalContext';
 import { ImmersiveUtil } from '../common/ImmersiveUtil';
+import { resourceManager } from '@kit.LocalizationKit';
+import { CardCache } from '../common/CardCache';
+import { CardRefresher } from '../common/CardRefresher';
 import { Logger } from '../common/Logger';
 import { TokenStore } from '../network/TokenStore';
 import { KEY_MAIN_TAB_INDEX } from '../common/NavStacks';
@@ -38,6 +42,25 @@ const KEY_PENDING_PAGE: string = 'pendingPage';
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     Logger.info('EntryAbility onCreate');
+    // 全局深浅色标记：课表页等用 @StorageProp('isDark') 订阅，切主题时自动重绘并换色板
+    CardCache.darkHint = CardCache.isDarkMode(this.context);
+    AppStorage.setOrCreate('isDark', CardCache.darkHint);
+    // [探查] 屏幕物理圆角：`getRoundedCorner()` 只对「产品配置了圆角值的物理屏」返回，
+    // 虚拟屏/无配置返回空数组。radius 单位 px。用于评估「色块全屏圆角 = 屏幕圆角」是否可行。
+    try {
+      const d: display.Display = display.getDefaultDisplaySync();
+      const cs: display.RoundedCorner[] = d.getRoundedCorner();
+      let detail: string = '';
+      for (let i = 0; i < cs.length; i++) {
+        detail += '|type=' + cs[i].type + ' r=' + cs[i].radius + 'px at(' +
+          cs[i].position.x + ',' + cs[i].position.y + ')';
+      }
+      Logger.info('SCREENROUND density=' + d.densityPixels + ' px=' + d.width + 'x' + d.height +
+        ' n=' + cs.length + ' ' + detail);
+    } catch (err) {
+      Logger.warn('SCREENROUND failed: ' + (err as BusinessError).message +
+        ' code=' + (err as BusinessError).code);
+    }
     GlobalContext.setContext(this.context);
     // 预热本地存储：clientId 与连接配置需要在首帧前可用
     TokenStore.getOrCreateClientId();
@@ -111,12 +134,22 @@ export default class EntryAbility extends UIAbility {
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
-    // config.colorMode 可能为 undefined（未指定），这里回退到浅色
-    const rawColorMode: ConfigurationConstant.ColorMode | undefined = this.context.config.colorMode;
-    const colorMode: ConfigurationConstant.ColorMode = rawColorMode === undefined
-      ? ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT
-      : rawColorMode;
-    AppStorage.setOrCreate('isDarkMode', colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
+    /**
+     * 主题判定用**系统配置**（`resourceManager`），不用 `context.config.colorMode` ——
+     * 后者是**应用配置**（可能被 `setColorMode` 覆盖），和系统实际主题不一定一致。
+     */
+    let isDark: boolean = false;
+    try {
+      const cfg = this.context.resourceManager.getConfigurationSync();
+      isDark = cfg.colorMode === resourceManager.ColorMode.DARK;
+    } catch (err) {
+      isDark = false;
+    }
+    const colorMode: ConfigurationConstant.ColorMode = isDark
+      ? ConfigurationConstant.ColorMode.COLOR_MODE_DARK
+      : ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT;
+    CardCache.darkHint = isDark;
+    AppStorage.setOrCreate('isDark', isDark);
 
     // 方向策略（必须在 loadContent 之前）：
     // - 平板 / 2in1：跟随握持方向，横屏不再被塞进竖屏兼容窗口；
@@ -165,6 +198,28 @@ export default class EntryAbility extends UIAbility {
       ? ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT
       : newConfig.colorMode;
     ImmersiveUtil.updateColorMode(newColorMode);
+
+    /**
+     * 深浅色切换：页面与桌面卡片要一起换配色。
+     *
+     * - 页面：写 AppStorage，课表页的 `@StorageProp('isDark')` 收到后自动重绘；
+     * - 卡片：它是独立进程，必须由主应用**重新推送** payload（`darkMode` 在
+     *   `buildPayload` 里现取配置），所以这里重算一次再 pushAll。
+     */
+    const dark: boolean = newColorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
+    CardCache.darkHint = dark;
+    AppStorage.setOrCreate('isDark', dark);
+    /**
+     * 无条件重推桌面卡片 —— 不走 `CardRefresher.refresh()`，
+     * 那个方法在「本地没有课表元信息」时会跳过，导致卡片收不到新的 darkMode。
+     * `buildPayload` 里的 darkMode 是现取 `CardCache.darkHint` 的，这里刚设好。
+     */
+    try {
+      CardCache.pushAll(this.context);
+      Logger.info('深浅色=' + (dark ? '深色' : '浅色') + '，桌面卡片已重新推送');
+    } catch (e) {
+      Logger.warn('切换主题后推送卡片失败：' + (e as Error).message);
+    }
   }
 
   onDestroy(): void {

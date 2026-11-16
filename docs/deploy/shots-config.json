@@ -1,0 +1,56 @@
+[
+  {
+    "file": "screenshot_20261116_205904_com.ubaa.app.png",
+    "brand": "UBAA 鸿蒙版",
+    "title": "今天这几节课",
+    "title2": "首页直接给答案",
+    "subtitle": "课程、待办和常用入口，不用再挨个翻",
+    "tone": "gray-first",
+    "uncase": false
+  },
+  {
+    "file": "screenshot_20261116_210337_com.ubaa.app.png",
+    "brand": "UBAA 鸿蒙版",
+    "title": "整周课表",
+    "title2": "左右一拖就翻页",
+    "subtitle": "上课时间、地点和任课老师一目了然",
+    "tone": "blue-first",
+    "uncase": false
+  },
+  {
+    "file": "screenshot_20261116_210048_com.ubaa.app.png",
+    "brand": "UBAA 鸿蒙版",
+    "title": "还有空位吗",
+    "title2": "图书馆座位当场约",
+    "subtitle": "按楼馆和分区查空位，直接下单预约",
+    "tone": "gray-first",
+    "uncase": false
+  },
+  {
+    "file": "screenshot_20261116_210126_com.ubaa.app.png",
+    "brand": "UBAA 鸿蒙版",
+    "title": "作业别拖到最后",
+    "title2": "SPOC 一步跳过去",
+    "subtitle": "要求、截止时间和提交入口都在列表里",
+    "tone": "blue-first",
+    "uncase": false
+  },
+  {
+    "file": "screenshot_20261116_211437_com.ubaa.app.png",
+    "brand": "UBAA 鸿蒙版",
+    "title": "想选的博雅",
+    "title2": "详情看清了再选",
+    "subtitle": "课程要求、已选列表和达标统计都在这",
+    "tone": "gray-first",
+    "uncase": false
+  },
+  {
+    "file": "screenshot_20261116_211705_SCBDesktop8.png",
+    "brand": "UBAA 鸿蒙版",
+    "title": "不用打开应用",
+    "title2": "课表考试摆桌面",
+    "subtitle": "六种桌面卡片，下一节课随时看一眼",
+    "tone": "blue-first",
+    "uncase": false
+  }
+]

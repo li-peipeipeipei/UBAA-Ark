@@ -15,6 +15,12 @@
 - [构建与签名](tech/build.md) —— 首次构建、自动签名、API 26 编译坑
 - [排障指南](tech/troubleshooting.md) —— 常见报错与判据
 
+## 上架与合规
+
+- [发布签名与打包](deploy/release-signing.md) —— 发布证书 / Profile 申请、release 打包、上传前自检
+- [隐私政策](legal/privacy-policy.md) —— 应用内同源文本，托管后作为 AGC 隐私政策 URL
+- [应用信息与商店文案](deploy/store-listing.md) —— 应用名称、一句话简介、详细描述、免责声明口径
+
 ## 外部
 
 - [上游 UBAA（Kotlin Multiplatform）](https://github.com/BUAASubnet/UBAA)

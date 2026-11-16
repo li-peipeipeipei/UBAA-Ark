@@ -1,4 +1,4 @@
-import { AppColor, AppFont, AppSize } from './AppTheme';
+import { AppColor, AppFont, AppSize, tilePressCurve } from './AppTheme';
 import { MaterialCardLayer } from './MaterialCardLayer';
 import { immersiveMaterialActive } from '../common/SystemMaterial';
 import curves from '@ohos.curves';
@@ -22,14 +22,22 @@ const FEATURE_TILE_RADIUS_FALLBACK: number = 28;
 /**
  * 按下时缩到多小。
  *
- * 反馈要「看得见但不夸张」：0.955 在 175vp 的块上是缩小约 8vp，
+ * 反馈要「看得见但不夸张」：0.96 在 175vp 的块上是缩小约 7vp，
  * 抬手时弹簧回到 1 会有一次很轻的过冲 —— 就是那点「弹性」。
  */
-const TILE_PRESS_SCALE: number = 0.955;
-/** 按下到位的时间（ms）。必须短，超过 120ms 就会有「迟钝」感。 */
-const TILE_PRESS_DOWN_MS: number = 90;
-/** 返回时原卡片的回弹峰值。 */
-const TILE_BOUNCE_SCALE: number = 1.08;
+const TILE_PRESS_SCALE: number = 0.96;
+/** 按下到位的时间（ms）。190：用户指定的「慢压」手感（点击更快时由抬起弹簧接管）。 */
+const TILE_PRESS_DOWN_MS: number = 190;
+/**
+ * 收起落地时原卡片的起始比例 —— **比正常略小**，随后回到 1。
+ *
+ * 用户要求：落地「缩一点再归位」，不要弹到比正常大。
+ * 所以全程只用 0.98 → 1 的单向回弹（不过冲），
+ * 不用弹簧 —— springMotion 的欠阻尼一定会冲过 1（用户明确不要）。
+ */
+const TILE_LAND_SCALE: number = 0.98;
+/** 落地回弹时长（ms）。256：收口后回到正常大小的节奏（用户选定）。 */
+const TILE_LAND_BACK_MS: number = 256;
 
 /**
  * 图标来源类型。
@@ -233,7 +241,7 @@ export struct FeatureTile {
 
   /** 是否处于按下态（0.955）。 */
   @State private pressed: boolean = false;
-  /** 回弹峰值 1.035，随后由动画收回 1。 */
+  /** 收起落地后的归位比例：从 TILE_LAND_SCALE（略小）回到 1。 */
   @State private bounceScale: number = 1;
 
   onBounce(): void {
@@ -243,17 +251,16 @@ export struct FeatureTile {
     if (this.bounceTick <= 0) {
       return;
     }
-    // ⚠️ 不能「瞬间跳到峰值」：收起的最后遮罩正好压在卡片上（1.0），
-    // 真卡片一出现就跳到 1.08，那 8% 的突跳看起来就是「错位 / 跳一下」。
-    // 改成平滑的两段：先涨到峰值，再弹性回落 —— 与缩回落地是连续的一段动作。
-    this.getUIContext().animateTo({ duration: 110, curve: Curve.EaseOut }, () => {
-      this.bounceScale = TILE_BOUNCE_SCALE;
-    });
+    // 落地瞬间先「缩一点」（用户要求：比正常块略小），再回到正常大小 ——
+    // 全程不过冲，绝不会比正常大。
+    // ⚠️ 起点必须**先落一帧**再启动动画，否则「赋值 + animateTo 到 1」在同一帧
+    // 提交会被合并成「直接是 1」，缩的那一下根本看不到。
+    this.bounceScale = TILE_LAND_SCALE;
     setTimeout(() => {
-      this.getUIContext().animateTo({ curve: curves.springMotion(0.28, 0.5) }, () => {
+      this.getUIContext().animateTo({ duration: TILE_LAND_BACK_MS, curve: Curve.FastOutSlowIn }, () => {
         this.bounceScale = 1;
       });
-    }, 110);
+    }, 16);
   }
 
   /** 沉浸材质是否可用（只查一次；不可用时退化为不透明纯色）。 */
@@ -310,8 +317,9 @@ export struct FeatureTile {
     // 竖长：宽 / 高 = 0.8，高度比宽度大 25%
     .aspectRatio(0.8)
     // 按下缩放 + 回来时的一次回弹，都作用在整块上。
-    // ⚠️ 不用 `.animation()`：它给所有变化套同一条曲线，而「按下」要快（90ms Friction）、
-    // 「抬起」要弹（spring）、「回弹」要先涨后落 —— 各自不同，只能用显式 animateTo。
+    // ⚠️ 不用 `.animation()`：它给所有变化套同一条曲线，而「按下」要快
+    // （190ms Friction）、「抬起」要弹（spring）、「回弹」要先涨后落 ——
+    // 各自不同，只能用显式 animateTo。
     .scale({
       x: this.pressed ? TILE_PRESS_SCALE : this.bounceScale,
       y: this.pressed ? TILE_PRESS_SCALE : this.bounceScale
@@ -320,7 +328,7 @@ export struct FeatureTile {
     // 按下去的那 100ms 里没有任何视觉回应，手感是「点不动」。
     .onTouch((event: TouchEvent) => {
       if (event.type === TouchType.Down) {
-        this.getUIContext().animateTo({ duration: TILE_PRESS_DOWN_MS, curve: Curve.Friction }, () => {
+        this.getUIContext().animateTo({ duration: TILE_PRESS_DOWN_MS, curve: tilePressCurve() }, () => {
           this.pressed = true;
         });
       } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {

@@ -5,7 +5,7 @@ import curves from '@ohos.curves';
 import { Toast } from '../../common/Toast';
 import { Logger } from '../../common/Logger';
 import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
-import { topSafeInsetVp } from '../../common/ImmersiveUtil';
+import { topSafeInsetVp, currentIsDark } from '../../common/ImmersiveUtil';
 import { FeatureTile, featureTileAlpha } from '../../components/CommonViews';
 import { RouteName } from '../../common/AppRouter';
 import { BackGuard } from '../../common/BackGuard';
@@ -36,6 +36,14 @@ const MAX_COLUMNS: number = 10;
 const TILE_CORNER_SCALE: number = 0.16;
 /** 卡片宽高比：与 FeatureTile 的 `aspectRatio(0.8)` 必须一致，算卡片中心高度要用。 */
 const TILE_ASPECT_RATIO: number = 0.8;
+/**
+ * 功能网格相对「状态栏 + 标题栏留白」再上移的量（vp）。
+ *
+ * 客户端截图实测：第一行卡片顶部原来落在距屏幕顶 **71.71vp**（251px / 3.5），
+ * 用户要求再上移一点 → 这里减 12，目标约 **59.7vp**。
+ * 该值只影响功能页网格的起始位置（也直接影响卡片落点坐标，因为转场用的就是实测位置）。
+ */
+const FEATURE_GRID_TOP_LIFT: number = 12;
 
 /**
  * 功能页：一层平铺的功能按钮网格。
@@ -104,6 +112,11 @@ export struct FeaturePage {
 
   private onTileBounds(index: number, x: number, y: number, w: number, h: number): void {
     this.tileBounds.set(index, [x, y, w, h]);
+    // 同一张卡的**实时**矩形也交给 HeroMorph：收起落点用它。
+    // 点开时存的是快照，展开期间网格若因内容加载位移几 vp，旧坐标会让落点偏掉
+    // （真机实测：最后一帧尺寸正确、整体下移 19px）。序号不匹配会被内部丢弃。
+    const live: MorphRect = { x: x, y: y, w: w, h: h, radius: this.tileRadius };
+    HeroMorph.noteLiveCard(index, live);
   }
 
   /**
@@ -136,7 +149,9 @@ export struct FeaturePage {
     if (NavHero.isHeroRoute(item.route)) {
       const rect: MorphRect | null = this.cardRect(index);
       if (rect !== null) {
-        const dark: boolean = AppStorage.get<boolean>('isDarkMode') ?? false;
+        // 键名曾误写 'isDarkMode'（写入方是 'isDark'）→ 深色下取不到值，
+        // 转场起点固定用浅色色板。统一走 currentIsDark()。
+        const dark: boolean = currentIsDark();
         // ⚠️ 传**基础色**而不是预先混合好的色值：遮罩用「基础色 + 与卡片相同的透明度」
         // 自己叠出来，混合方式与卡片完全一致，起点颜色才不会有色差。
         const base: string = dark ? item.colorDark : item.colorValue;
@@ -152,6 +167,9 @@ export struct FeaturePage {
         });
         HeroMorph.startExpand(base, rect, index, item.title, item.icon, featureTileAlpha());
         this.heroIndex = index;
+        // 先恢复所有卡片：上一轮收起若被这次点开打断，那张卡可能还处于隐藏态
+        // （收起全程卡片隐藏、finishShrink 才放）。恢复后再按 30ms 藏起本次这张。
+        this.heroHideTile = false;
         // 遮罩首帧就是这张卡（同色同位置同圆角），所以把它藏起来看不出差别；
         // 30ms 是给遮罩一帧布局的时间。
         setTimeout(() => {
@@ -229,12 +247,19 @@ export struct FeaturePage {
         // 直接返回 0（因为它以为 HdsNavigation 会避让标题栏）。而功能页签为了卡片展开
         // 已经 `hideTitleBar(true)`，避让没了 —— 再用它就会让卡片顶到状态栏上。
         // 所以这里显式算：状态栏高度 + 与标题栏等高的留白，位置与改造前一致。
-        top: topSafeInsetVp() + AppSize.navTitleBarMiniHeight,
+        //
+        // 「一级页内容整体上移 contentTopLift」必须写成**负的 padding**，不能用
+        // `.translate({ y: -lift })`：`onAreaChange` 报的 `globalPosition` 是窗口
+        // 坐标系里的**布局位置**（不含 transform），而转场遮罩直接拿它当屏幕坐标用 ——
+        // 卡片的视觉位置比上报位置高 8vp，遮罩就会从低 8vp 处起跳、也停在低 8vp 处。
+        // 真机表现正是「点开后块先向下跳一点再放大 / 收起归位前从靠下的位置跳回」。
+        //
+        // 再上移 GRID_TOP_LIFT：截图实测原位置第一行卡片顶距屏幕顶 71.71vp
+        // （251px / 3.5），用户要求「再上移一点」→ 目标约 59.7vp。
+        top: topSafeInsetVp() + AppSize.navTitleBarMiniHeight - AppSize.contentTopLift - FEATURE_GRID_TOP_LIFT,
         bottom: 0
       })
       .constraintSize({ minHeight: '100%' })
-      // 一级页内容整体上移一点（纯视觉位移，见 AppSize.contentTopLift）
-      .translate({ y: -AppSize.contentTopLift })
       // 量自身宽度换算列数（不做动画；分栏收放期间由 HDS 自己走，页面只跟随最终宽度）
       .onAreaChange((oldArea: Area, newArea: Area) => {
         const raw: Length = newArea.width;

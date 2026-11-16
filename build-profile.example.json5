@@ -4,11 +4,43 @@
    * 用法：复制本文件为 build-profile.json5，再在 DevEco Studio 中
    *       File > Project Structure > Signing Configs 勾选自动签名。
    *
+   * ⚠️ 包名变更（cn.edu.buaa.ubaa → com.ubaa.app）后，旧调试 Profile 与新的
+   *    bundleName 不再匹配，构建会报：
+   *      "The bundleName in app.json5/hvigorfile.ts does not match the bundleName
+   *       in the generated SigningConfigs"
+   *    处理：DevEco Studio → File → Project Structure → Signing Configs →
+   *    取消勾选再重新勾选 Automatically generate signature（会自动重建 .p7b），
+   *    或点提示里的 Fix。p7b 是华为签名 CMS，命令行无法修改。
+   *
    * compatibleSdkVersion / targetSdkVersion 固定为 6.1.0(23)：
    * - HdsTabs 的 barFloatingStyle（悬浮页签）与 systemMaterialEffect（沉浸光感）自 API 23 起提供。
    * - 低于 API 23 的设备无法安装，符合本项目「API 23 及以上可用」的目标。
    */
   "app": {
+    /*
+     * 签名配置。上架必须用「发布证书 + 发布 Profile」，调试签名 AGC 不认。
+     * 详细申请步骤见 docs/deploy/release-signing.md。
+     *
+     * products[].signingConfig 决定当前生效的是哪一项：
+     *   平时调试 → "default"（DevEco 自动生成的调试签名）
+     *   上架打包 → "release"（自己申请的发布证书）
+     */
+    "signingConfigs": [
+      /* 调试签名由 DevEco 自动生成并写回本文件，此处不提供模板，避免误填口令。 */
+      // {
+      //   "name": "release",
+      //   "type": "HarmonyOS",
+      //   "material": {
+      //     "certpath": "D:/keys/ubaa-release.cer",
+      //     "storePassword": "<p12 口令>",
+      //     "keyAlias": "ubaa",
+      //     "keyPassword": "<密钥口令>",
+      //     "profile": "D:/keys/ubaa-release.p7b",
+      //     "signAlg": "SHA256withECDSA",
+      //     "storeFile": "D:/keys/ubaa-release.p12"
+      //   }
+      // }
+    ],
     "products": [
       {
         "name": "default",

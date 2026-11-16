@@ -45,12 +45,33 @@ export struct GradeSummaryCard {
   @Prop weightedText: string = '';
   @Prop arithmeticText: string = '';
 
+  @Builder
+  emptyTrailing() {
+  }
+
+  /**
+   * 标题行右侧插槽（成绩页的学期切换器放在这里）。
+   *
+   * 不传时这一行与改造前完全一样：`Row { 标题; Blank; 插槽 }` 里标题仍在最左，
+   * Blank 吃掉剩余宽度，插槽为空就不渲染任何东西 —— 既不动原有排版，
+   * 也避免为「本学期」这一张卡单独复制一份组件。
+   */
+  @BuilderParam trailing: () => void = this.emptyTrailing;
+
   build() {
     Column({ space: AppSize.gapSmall }) {
-      Text(this.title)
-        .fontSize(AppFont.subtitle)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(AppColor.textPrimary)
+      Row() {
+        Text(this.title)
+          .fontSize(AppFont.subtitle)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(AppColor.textPrimary)
+
+        Blank()
+
+        this.trailing()
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
 
       if (this.showCourseAndCredits) {
         Row() {

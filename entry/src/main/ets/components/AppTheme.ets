@@ -8,6 +8,7 @@
  * 颜色统一走资源引用，天然支持深色模式（resources/dark）。
  */
 import { KEY_BREAKPOINT, useBottomTabBar } from '../common/Breakpoint';
+import curves from '@ohos.curves';
 
 export class AppColor {
   static readonly brand: Resource = $r('app.color.brand');
@@ -42,6 +43,19 @@ export class AppColor {
    * 尺寸对齐系统返回按钮：40×40vp 圆 + 24vp 图标。
    */
   static readonly circleButtonSurface: Resource = $r('app.color.circle_button_surface');
+  /**
+   * 二级页悬浮顶栏的「渐变遮罩」色（上端）与它的透明端。
+   *
+   * 用法：底板用 `linearGradient(navScrim → navScrimEnd)` + `backdropBlur`，
+   * 得到「内容从顶栏下沿渐隐 + 磨砂」的过渡 —— 这才是 HDS 标题栏那种
+   * `IMMERSIVE_GRADIENT_BLUR` 的观感。
+   *
+   * ⚠️ 透明端必须是**同 RGB、只降 alpha**（浅色 #00F1F3F5 / 深色 #00000000），
+   * 不能写 `Color.Transparent`（rgba(0,0,0,0)）—— 浅色底上与遮罩色插值会渗出灰黑，
+   * 形成一条脏带（课程地点渐隐那次踩过同一个坑）。
+   */
+  static readonly navScrim: Resource = $r('app.color.nav_scrim');
+  static readonly navScrimEnd: Resource = $r('app.color.nav_scrim_end');
   static readonly textPrimary: Resource = $r('app.color.text_primary');
   static readonly textSecondary: Resource = $r('app.color.text_secondary');
   static readonly textTertiary: Resource = $r('app.color.text_tertiary');
@@ -282,3 +296,61 @@ export class ModuleColor {
     return AppColor.accentPink;
   }
 }
+
+/* --------------------------- 转场 / 交互曲线 --------------------------- */
+
+/**
+ * 曲线方案开关（用户要求「要能够回到没改之前」）。
+ *
+ * - `true`：Apple 风格贝塞尔
+ *   放大 `cubic-bezier(0.16, 1, 0.3, 1)`、缩小 `cubic-bezier(0.32, 0.72, 0, 1)`、
+ *   按压 `cubic-bezier(0.25, 1, 0.5, 1)`；
+ * - `false`：改造前的曲线
+ *   放大 `springMotion(0.3, 0.82)`、缩小 `Curve.FastOutSlowIn`、按压 `Curve.Friction`。
+ *
+ * 回退只需把这里改成 `false` 重新构建 —— 三个调用点都走下面的工厂函数，不用逐个改。
+ */
+export const USE_APPLE_CURVES: boolean = true;
+
+/** 放大（卡片长到全屏）的曲线。贝塞尔必须配 duration，弹簧会忽略 duration。 */
+export function heroExpandCurve(): curves.ICurve {
+  return USE_APPLE_CURVES
+    ? curves.cubicBezierCurve(0.16, 1, 0.3, 1)
+    : curves.springMotion(0.3, 0.82);
+}
+
+/**
+ * 放大时长（ms）：只在使用贝塞尔时生效。
+ *
+ * 450 = Material 3 的 `DurationLong1`，官方给「共享元素 / 容器变换（卡片展开成详情页）」
+ * 的时长；`(0.16,1,0.3,1)` 这条强 ease-out 的感知时长比数学时长快 20~30%，
+ * 所以观感约等于 320~350ms 的匀速动画，不会显得拖。
+ */
+export const HERO_EXPAND_MS: number = 450;
+
+/**
+ * 缩小（全屏收回卡片）的曲线。
+ *
+ * ⚠️ 这一条**不能**用弹簧：收尾挂在几何的 `onFinish` 上，弹簧的 onFinish 比视觉停稳晚，
+ * 落地和回弹会滞后半拍（改造前踩过）。
+ */
+export function heroShrinkCurve(): curves.ICurve {
+  return USE_APPLE_CURVES
+    ? curves.cubicBezierCurve(0.32, 0.72, 0, 1)
+    : curves.initCurve(Curve.FastOutSlowIn);
+}
+
+/** 按压（按下）的曲线。 */
+export function tilePressCurve(): curves.ICurve {
+  return USE_APPLE_CURVES
+    ? curves.cubicBezierCurve(0.25, 1, 0.5, 1)
+    : curves.initCurve(Curve.Friction);
+}
+
+/**
+ * 收起落地是否播放回弹（0.98 → 1）。
+ *
+ * 改成 `true` 即恢复：卡片落位后先缩到 `TILE_LAND_SCALE` 再回弹；
+ * 现在为 `false` —— 卡片落位即静止（用户要求取消）。
+ */
+export const HERO_LAND_BOUNCE: boolean = false;

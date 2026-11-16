@@ -20,6 +20,11 @@ export struct MinePage {
   @State private userName: string = '';
   @State private schoolId: string = '';
   @State private loggingOut: boolean = false;
+  /**
+   * 二级页转场窗口内为 true：把顶部蓝卡隐去，避免缩放淡入时露出「蓝色一条」。
+   * 由 `openRoute` 置位，约一屏转场时长后自动复位。
+   */
+  @State private pushVeil: boolean = false;
 
   onLogout: () => void = () => {};
 
@@ -68,6 +73,10 @@ export struct MinePage {
         [AppColor.brandDark, 1.0]
       ]
     })
+    // 二级页转场期间隐去（见 `openRoute`）：HDS 的页面转场是「新页面缩放淡入、
+    // 下层不动」，缩放时四周会露出约 7.5vp 的下层内容 —— 这张蓝卡的顶部就是
+    // 用户看到的「蓝色一条」，藏掉后露出的是本页底色，与新页面同色看不出来。
+    .opacity(this.pushVeil ? 0 : 1)
   }
 
   @Builder
@@ -142,6 +151,14 @@ export struct MinePage {
    * 让详情以 push 动画从右侧滑入（而不是模式切换动画里的自左向右展开）。
    */
   private openRoute(route: string): void {
+    // 转场窗口内隐去顶部蓝卡：HDS 的二级页转场是「新页面缩放淡入、下层保持不动」，
+    // 缩放那 200~300ms 里四周会露出约 7.5vp 的下层画面；本页顶部是 brand 渐变的
+    // 用户卡，露出来就是一条刺眼的蓝色。隐去后露出的是本页底色（pageBackground），
+    // 与新页面底色相同，视觉上无缝。420ms 覆盖整段转场，之后自动复原。
+    this.pushVeil = true;
+    setTimeout(() => {
+      this.pushVeil = false;
+    }, 420);
     AppRouter.open(this.stack, route);
   }
 

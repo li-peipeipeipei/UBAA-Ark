@@ -373,25 +373,28 @@ export struct LoginPage {
             }
 
             // 服务端故障时给一条可执行的出路，而不是让用户对着报错干瞪眼
+            //
+            // ⚠️ 上架版刻意**不提供**「开启演示模式」的入口：
+            // 审核员在登录失败时点进去会看到本地示例数据，可能误判为真实数据，
+            // 也可能被认为应用支持任意账号登录，与商店申报口径不符。
+            // 这里只保留重试与说明，出路必须是「等网络恢复后重试」。
             if (this.serverDown) {
               Column({ space: 6 }) {
-                Text('服务端当前不可用，可以先开启演示模式查看界面效果。')
+                Text('学校统一身份认证服务当前不可用，请检查网络连接后重试。若持续失败，可稍后再试或联系学校信息中心。')
                   .fontSize(AppFont.caption)
                   .fontColor(AppColor.textSecondary)
                   .width('100%')
 
-                Button('开启演示模式')
+                Button('重新加载登录页')
                   .fontSize(AppFont.caption)
                   .height(32)
                   .backgroundColor(AppColor.surfaceSubtle)
                   .fontColor(AppColor.brand)
                   .type(ButtonType.Capsule)
                   .onClick(() => {
-                    TokenStore.setDemoMode(true);
-                    this.demoMode = true;
                     this.errorMessage = '';
                     this.serverDown = false;
-                    Toast.show('演示模式已开启，重新登录即可进入');
+                    this.warmUp();
                   })
               }
               .width('100%')

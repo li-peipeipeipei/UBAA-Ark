@@ -19,6 +19,10 @@
 *.p7b
 *.pem
 *.keystore
+*.csr
+# 整个 keys/ 都是签名材料（含 DevEco 的 material 凭据缓存），一律不进仓库。
+# 仓库是公开的，任何一项泄露都等于把上架签名交出去。
+/keys/
 
 # ===== 系统与编辑器噪声 =====
 .DS_Store
@@ -34,3 +38,6 @@ desktop.ini
 /*.webp
 /*.log
 /*.txt
+
+# ===== 本地临时备份与工具脚本 =====
+/.backup/

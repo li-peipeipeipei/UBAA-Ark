@@ -15,6 +15,8 @@ import { ScheduleHeaderModel } from '../../components/ScheduleHeader';
 import { buildCourseDetail, CourseDetailDialog, CourseDetail } from '../../components/CourseDetailDialog';
 import { MultiCourseDialog } from '../../components/MultiCourseDialog';
 import { CardCache, CardCourse, CardDayView, CardSlot, CardToday, CardWeekView } from '../../common/CardCache';
+import { CardDataBuilder } from '../../common/CardDataBuilder';
+import { ScheduleColors } from '../../common/ScheduleColors';
 import { ScheduleCache } from '../../network/ScheduleCache';
 import { GlobalContext } from '../../common/GlobalContext';
 import { CourseClass, SectionTime, Term, Week, WeeklySchedule } from '../../model/ApiTypes';
@@ -119,6 +121,15 @@ const SUNDAY_ROLL_OVER_HOUR: number = 15;
 const SECTION_CELL_HEIGHT: number = 56;
 
 /**
+ * 学校课表固定 14 节。
+ *
+ * 上游 `sectionTimes` 只给「本学期排了课的节次」，这学期没人选第 14 节就只返回到 13，
+ * 于是网格少画一行 —— 但学生需要看到第 14 节这一格（换课、临时调课都可能用到）。
+ * 所以节次行数**至少画满 14**，真有 15 节以上的学期按实际来。
+ */
+const SCHEDULE_TOTAL_SECTIONS: number = 14;
+
+/**
  * 左侧「节次」列的宽度（vp）。
  *
  * 尽量窄 —— 这一列只放 1~2 位数字，省下的宽度全部让给七天列，课程条就更宽。
@@ -129,10 +140,14 @@ const SCHEDULE_COLUMN_WIDTH: number = 24;
 /**
  * 课表网格的左右外边距（vp）。
  *
- * 比 `AppSize.pagePadding`(16) 小 —— 课表是「信息密度优先」的页面，两侧各收 8vp
- * 可以多出 16vp 给七天列，课程条宽度提升明显。表头与网格共用这个值，不会错列。
+ * **必须为 0**。Swiper 每一页的宽度 = 容器宽，容器左右各留多少，
+ * 页宽就比屏幕窄多少 —— 而 Swiper 开了 `clip(false)`（拖动时邻页要露出来），
+ * 静止时前一页的右边缘就会正好漏进这段内边距里，
+ * 表现为「上一周周日的课程条压在本周最左边」。
+ *
+ * 想要「序号列最左 → 周日列最右占满整屏」，本来也只能是 0。
  */
-const GRID_SIDE_PADDING: number = 8;
+const GRID_SIDE_PADDING: number = 0;
 
 const HEADER_HEIGHT: number = 44;
 
@@ -420,6 +435,11 @@ export struct SchedulePage {
 
   @State private termCode: string = '';
   @State private currentWeek: number = 1;
+  /**
+   * 当前是否深色模式。由 `EntryAbility.onConfigurationUpdate` 写入 AppStorage，
+   * 系统切换深浅色时页面会自动重绘并换用另一套色板。
+   */
+  @StorageProp('isDark') private isDark: boolean = true;
   @State private showTermSheet: boolean = false;
   /** 学期选择弹窗（CustomDialog，和课程详情同一套尺寸/动效）。 */
   private termDialogController: CustomDialogController | null = null;
@@ -856,7 +876,15 @@ export struct SchedulePage {
       // 与系统算出来的一致（或正好差一 = 上一版自动规则的产物）→ 视为未记
       return 0;
     }
-    return remembered;
+    // ⚠️ 必须校验该周次在本学期真实存在。
+    // TokenStore 里的选择是跨学期残留的：上学期停在第 18 周，本学期只有 16 周时，
+    // 卡片会照着 18 去取数据 —— 取不到就退回缓存，最终显示成一张空卡。
+    for (let i = 0; i < weeks.length; i++) {
+      if (weeks[i].serialNumber === remembered) {
+        return remembered;
+      }
+    }
+    return 0;
   }
 
   /**
@@ -872,10 +900,22 @@ export struct SchedulePage {
    * 万一周日下午看桌面，卡片还挂着已经过完的那一周，没意义。
    */
   private cardWeek(): number {
-    // 卡片该显示哪一周：先按规则算，再让「用户手动选过的」覆盖它
-    const shown: number = this.weekForNow(this.currentWeek, this.weeks);
-    const remembered: number = this.rememberedWeek(this.weeks, shown);
-    return remembered > 0 ? remembered : shown;
+    /**
+     * 卡片**以「今天所在周」为准**，不再跟随用户翻页。
+     *
+     * 原先这里会被 `rememberedWeek()`（用户上次翻到的周）覆盖，
+     * 结果是用户在课表页翻到第 12 周后，桌面卡片就长期停在第 12 周 ——
+     * 今天是 11/16（第 11 周），卡片却显示 11/23 那周的课，日卡甚至写着「周一 · 11/23」。
+     * 翻页只是浏览行为，不该改变「今天」。
+     *
+     * 仍保留周日 15:00 后提前看下一周的规则（周末看下周安排的习惯）。
+     */
+    const todayWeek: number = CardDataBuilder.weekOfToday(this.weeks);
+    if (todayWeek > 0) {
+      return this.weekForNow(todayWeek, this.weeks);
+    }
+    // 校历推算不出来（学期已结束等）才退回页面当前周
+    return this.currentWeek;
   }
 
   private async loadTerms(): Promise<void> {
@@ -926,11 +966,23 @@ export struct SchedulePage {
       // 没命中（换学期、清缓存），Swiper 的数据源还是空的，页面就只剩标题栏和
       // 周次胶囊、下面一片黑。
       this.applyWeeks(list);
-      let systemWeek = 1;
-      for (let i = 0; i < list.length; i++) {
-        if (list[i].curWeek) {
-          systemWeek = list[i].serialNumber;
-          break;
+      /**
+       * 「系统认为现在是第几周」。
+       *
+       * ⚠️ 先按**校历日期实算**，`curWeek` 标记只作兜底 ——
+       * 标记来自上游响应/本地缓存，停留在写入那一刻，隔周就过期
+       * （本周第 11 周、标记还写第 10 周）。之前首屏、"回本周"、表头判断
+       * 全都吃这个过期标记，于是三处一起错。
+       */
+      const realWeek: number = CardDataBuilder.weekOfToday(list);
+      let systemWeek: number = realWeek;
+      if (systemWeek <= 0) {
+        systemWeek = 1;
+        for (let i = 0; i < list.length; i++) {
+          if (list[i].curWeek) {
+            systemWeek = list[i].serialNumber;
+            break;
+          }
         }
       }
       // 系统该显示哪一周（周日下午 15:00 后是下一周）
@@ -938,14 +990,9 @@ export struct SchedulePage {
       // 用户手动选过的那一周（过滤掉系统自动选出来的脏数据）
       const remembered: number = this.rememberedWeek(list, systemWeek);
       const week: number = remembered > 0 ? remembered : systemWeek;
-      // 元数据先落缓存（即使下面的课表拉失败，也有周次条可用）
-      let curWeek = 0;
-      for (let i = 0; i < list.length; i++) {
-        if (list[i].curWeek) {
-          curWeek = list[i].serialNumber;
-          break;
-        }
-      }
+      // 元数据先落缓存（即使下面的课表拉失败，也有周次条可用）。
+      // 这里同样存实算的当前周，别再存过期标记 —— 卡片那边的兜底也读它。
+      const curWeek: number = realWeek > 0 ? realWeek : systemWeek;
       ScheduleCache.saveMeta(this.terms, list, termCode, this.header.termName, curWeek);
       ScheduleCache.saveAccount(this.currentAccountKey());
       // 全周预加载：先把当前周（优先本地缓存）放进去让页面立刻有内容，
@@ -1169,79 +1216,71 @@ export struct SchedulePage {
         return;
       }
       const ctx = GlobalContext.getContext();
-
-      // ---- 周课表卡：一整周七天的全部课程（仿官方课表版式）----
-      const weekSlots: CardSlot[] = this.toCardSlots(cur);
-      let maxSection = 0;
-      for (let i = 0; i < cur.sectionTimes.length; i++) {
-        if (cur.sectionTimes[i].section > maxSection) {
-          maxSection = cur.sectionTimes[i].section;
-        }
-      }
-      for (let i = 0; i < weekSlots.length; i++) {
-        if (weekSlots[i].end > maxSection) {
-          maxSection = weekSlots[i].end;
-        }
-      }
       const today: number = DateUtil.currentWeekday();
-      const weekView: CardWeekView = {
-        termName: this.header.termName.length > 0 ? this.header.termName : '课表',
-        weekLabel: '第 ' + shown.toString() + ' 周',
-        dates: this.weekDates(),
-        slots: weekSlots,
-        sections: maxSection > 0 ? maxSection : 12,
-        times: this.sectionTimes(cur),
-        today: today,
-        totalWeeks: this.weeks.length,
-        ready: true
-      };
-      CardCache.saveWeekView(ctx, weekView);
+      const isCurrentWeek: boolean = shown === this.currentWeek;
+      const termName: string = this.header.termName;
+      // 显式收窄：上面的 null 判断在 ArkTS 里不足以让 `cur` 摆脱 `WeeklySchedule | null`
+      const weekData: WeeklySchedule = cur;
 
-      // ---- 日课表卡：今天（或当前周的今天）----
-      const weekday: number = DateUtil.currentWeekday();
-      this.pushDayCard(cur, weekday);
+      // ---- 周课表卡 ----
+      CardCache.saveWeekView(ctx, CardDataBuilder.buildWeekView(
+        weekData, this.weeks, shown, termName, isCurrentWeek ? today : 0));
+      // ---- 日课表卡 ----
+      CardCache.saveDayView(ctx, CardDataBuilder.buildDayView(
+        weekData, this.weeks, shown, today, today, isCurrentWeek));
     } catch (error) {
       Logger.warn('写入周/日课表卡片失败：' + (error as Error).message);
     }
   }
 
-  /** 把一周数据里所有课转成卡片用的扁平结构（按星期、节次升序）。 */
-  private toCardSlots(data: WeeklySchedule): CardSlot[] {
+  /**
+   * 把一周数据改成卡片用的扁平结构（按星期、节次升序）。
+   *
+   * ⚠️ 卡片侧的正式实现已迁到 `CardDataBuilder.toSlots`（课表页与启动刷新共用）。
+   * 此方法仅页面内部保留，**勿在此新增逻辑**，否则两处口径会悄悄分叉。
+   */
+  private toCardSlots(data: WeeklySchedule, week: number): CardSlot[] {
     const out: CardSlot[] = [];
-    for (let i = 0; i < data.arrangedList.length; i++) {
-      const c: CourseClass = data.arrangedList[i];
-      const begin: number = this.beginOf(c);
-      const end: number = begin + this.spanOf(c) - 1;
-      const beginTime: string = c.beginTime === undefined ? '' : c.beginTime;
-      const endTime: string = c.endTime === undefined ? '' : c.endTime;
-      out.push({
-        day: c.dayOfWeek === undefined ? 1 : c.dayOfWeek,
-        begin: begin,
-        end: end,
-        time: beginTime + (endTime.length > 0 ? (beginTime.length > 0 ? '~' + endTime : endTime) : ''),
-        courseName: c.courseName,
-        place: c.placeName === undefined ? '' : c.placeName,
-        color: c.color === undefined ? '' : c.color
-      });
-    }
-    // 排序：先星期、再节次（上游 arrangedList 不保证有序，卡片画网格必须有序）
-    out.sort((a: CardSlot, b: CardSlot) => {
-      if (a.day !== b.day) {
-        return a.day - b.day;
+    for (let day = 1; day <= 7; day++) {
+      const clusters: ScheduleCluster[] = this.dayClustersFor(day, data, week);
+      for (let i = 0; i < clusters.length; i++) {
+        const cluster: ScheduleCluster = clusters[i];
+        const multi: boolean = cluster.courses.length > 1;
+        const first: CourseClass = cluster.courses[0];
+        // 起止时间取簇内最早开始与最晚结束 ——
+        // 直接拿第一门课的 endTime 会让跨节次的块在左列对不上时间。
+        let beginTime: string = '';
+        let endTime: string = '';
+        for (let k = 0; k < cluster.courses.length; k++) {
+          const c: CourseClass = cluster.courses[k];
+          const bt: string = c.beginTime === undefined ? '' : c.beginTime;
+          const et: string = c.endTime === undefined ? '' : c.endTime;
+          if (bt.length > 0 && (beginTime.length === 0 || bt.localeCompare(beginTime) < 0)) {
+            beginTime = bt;
+          }
+          if (et.length > 0 && et.localeCompare(endTime) > 0) {
+            endTime = et;
+          }
+        }
+        out.push({
+          day: day,
+          begin: cluster.begin,
+          end: cluster.begin + cluster.height - 1,
+          time: beginTime + (endTime.length > 0 ? (beginTime.length > 0 ? '~' + endTime : endTime) : ''),
+          courseName: multi ? (cluster.courses.length.toString() + '节课') : first.courseName,
+          place: multi ? '' : (first.placeName === undefined ? '' : first.placeName),
+          color: first.color === undefined ? '' : first.color
+        });
       }
-      return a.begin - b.begin;
-    });
+    }
     return out;
   }
 
   /**
-   * 本周七天的日期文案（`10/05`），供周课表卡表头用。
-   *
-   * 官方课表表头是「周一 / 10/05」两行，日期很有用 —— 一眼看出这周是哪几天。
+   * 注：原先有个 `weekDates()` 直接返回 `weekDatesFor(this.currentWeek)`，
+   * 但卡片显示的不一定是当前周（周日下午切下一周 / 用户手动选周），
+   * 用它会让「第 N 周」和表头日期错开一周。已改为调用处显式传 `shown`。
    */
-  private weekDates(): string[] {
-    return this.weekDatesFor(this.currentWeek);
-  }
 
   /**
  * 日课表卡的分组标题。
@@ -1261,8 +1300,8 @@ export struct SchedulePage {
   }
 
   /** 从一周数据里取出某天的课（保持已排序）。 */
-  private slotsOfDayFor(data: WeeklySchedule, day: number): CardSlot[] {
-    const all: CardSlot[] = this.toCardSlots(data);
+  private slotsOfDayFor(data: WeeklySchedule, day: number, week: number): CardSlot[] {
+    const all: CardSlot[] = this.toCardSlots(data, week);
     const out: CardSlot[] = [];
     for (let i = 0; i < all.length; i++) {
       if (all[i].day === day) {
@@ -1295,55 +1334,6 @@ export struct SchedulePage {
     return times;
   }
 
-  /**
-   * 写日课表卡。
-   *
-   * **今天没课时会自动往后找最近有课的一天**（明天优先），并把分组标题写成
-   * 「明天」/「周三」+ 那天的节数 —— 这是官方卡片的做法：
-   * 空卡没有任何信息量，「下一节课」才是用户真正想知道的。
-   */
-  private pushDayCard(data: WeeklySchedule, weekday: number): void {
-    const today: number = DateUtil.currentWeekday();
-    // 先看今天；今天没课就往后找（最多找 7 天）
-    let target: number = weekday;
-    let slots: CardSlot[] = [];
-    for (let step = 0; step <= 7; step++) {
-      const day: number = ((weekday - 1 + step) % 7) + 1;
-      const found: CardSlot[] = this.slotsOfDayFor(data, day);
-      if (found.length > 0) {
-        target = day;
-        slots = found;
-        break;
-      }
-    }
-    // 节次时间表：索引 = 节次-1
-    const times: string[] = this.sectionTimes(data);
-    let maxSection = 0;
-    for (let i = 0; i < data.sectionTimes.length; i++) {
-      if (data.sectionTimes[i].section > maxSection) {
-        maxSection = data.sectionTimes[i].section;
-      }
-    }
-    for (let i = 0; i < slots.length; i++) {
-      if (slots[i].end > maxSection) {
-        maxSection = slots[i].end;
-      }
-    }
-    const view: CardDayView = {
-      headline: DateUtil.currentWeekday() === target ?
-        ('今天 · ' + DateUtil.weekdayNames()[target - 1] + ' · ' + this.dayDate(target)) :
-        (DateUtil.weekdayNames()[target - 1] + ' · ' + this.dayDate(target)),
-      day: target,
-      slots: slots,
-      sections: maxSection > 0 ? maxSection : 12,
-      times: times,
-      // 分组标题：今天没课就写「明天」/「周三」，否则「今天」
-      dayLabel: this.dayLabelFor(target, today),
-      dayCount: slots.length,
-      ready: true
-    };
-    CardCache.saveDayView(GlobalContext.getContext(), view);
-  }
 
   /**
    * 静默刷新某一周的课表（联网 + 落缓存），并同步到 `weekSchedules` 预加载容器。
@@ -1408,17 +1398,22 @@ export struct SchedulePage {
   /**
    * 跳回当前教学周（标题栏右上角「回本周」按钮）。
    *
-   * 「当前周」以教学周列表里的 `curWeek` 标记为准，不看本地记住的值。
+   * ⚠️ **优先按校历实算**，不能只看 `weeks[].curWeek` ——
+   * 那份列表常来自本地缓存，标记停留在写缓存那一刻（比如仍指着第 10 周），
+   * 于是「回本周」会跳到上周去。标记只在实算失败时兜底。
    */
   private goCurrentWeek(): void {
-    for (let i = 0; i < this.weeks.length; i++) {
-      const item: Week = this.weeks[i];
-      if (item.curWeek) {
-        if (item.serialNumber !== this.currentWeek) {
-          this.gotoWeek(item.serialNumber); // 带动画跳过去
+    let target: number = CardDataBuilder.weekOfToday(this.weeks);
+    if (target <= 0) {
+      for (let i = 0; i < this.weeks.length; i++) {
+        if (this.weeks[i].curWeek) {
+          target = this.weeks[i].serialNumber;
+          break;
         }
-        return;
       }
+    }
+    if (target > 0 && target !== this.currentWeek) {
+      this.gotoWeek(target);
     }
   }
 
@@ -1561,44 +1556,12 @@ export struct SchedulePage {
    */
   private pushToCards(): void {
     try {
-      const weekday: number = DateUtil.currentWeekday();
-      const todayList: CourseClass[] = this.coursesOfDay(weekday);
-      const courses: CardCourse[] = [];
-      const nowText: string = this.nowClock();
-      let next: CardCourse | null = null;
-      for (let i = 0; i < todayList.length; i++) {
-        const item: CardCourse = this.toCardCourse(todayList[i]);
-        courses.push(item);
-        // 「下一节」= 今天第一节**还没开始**的课
-        if (next === null && item.time.length > 0 && item.time.localeCompare(nowText) > 0) {
-          next = item;
-        }
-      }
-      let nextWhen: string = '';
-      if (next !== null) {
-        nextWhen = '今天 ' + next.time;
-      } else {
-        // 今天没有「未开始」的课了 → 往后跨天找最近一节
-        const found: CardCourse | null = this.findNextLaterCourse(weekday, nowText);
-        if (found !== null) {
-          next = found;
-          nextWhen = found.when + ' ' + found.time;
-        }
-      }
-      const headline: string = '第' + this.currentWeek.toString() + '周 · ' + this.dayDate(weekday);
-      const summary: string = courses.length > 0 ?
-        ('今天 ' + courses.length.toString() + ' 节课' +
-          (next === null ? ' · 已全部结束' : ' · 下一节 ' + next.time + ' ' + next.courseName)) :
-        (next === null ? '今天没有课' : '今天没有课 · 下一节 ' + nextWhen + ' ' + next.courseName);
-      const snapshot: CardToday = {
-        headline: headline,
-        summary: summary,
-        courses: courses,
-        next: next,
-        nextWhen: nextWhen,
-        ready: true
-      };
-      CardCache.saveToday(GlobalContext.getContext(), snapshot, headline);
+      // 内容计算全部交给 CardDataBuilder —— 与启动刷新（CardRefresher）共用同一份实现，
+      // 免得两处各算一遍、字段一改就悄悄漂移。
+      const snapshot: CardToday = CardDataBuilder.buildToday(
+        this.schedule, this.weeks, this.currentWeek,
+        DateUtil.currentWeekday(), true);
+      CardCache.saveToday(GlobalContext.getContext(), snapshot, snapshot.headline);
     } catch (error) {
       Logger.warn('写入桌面卡片缓存失败：' + (error as Error).message);
     }
@@ -1694,15 +1657,13 @@ export struct SchedulePage {
    * 返回**实色**（不透明），块边缘才清晰 —— 详见 courseBlock 的注释。
    */
   private courseColor(course: CourseClass): string {
-    if (course.color !== undefined && course.color.length > 0) {
-      return course.color;
-    }
-    let hash = 0;
-    const key = course.courseCode.length > 0 ? course.courseCode : course.courseName;
-    for (let i = 0; i < key.length; i++) {
-      hash = (hash + key.charCodeAt(i)) % 9973;
-    }
-    return COURSE_PALETTE[hash % COURSE_PALETTE.length];
+    /**
+     * 统一走 `ScheduleColors` 的两套主题色板，**不再用上游色**：
+     * 1. 上游是一整套浅色系（#FFF0CC 这类），铺在深色页面上刺眼；
+     * 2. 课表页要和桌面卡片保持同色 —— 卡片用的就是这套板 + 课程名哈希。
+     */
+    const key: string = course.courseName.length > 0 ? course.courseName : course.courseCode;
+    return ScheduleColors.forCourse(key, this.isDark);
   }
 
   /**
@@ -1727,8 +1688,19 @@ export struct SchedulePage {
     return (0.299 * r + 0.587 * g + 0.114 * b) > 140;
   }
 
-  /** 课程块主文字颜色：浅底黑字、深底白字。 */
+  /**
+   * 课程块主文字颜色。
+   *
+   * - **浅色模式**：用与块底一一配对的高饱和色（`ScheduleColors.TEXT_LIGHT`），
+   *   而不是黑字 —— 这是产品参考图的样式，淡粉块配红橙字、淡青块配深青字。
+   * - **深色模式**：块底很深，仍按明度自动选黑白（维持原逻辑，深色板都是暗调，
+   *   配暖白字更统一）。
+   */
   private courseTextColor(course: CourseClass): ResourceColor {
+    if (!this.isDark) {
+      const key: string = course.courseName.length > 0 ? course.courseName : course.courseCode;
+      return ScheduleColors.textForCourse(key);
+    }
     return this.isLightColor(this.courseColor(course)) ? '#FF000000' : '#FFFFFFFF';
   }
 
@@ -1738,7 +1710,18 @@ export struct SchedulePage {
   }
 
   /** 课程块描边色：浅底用淡黑、深底用淡白，让相邻 / 同色块的边界更清晰。 */
+  /**
+   * 课程块描边色。
+   *
+   * - **浅色模式**：用块底色的同色系浅边（`ScheduleColors.borderFor`），
+   *   避免 `#26000000` 这种黑描边在淡块上显得很硬；
+   * - **深色模式**：维持原逻辑，块色亮则黑边、块色暗则白边。
+   */
   private courseBorderColor(course: CourseClass): ResourceColor {
+    if (!this.isDark) {
+      const key: string = course.courseName.length > 0 ? course.courseName : course.courseCode;
+      return ScheduleColors.borderFor(key, false);
+    }
     return this.isLightColor(this.courseColor(course)) ? '#26000000' : '#33FFFFFF';
   }
 
@@ -1788,7 +1771,7 @@ export struct SchedulePage {
   private sectionCountFor(week: number): number {
     const data = this.scheduleFor(week);
     if (data === null) {
-      return 12;
+      return SCHEDULE_TOTAL_SECTIONS;
     }
     let maxSection = 0;
     for (let i = 0; i < data.sectionTimes.length; i++) {
@@ -1796,7 +1779,14 @@ export struct SchedulePage {
         maxSection = data.sectionTimes[i].section;
       }
     }
-    return maxSection > 0 ? maxSection : (data.sectionTimes.length > 0 ? data.sectionTimes.length : 12);
+    // 课程实际占到的节次也要算 —— 上游 sectionTimes 偶有少给，只按它画会截掉后半节课
+    for (let i = 0; i < data.arrangedList.length; i++) {
+      const end: number = this.beginOf(data.arrangedList[i]) + this.spanOf(data.arrangedList[i]) - 1;
+      if (end > maxSection) {
+        maxSection = end;
+      }
+    }
+    return maxSection < SCHEDULE_TOTAL_SECTIONS ? SCHEDULE_TOTAL_SECTIONS : maxSection;
   }
 
   /** 1..count 的节次数组（替代依赖全局 sectionCount 的 `sections()`，做到「按周独立」）。 */
@@ -2145,6 +2135,15 @@ export struct SchedulePage {
     .width('100%')
     .height('100%')
     .alignItems(HorizontalAlign.Start)
+    /**
+     * ⚠️ **保持 `clip(false)`，不要改回 true** —— 它不是为了防邻页溢出，而是
+     * 给底栏/顶栏的模糊留出「画到自身盒子之外」的余地（`expandSafeArea` + blur
+     * 的沉浸感就靠它）。改成 true 会把模糊的延伸区域裁掉，效果直接消失。
+     *
+     * 邻页溢出靠 `GRID_SIDE_PADDING = 0` 解决（页宽 = 屏幕宽，邻页本来就在屏外），
+     * 不需要在这里裁。
+     */
+    .clip(false)
   }
 
   private weekStart(): Date | null {
@@ -2172,7 +2171,7 @@ export struct SchedulePage {
 
   /** 教室名最多显示几行：给课程名留 2 行，其余高度按 14vp/行 折算给教室。 */
   private placeMaxLines(course: CourseClass): number {
-    const height: number = this.spanOf(course) * SECTION_CELL_HEIGHT - 3;
+    const height: number = this.spanOf(course) * SECTION_CELL_HEIGHT - 2.5;
     const lines: number = Math.floor((height - 8 - 28) / 14);
     if (lines < 1) {
       return 1;
@@ -2188,7 +2187,7 @@ export struct SchedulePage {
    * 省略号，这个上限只是防止极端长名把文字撑出块外。
    */
   private nameMaxLines(course: CourseClass): number {
-    const height: number = this.spanOf(course) * SECTION_CELL_HEIGHT - 3;
+    const height: number = this.spanOf(course) * SECTION_CELL_HEIGHT - 2.5;
     let lines: number = Math.floor((height - 8) / 14);
     if (lines < 2) {
       lines = 2;
@@ -2530,7 +2529,9 @@ export struct SchedulePage {
           .align(Alignment.BottomStart)
       }
     }
-    .width('100%')
+    // 左右各留 1vp（总 2.0 = 上下 2.5 - 0.5）。原来 width('100%') + position(x:1)，
+    // 右侧会被裁掉 1vp，两块之间显得密、块内却宽松，现在左右对称。
+    .width('calc(100% - 2vp)')
     .padding(4)
     .alignItems(HorizontalAlign.Start)
     // 不写 SpaceBetween：课程名靠 layoutWeight 撑满，教室自然被顶到最底部
@@ -2545,7 +2546,7 @@ export struct SchedulePage {
       x: 1,
       y: (this.beginOf(course) - 1) * SECTION_CELL_HEIGHT + 1
     })
-    .height(this.spanOf(course) * SECTION_CELL_HEIGHT - 3)
+    .height(this.spanOf(course) * SECTION_CELL_HEIGHT - 2.5)
     .onClick(() => {
       this.openCourseDetail(course);
     })
@@ -2573,8 +2574,8 @@ export struct SchedulePage {
           .maxLines(1)
       }
     }
-    .width('100%')
-    .height(cluster.height * SECTION_CELL_HEIGHT - 3)
+    .width('calc(100% - 2vp)')
+    .height(cluster.height * SECTION_CELL_HEIGHT - 2.5)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
     .borderRadius(8)
@@ -3014,6 +3015,9 @@ export struct SchedulePage {
         // 关掉它，手势我们自己接管 —— 阈值 22% 页宽，还能自己加橡皮筋和甩动翻页。
         .disableSwipe(true)
         // 不裁剪 → 拖动时邻页能从边上露出来（照片式跟手：当前页滑走、邻页滑入）
+        // ⚠️ 前提是**每页宽度必须严格等于屏幕宽**：只要页面左右留了 padding，
+        // 页宽就比屏幕窄，静止时前一页的右边缘会漏进当前页左侧（看起来像本周多一条周日的课）。
+        // 所以这里保持 clip(false)，靠网格自身占满宽度来消除溢出。
         .clip(false)
         // 整块跟着手指走
         .translate({ x: this.dragOffsetX })

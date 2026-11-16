@@ -1,0 +1,50 @@
+{
+  "_comment": [
+    "本文件保存「已暂停」的桌面卡片配置，不参与构建。",
+    "恢复方法：把 forms 里的条目原样粘回 profile/form_config.json 的 forms 数组，重新打包即可。",
+    "卡片页面与数据管道都还在（widget/pages/GradeCard.ets、ClassroomCard.ets、CardCache.saveGrade/saveClassroom），无需改动。",
+    "2026-11-16 暂停：本学期成绩卡、空闲教室卡。"
+  ],
+  "forms": [
+    {
+      "name": "ubaa_grade_small",
+      "displayName": "$string:card_grade_small_name",
+      "description": "$string:card_grade_small_desc",
+      "src": "./ets/widget/pages/GradeCard.ets",
+      "uiSyntax": "arkts",
+      "renderingMode": "fullColor",
+      "isDefault": false,
+      "isDynamic": true,
+      "updateEnabled": true,
+      "scheduledUpdateTime": "07:30",
+      "updateDuration": 0,
+      "multiScheduledUpdateTime": "07:30,11:50,16:50",
+      "defaultDimension": "1*2",
+      "supportDimensions": [
+        "1*2"
+      ],
+      "formConfigAbility": "ability://EntryAbility",
+      "metadata": []
+    },
+    {
+      "name": "ubaa_classroom_small",
+      "displayName": "$string:card_classroom_small_name",
+      "description": "$string:card_classroom_small_desc",
+      "src": "./ets/widget/pages/ClassroomCard.ets",
+      "uiSyntax": "arkts",
+      "renderingMode": "fullColor",
+      "isDefault": false,
+      "isDynamic": true,
+      "updateEnabled": true,
+      "scheduledUpdateTime": "07:30",
+      "updateDuration": 0,
+      "multiScheduledUpdateTime": "07:30,11:50,16:50",
+      "defaultDimension": "1*2",
+      "supportDimensions": [
+        "1*2"
+      ],
+      "formConfigAbility": "ability://EntryAbility",
+      "metadata": []
+    }
+  ]
+}

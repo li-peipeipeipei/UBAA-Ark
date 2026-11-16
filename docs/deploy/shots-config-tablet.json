@@ -1,0 +1,62 @@
+[
+  {
+    "file": "caseshot_1794836554804.png",
+    "brand": "UBAA 鸿蒙版",
+    "title": "不用掏手机",
+    "title2": "平板上直接看",
+    "subtitle": "今日课程和待办，抬眼就看见",
+    "tone": "gray-first",
+    "screen_ratio": 1.6,
+    "uncase": false
+  },
+  {
+    "file": "caseshot_1794836501126.png",
+    "brand": "UBAA 鸿蒙版",
+    "title": "整周摊在眼前",
+    "title2": "手不用离开平板",
+    "subtitle": "翻周和点详情，都在平板上完成",
+    "tone": "blue-first",
+    "screen_ratio": 1.6,
+    "uncase": false
+  },
+  {
+    "file": "caseshot_1794836491935.png",
+    "brand": "UBAA 鸿蒙版",
+    "title": "图书馆里",
+    "title2": "抬手就能约座",
+    "subtitle": "分区空位铺满屏，抬手就能预约",
+    "tone": "gray-first",
+    "screen_ratio": 1.6,
+    "uncase": false
+  },
+  {
+    "file": "caseshot_1794836528500.png",
+    "brand": "UBAA 鸿蒙版",
+    "title": "交作业",
+    "title2": "不用掏出手机",
+    "subtitle": "要求与截止摊开看，平板上提交",
+    "tone": "blue-first",
+    "screen_ratio": 1.6,
+    "uncase": false
+  },
+  {
+    "file": "caseshot_1794836541549.png",
+    "brand": "UBAA 鸿蒙版",
+    "title": "想选的博雅",
+    "title2": "在平板上选",
+    "subtitle": "课程详情铺满屏，选课抬手完成",
+    "tone": "gray-first",
+    "screen_ratio": 1.6,
+    "uncase": false
+  },
+  {
+    "file": "caseshot_1794836514904.png",
+    "brand": "UBAA 鸿蒙版",
+    "title": "抬头就看见",
+    "title2": "卡片摊开来",
+    "subtitle": "下一节课和考试，摊在桌上",
+    "tone": "blue-first",
+    "screen_ratio": 1.6,
+    "uncase": false
+  }
+]

@@ -32,13 +32,27 @@ let smallCardStorage: LocalStorage = new LocalStorage();
 @Entry(smallCardStorage)
 @Component
 struct ScheduleSmallCard {
-  @LocalStorageProp('scheduleJson') scheduleJson: string = '';
+  /**
+   * ⚠️ 必须带 `@Watch`。
+   *
+   * 卡片的 LocalStorage 数据是**在组件创建之后**才注入的：`@LocalStorageProp` 只在初始化时
+   * 取一次值，那时 `scheduleJson` 还是空串。若只在 `aboutToAppear` 里 parse，
+   * `today` 会永久停在 null —— 表现为「预览/刚添加时一片空白，之后 updateForm 推进来也不变」。
+   * 加上 `@Watch` 才能在数据真正到达时重新解析。
+   */
+  @LocalStorageProp('scheduleJson') @Watch('onPayloadChanged') scheduleJson: string = '';
   @LocalStorageProp('weekLabel') weekLabel: string = '';
   @LocalStorageProp('updatedAt') updatedAt: string = '';
 
   @State private today: SmallCardToday | null = null;
 
   aboutToAppear(): void {
+    this.parse();
+  }
+
+
+  /** `@Watch` 回调：卡片数据在组件创建之后才注入，变化时必须重新解析一次。 */
+  onPayloadChanged(): void {
     this.parse();
   }
 

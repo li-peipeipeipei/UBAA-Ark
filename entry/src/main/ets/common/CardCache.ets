@@ -1,6 +1,45 @@
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
+import { formBindingData, formProvider } from '@kit.FormKit';
+import { resourceManager } from '@kit.LocalizationKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+
+/**
+ * 推给卡片的扁平数据。
+ *
+ * ⚠️ 官方明确：卡片侧 `@LocalStorageProp` 收到的值**会被转换成 string**，
+ * 所以这里只放 string，复杂结构（课表数组）由主应用 `JSON.stringify` 后传过来，
+ * 卡片侧再 `JSON.parse`。这样最稳，避开任何序列化差异。
+ *
+ * 定义在 CardCache 而非 FormAbility 里，是为了让「写缓存的主应用」和
+ * 「读缓存的卡片进程」共用同一份结构 —— 早先两边各写一份，注定会漂移。
+ */
+export interface CardPayload {
+  /** 今天概览 + 课程数组的 JSON 串；没有缓存时为空串。 */
+  scheduleJson: string;
+  /** 形如 `第6周 · 10月15日 周三`。 */
+  weekLabel: string;
+  /** 数据更新时间，形如 `10月15日 07:30`。 */
+  updatedAt: string;
+  /** 最近一场考试的 JSON 串（考试卡用）。 */
+  examJson: string;
+  /** 本学期成绩概览的 JSON 串（成绩卡用）。 */
+  gradeJson: string;
+  /** 空闲教室的 JSON 串（教室卡用）。 */
+  classroomJson: string;
+  /** 周课表（一整周七天）的 JSON 串（周课表卡用）。 */
+  weekViewJson: string;
+  /** 日课表（某一天全天）的 JSON 串（日课表卡用）。 */
+  dayViewJson: string;
+  /**
+   * 当前是否深色模式（`'1'` / `'0'`）。
+   *
+   * 课程块的颜色来自上游（浅色系），在深色卡片上会显得刺眼，
+   * 所以卡片需要知道自己处在哪种主题下，好换用深色色板 + 浅色文字。
+   */
+  darkMode: string;
+}
 
 /**
  * 桌面服务卡片的数据缓存（**跨进程共享**）。
@@ -195,6 +234,8 @@ export interface CardWeekView {
 export interface CardDayView {
   /** 例如 `今天 · 周三 · 10/15` */
   headline: string;
+  /** 例如 `第 11 周` —— 卡片右上角单独展示，之前这里是写死的占位文案。 */
+  weekLabel: string;
   /** 星期几（1~7） */
   day: number;
   /** 当天全部课程，按节次升序。 */
@@ -232,6 +273,23 @@ export class CardCache {
     }
   }
 
+  /**
+   * 丢掉本进程已缓存的 Preferences 实例，强制下次从磁盘重读。
+   *
+   * **为什么必须有这一步**：Preferences 会把内容缓存在进程内存里，
+   * 而卡片进程（com.ubaa.app:form）与主应用是两个进程。
+   * 卡片进程一旦加载过这个 store，主应用之后写入的新值它**看不到** ——
+   * 表现就是「卡片添加后一直显示添加那一刻的旧数据」。
+   * 所以卡片侧每次读取前先逐出缓存，代价是一次磁盘读，可忽略。
+   */
+  static invalidate(context: common.Context): void {
+    try {
+      preferences.removePreferencesFromCacheSync(context.getApplicationContext(), { name: CARD_STORE });
+    } catch (error) {
+      // 尚未加载过则无事可做，静默忽略
+    }
+  }
+
   /* ------------------------- 主应用写入 ------------------------- */
 
   /** 写今天概览 + 课表快照（主应用每次拉完课表调用）。 */
@@ -249,7 +307,9 @@ export class CardCache {
       logInfo('已写入课表缓存：' + today.summary);
     } catch (error) {
       logWarn('写入课表缓存失败：' + (error as Error).message);
+      return;
     }
+    CardCache.pushAll(context);
   }
 
   /** 写最近一场考试（ExamPage 拉完后调用）。 */
@@ -265,6 +325,29 @@ export class CardCache {
   /** 写空闲教室（ClassroomPage 查询成功后调用）。 */
   static saveClassroom(context: common.Context, room: CardClassroom): void {
     CardCache.save(context, KEY_CLASSROOM, room, '空闲教室');
+  }
+
+  /**
+   * 清掉空闲教室快照。
+   *
+   * 「空闲教室」本质是**某一次查询的结果**，跨天就失效 ——
+   * 第二天还挂着昨天的「今天 · 11月15日 / 空闲 144 间」，比空着更误导。
+   * 所以过夜后直接清空，让卡片回到「打开 App 查询空闲教室」的空态。
+   */
+  static clearClassroom(context: common.Context): void {
+    const store = CardCache.store(context);
+    if (store === null) {
+      return;
+    }
+    try {
+      store.deleteSync(KEY_CLASSROOM);
+      store.flush();
+      logInfo('已清除过期的空闲教室缓存');
+    } catch (error) {
+      logWarn('清除空闲教室缓存失败：' + (error as Error).message);
+      return;
+    }
+    CardCache.pushAll(context);
   }
 
   /** 写周课表卡数据（一整周七天）。 */
@@ -294,11 +377,132 @@ export class CardCache {
       logInfo('已写入' + name + '卡片缓存');
     } catch (error) {
       logWarn('写入' + name + '卡片缓存失败：' + (error as Error).message);
+      return;
+    }
+    // 写完必须主动推送：卡片只在定点时刻（07:30/11:50/16:50）才会自己去读缓存，
+    // 不推的话，用户在应用里刷新完回到桌面，看到的仍是旧数据。
+    CardCache.pushAll(context);
+  }
+
+  /**
+   * 组一份扁平数据（**只放 string**）。
+   *
+   * 卡片进程的 `onAddForm` / `onUpdateForm` 与主应用的推送共用这一份，
+   * 避免两处各拼一遍导致字段漂移。
+   */
+  static buildPayload(context: common.Context): CardPayload {
+    // 先逐出进程内缓存：卡片进程与主应用各有一份 Preferences 内存副本，
+    // 不逐出就会一直读到「自己第一次加载时」的旧值。
+    CardCache.invalidate(context);
+    const today = CardCache.loadToday(context);
+    const exam = CardCache.loadExam(context);
+    const grade = CardCache.loadGrade(context);
+    const room = CardCache.loadClassroom(context);
+    const weekView = CardCache.loadWeekView(context);
+    const dayView = CardCache.loadDayView(context);
+    const payload: CardPayload = {
+      scheduleJson: today === null ? '' : JSON.stringify(today),
+      weekLabel: CardCache.weekLabel(context),
+      updatedAt: CardCache.updatedAt(context),
+      examJson: exam === null ? '' : JSON.stringify(exam),
+      gradeJson: grade === null ? '' : JSON.stringify(grade),
+      classroomJson: room === null ? '' : JSON.stringify(room),
+      weekViewJson: weekView === null ? '' : JSON.stringify(weekView),
+      dayViewJson: dayView === null ? '' : JSON.stringify(dayView),
+      darkMode: (CardCache.darkHint !== null ? CardCache.darkHint : CardCache.isDarkMode(context))
+        ? '1' : '0'
+    };
+    return payload;
+  }
+
+  /**
+   * 把最新缓存推给**所有已加桌**的卡片。
+   *
+   * 主应用每写完一类缓存就调一次。卡片侧收到后只做 UI 重绘，不联网。
+   * formId 列表由 `onAddForm` 记录，`onRemoveForm` 清理。
+   */
+  static pushAll(context: common.Context): void {
+    // 同样要逐出：新加的卡片是另一个进程写进 formId 列表的，
+    // 主应用不重读就不知道有这张新卡片，推送会漏掉它。
+    CardCache.invalidate(context);
+    const ids = CardCache.getFormIds(context);
+    if (ids.length === 0) {
+      return;
+    }
+    let data: formBindingData.FormBindingData;
+    try {
+      data = formBindingData.createFormBindingData(CardCache.buildPayload(context));
+    } catch (error) {
+      logWarn('组装卡片数据失败：' + (error as Error).message);
+      return;
+    }
+    for (let i = 0; i < ids.length; i++) {
+      const id: string = ids[i];
+      formProvider.updateForm(id, data).catch((error: BusinessError) => {
+        // 16501001 = 卡片ID不存在：卡片早被删了，但 formId 还留在列表里
+        // （卸载重装、或 onRemoveForm 没触发时会出现）。留着它只会让每次推送都报错，
+        // 顺手摘掉 —— 注意不能走 removeFormId，那会再次触发 pushAll 形成递归。
+        if (error.code === 16501001) {
+          CardCache.dropDeadFormId(context, id);
+          return;
+        }
+        hilog.error(DOMAIN, TAG, '推送卡片 %{public}s 失败：code=%{public}d', id, error.code);
+      });
+    }
+    logInfo('已推送卡片数据，共 ' + ids.length + ' 张');
+  }
+
+  /**
+   * 主应用写入的深色标记。
+   *
+   * 为什么不只靠 `resourceManager`：实测主应用是深色（页面黑底）时，
+   * `getConfigurationSync().colorMode` 仍返回浅色，导致卡片配色和页面完全相反。
+   * 主应用在 `EntryAbility` 里把真实状态写进这个静态字段，
+   * 卡片进程（FormAbility）里它是 null，再退回 resourceManager 兜底。
+   */
+  static darkHint: boolean | null = null;
+
+  /** 当前应用是否处于深色模式（读 config，卡片据此换色板）。 */
+  static isDarkMode(context: common.Context): boolean {
+    try {
+      // Context / ApplicationContext 都没有 config 属性，得走资源管理器的配置快照。
+      // 注意它的 colorMode 是 resourceManager.ColorMode（DARK = 0），
+      // 和 ConfigurationConstant.ColorMode 是两个不同的枚举，不能混着比。
+      const cfg = context.resourceManager.getConfigurationSync();
+      return cfg.colorMode === resourceManager.ColorMode.DARK;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /** 摘掉一个失效的卡片实例（**不触发推送**，避免递归）。 */
+  private static dropDeadFormId(context: common.Context, formId: string): void {
+    const ids = CardCache.getFormIds(context);
+    const next: string[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      if (ids[i] !== formId) {
+        next.push(ids[i]);
+      }
+    }
+    if (next.length === ids.length) {
+      return;
+    }
+    const store = CardCache.store(context);
+    if (store === null) {
+      return;
+    }
+    try {
+      store.putSync(KEY_FORM_IDS, JSON.stringify(next));
+      store.flush();
+      logInfo('已清理失效卡片实例：' + formId + '，剩余 ' + next.length.toString() + ' 张');
+    } catch (error) {
+      logWarn('清理失效卡片实例失败：' + (error as Error).message);
     }
   }
 
   /** 记下这张卡片，之后主应用可以主动推数据给它。 */
   static addFormId(context: common.Context, formId: string): void {
+    CardCache.invalidate(context);
     const ids = CardCache.getFormIds(context);
     if (ids.indexOf(formId) >= 0) {
       return;
@@ -319,6 +523,7 @@ export class CardCache {
 
   /** 卡片被移除时清掉。 */
   static removeFormId(context: common.Context, formId: string): void {
+    CardCache.invalidate(context);
     const ids = CardCache.getFormIds(context);
     const next: string[] = [];
     for (let i = 0; i < ids.length; i++) {
