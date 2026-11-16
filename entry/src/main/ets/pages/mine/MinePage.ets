@@ -25,6 +25,8 @@ export struct MinePage {
    * 由 `openRoute` 置位，约一屏转场时长后自动复位。
    */
   @State private pushVeil: boolean = false;
+  /** 隐蓝卡的定时器（重复调用先清旧的，销毁时清掉，见 openRoute）。 */
+  private pushVeilTimer: number = -1;
 
   onLogout: () => void = () => {};
 
@@ -156,10 +158,23 @@ export struct MinePage {
     // 用户卡，露出来就是一条刺眼的蓝色。隐去后露出的是本页底色（pageBackground），
     // 与新页面底色相同，视觉上无缝。420ms 覆盖整段转场，之后自动复原。
     this.pushVeil = true;
-    setTimeout(() => {
+    // 连点菜单会叠加多个定时器；页面销毁后定时器仍会回调并向已卸载组件写 @State。
+    // 保存 id、重复调用先清旧的，销毁时再清一次。
+    if (this.pushVeilTimer >= 0) {
+      clearTimeout(this.pushVeilTimer);
+    }
+    this.pushVeilTimer = setTimeout(() => {
       this.pushVeil = false;
+      this.pushVeilTimer = -1;
     }, 420);
     AppRouter.open(this.stack, route);
+  }
+
+  aboutToDisappear(): void {
+    if (this.pushVeilTimer >= 0) {
+      clearTimeout(this.pushVeilTimer);
+      this.pushVeilTimer = -1;
+    }
   }
 
   build() {

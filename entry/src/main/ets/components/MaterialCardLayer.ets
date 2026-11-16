@@ -1,6 +1,25 @@
 import { applyMaterialCarrier } from '../common/SystemMaterial';
 
 /**
+ * 两套**固定**的属性修改器（材质自带投影 / 不带投影）。
+ *
+ * ⚠️ 不能在 `build()` 里写 `attributeModifier({ ... })` 对象字面量：每次重建都是新实例，
+ * 框架会把属性重挂一遍（材质 detach/attach），在半模态、弹窗这类高频重建场景里
+ * 表现为掉帧和材质闪烁。这里按「是否带投影」预建两个，build 里只挑引用。
+ */
+const MATERIAL_WITH_SHADOW: AttributeModifier<ToggleAttribute> = {
+  applyNormalAttribute: (instance: ToggleAttribute): void => {
+    applyMaterialCarrier(instance, false, true);
+  }
+};
+
+const MATERIAL_NO_SHADOW: AttributeModifier<ToggleAttribute> = {
+  applyNormalAttribute: (instance: ToggleAttribute): void => {
+    applyMaterialCarrier(instance, false, false);
+  }
+};
+
+/**
  * 沉浸材质承载层：一块**不可交互的画布**，只负责让系统把材质画出来。
  *
  * ## 为什么需要它
@@ -61,10 +80,6 @@ export struct MaterialCardLayer {
       .accessibilityLevel('no')
       .hitTestBehavior(HitTestMode.None)
       // systemMaterial 必须放在所有样式属性之后 —— 用 attributeModifier 挂在属性链最末
-      .attributeModifier({
-        applyNormalAttribute: (instance: ToggleAttribute): void => {
-          applyMaterialCarrier(instance, false, this.layerShadow);
-        }
-      })
+      .attributeModifier(this.layerShadow ? MATERIAL_WITH_SHADOW : MATERIAL_NO_SHADOW)
   }
 }

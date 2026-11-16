@@ -217,10 +217,51 @@ struct ScheduleWeekCard {
       return;
     }
     try {
-      this.view = JSON.parse(this.weekViewJson) as WeekViewData;
+      const parsed = JSON.parse(this.weekViewJson) as WeekViewData;
+      this.view = ScheduleWeekCard.normalize(parsed);
     } catch (error) {
       this.view = null;
     }
+  }
+
+  /**
+   * 逐字段归一化。
+   *
+   * 卡片数据是**跨进程**从 Preferences 读来的：旧版本写下的缓存可能缺字段，
+   * 主应用解析上游时也可能把 `undefined` 直接写进去（JSON 里就没有这个键）。
+   * 渲染期只要读到一次 `undefined.length` / `undefined.endsWith` 就整卡白屏，
+   * 而卡片的 `@Watch` 不会自愈 —— 用户只能删掉卡片重加。
+   */
+  private static normalize(view: WeekViewData): WeekViewData {
+    const rawSlots = view.slots;
+    const slots: WeekViewSlot[] = [];
+    if (Array.isArray(rawSlots)) {
+      for (let i = 0; i < rawSlots.length; i++) {
+        const s = rawSlots[i];
+        slots.push({
+          day: typeof s.day === 'number' ? s.day : 0,
+          begin: typeof s.begin === 'number' ? s.begin : 0,
+          end: typeof s.end === 'number' ? s.end : 0,
+          time: typeof s.time === 'string' ? s.time : '',
+          courseName: typeof s.courseName === 'string' ? s.courseName : '',
+          place: typeof s.place === 'string' ? s.place : '',
+          color: typeof s.color === 'string' ? s.color : ''
+        } as WeekViewSlot);
+      }
+    }
+    const dates: string[] = Array.isArray(view.dates) ? view.dates : [];
+    const times: string[] = Array.isArray(view.times) ? view.times : [];
+    return {
+      termName: typeof view.termName === 'string' ? view.termName : '',
+      weekLabel: typeof view.weekLabel === 'string' ? view.weekLabel : '',
+      dates: dates,
+      slots: slots,
+      sections: typeof view.sections === 'number' ? view.sections : 0,
+      times: times,
+      today: typeof view.today === 'number' ? view.today : 0,
+      totalWeeks: typeof view.totalWeeks === 'number' ? view.totalWeeks : 0,
+      ready: view.ready === true
+    } as WeekViewData;
   }
 
   private openApp(): void {

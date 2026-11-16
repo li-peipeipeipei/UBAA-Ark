@@ -41,7 +41,13 @@ export default class UBAAFormAbility extends FormExtensionAbility {
     const formId = params[formInfo.FormParam.IDENTITY_KEY] as string;
     const name = params[formInfo.FormParam.NAME_KEY] as string;
     hilog.info(DOMAIN_NUMBER, TAG, 'onAddForm: name=%{public}s formId=%{public}s', name, formId);
-    // 记下这张卡片，主应用之后才知道该往哪些 formId 推数据
+    // 记下这张卡片，主应用之后才知道该往哪些 formId 推数据。
+    // ⚠️ 先校验：IDENTITY_KEY 缺失时会存进 null，之后每次 pushAll 都对 null 调
+    // updateForm 报错，而且清不掉（dropDeadFormId 只按错误码匹配）。
+    if (typeof formId !== 'string' || formId.length === 0) {
+      hilog.warn(DOMAIN_NUMBER, TAG, 'onAddForm: formId 非法，跳过登记');
+      return this.payload();
+    }
     CardCache.addFormId(this.context, formId);
     return this.payload();
   }
@@ -78,14 +84,32 @@ export default class UBAAFormAbility extends FormExtensionAbility {
    *
    * 实际实现在 `CardCache` —— 主应用推送时用的是同一份。
    * 早先这里和主应用各拼一遍，字段一旦增删就会悄悄漂移，故收敛到单一实现。
+   *
+   * ⚠️ 必须自己兜住异常：`onAddForm` / `onUpdateForm` 抛异常时，系统认为本次刷新失败，
+   * 卡片会**永久停在空白/旧画面**且不会重试。宁可给一份全空的 payload 让它走空态。
    */
   private payload(): formBindingData.FormBindingData {
-    return formBindingData.createFormBindingData(CardCache.buildPayload(this.context));
+    try {
+      return formBindingData.createFormBindingData(CardCache.buildPayload(this.context));
+    } catch (error) {
+      hilog.error(DOMAIN_NUMBER, TAG, '组装卡片数据失败：%{public}s', (error as Error).message);
+      return formBindingData.createFormBindingData({});
+    }
   }
 
   /** 把缓存推给指定卡片。 */
   private push(formId: string): void {
-    const data = this.payload();
+    if (typeof formId !== 'string' || formId.length === 0) {
+      hilog.warn(DOMAIN_NUMBER, TAG, 'push: formId 为空，跳过');
+      return;
+    }
+    let data: formBindingData.FormBindingData;
+    try {
+      data = this.payload();
+    } catch (error) {
+      hilog.error(DOMAIN_NUMBER, TAG, 'push: 取数据失败，跳过本次推送');
+      return;
+    }
     formProvider.updateForm(formId, data).catch((error: BusinessError) => {
       hilog.error(DOMAIN_NUMBER, TAG, 'updateForm 失败：code=%{public}d', error.code);
     });

@@ -9,6 +9,35 @@ import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { SectionCard, InfoRow } from '../../components/CommonViews';
 
 /**
+ * 版本检查接口的返回体（由 UBAA 服务端 `/app/version` 给出）。
+ *
+ * `{"hasUpdate":false,"latestVersion":"0.1.0","forceUpdate":false}`
+ */
+interface VersionCheckResult {
+  hasUpdate: boolean;
+  latestVersion: string;
+  forceUpdate: boolean;
+}
+
+/**
+ * 解析版本检查返回。
+ *
+ * 不是 JSON（旧服务端可能直接返回纯版本号）就当「没有更新」：
+ * 宁可少提示一句，也不能把「发现新版本」误报给用户。
+ */
+function parseVersionCheck(raw: string): VersionCheckResult | null {
+  try {
+    const parsed = JSON.parse(raw) as VersionCheckResult;
+    if (parsed === null || parsed === undefined) {
+      return null;
+    }
+    return parsed;
+  } catch (error) {
+    return null;
+  }
+}
+
+/**
  * 设置页。
  *
  * 只暴露真正会影响请求链路的项：认证入口（只读）、连接诊断、连接模式、
@@ -63,7 +92,16 @@ export struct SettingsPage {
     this.checking = true;
     try {
       const raw: string = await ApiService.checkVersion();
-      Toast.show('已是最新版本（' + AppConfig.APP_VERSION + '）');
+      // 之前不管返回什么都弹「已是最新版本」—— 服务端说「有新版本 x.y.z」时同样弹这句，
+      // 用户永远不会被告知该升级。现在按返回体判断。
+      const info: VersionCheckResult | null = parseVersionCheck(raw);
+      if (info !== null && info.hasUpdate === true) {
+        const latest: string = info.latestVersion === undefined ? '' : info.latestVersion;
+        Toast.show('发现新版本' + (latest.length > 0 ? ' ' + latest : '') +
+          (info.forceUpdate === true ? '（需强制更新）' : ''));
+      } else {
+        Toast.show('已是最新版本（' + AppConfig.APP_VERSION + '）');
+      }
       Logger.info('版本检查返回：' + raw.substring(0, 200));
     } catch (error) {
       Toast.show('版本检查失败：' + (error as Error).message);

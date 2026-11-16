@@ -281,6 +281,12 @@ export struct SpocPage {
   }
 
   private async openDetail(item: SpocAssignment): Promise<void> {
+    // 防重入：连点两张作业会并发发两次详情请求，并且叠出两个 CustomDialogController
+    // （旧的既不 close 也不释放），关掉最上面那个后下面还留着一层。
+    if (this.detailLoading) {
+      return;
+    }
+    this.detailLoading = true;
     try {
       const d: SpocAssignmentDetail = await ApiService.fetchSpocAssignmentDetail(item.assignmentId);
       const rows: SpocRow[] = [
@@ -289,6 +295,10 @@ export struct SpocPage {
         { label: '提交', value: d.submittedAt === undefined ? '' : d.submittedAt },
         { label: '得分', value: d.score === undefined ? '' : d.score }
       ];
+      // 先关掉可能还开着的上一个，再建新的 —— 否则两个对话框会重叠
+      if (this.spocDialogController !== null) {
+        this.spocDialogController.close();
+      }
       this.spocDialogController = new CustomDialogController({
         builder: SpocDetailDialog({
           course: item.courseName,
@@ -313,6 +323,21 @@ export struct SpocPage {
         (error as ApiError).friendlyMessage() : '作业详情加载失败';
       Toast.show(message);
       Logger.error('SPOC 作业详情失败：' + (error as Error).message);
+    } finally {
+      this.detailLoading = false;
+    }
+  }
+
+  /**
+   * 页面销毁时收掉还开着的对话框。
+   *
+   * 不关的话，`CustomDialogController` 持有本页实例（builder 里读 `item`/`d`），
+   * 页面 pop 之后它还挂在窗口上，属于「闭包指向已卸载组件」。
+   */
+  aboutToDisappear(): void {
+    if (this.spocDialogController !== null) {
+      this.spocDialogController.close();
+      this.spocDialogController = null;
     }
   }
 

@@ -102,9 +102,13 @@ export struct LoginPage {
       if (preload.execution !== undefined && preload.execution.length > 0) {
         this.execution = preload.execution;
       }
-      if (preload.captchaRequired && preload.captcha !== undefined) {
+      // 两个方向都要写：这次不需要验证码时得把输入框收起来
+      // （失败后重新预热时，旧的那张图已经作废了）。
+      const needCaptcha: boolean =
+        preload.captchaRequired === true && preload.captcha !== undefined;
+      this.showCaptcha = needCaptcha;
+      if (needCaptcha && preload.captcha !== undefined) {
         this.captchaImageUri = this.buildCaptchaUri(preload.captcha);
-        this.showCaptcha = true;
       }
     } catch (error) {
       Logger.warn('登录页预热失败（不影响继续登录）：' + (error as Error).message);
@@ -137,6 +141,11 @@ export struct LoginPage {
   }
 
   private async doLogin(): Promise<void> {
+    // 按钮虽然会置灰，但同一帧内的快速双击会在 loading 重新渲染前进来两次 ——
+    // 第二次带的是同一个 execution（已被第一次消费），必然失败并盖掉成功提示。
+    if (this.loading) {
+      return;
+    }
     const invalid = this.validate();
     if (invalid.length > 0) {
       this.errorMessage = invalid;
@@ -146,6 +155,11 @@ export struct LoginPage {
     this.loading = true;
     this.errorMessage = '';
     this.serverDown = false;
+    let succeeded: boolean = false;
+    // 「要求输入验证码」不是失败：服务端同时下发了**新的** execution 与验证码图片，
+    // 两者必须配对使用。这种情形不能清 execution，否则用户看着旧图输入的验证码
+    // 会和新的令牌对不上，怎么输都错。
+    let keepExecution: boolean = false;
     try {
       const user: UserData = await ApiService.login(
         this.username.trim(),
@@ -159,6 +173,7 @@ export struct LoginPage {
       });
 
       Toast.show('欢迎回来，' + user.name);
+      succeeded = true;
       // 登录成功后按勾选状态落盘 / 清理凭据
       this.syncSavedCredentials();
       this.onLoginSuccess(user);
@@ -166,6 +181,7 @@ export struct LoginPage {
       if (error instanceof CaptchaRequiredError) {
         const challenge = error as CaptchaRequiredError;
         this.execution = challenge.execution;
+        keepExecution = true;
         this.captchaImageUri = this.buildCaptchaUri(challenge.captcha);
         this.showCaptcha = true;
         this.captchaCode = '';
@@ -182,11 +198,35 @@ export struct LoginPage {
           this.errorMessage += '；若当前不在校园网，请切到 WebVPN 模式';
         }
         this.serverDown = apiError.code === 'upstream_down';
+        /**
+         * 带验证码失败后必须**换一张图 + 换一个 execution**。
+         *
+         * 验证码是一次性的：错一次之后，屏幕上这张图和手里的 execution 都已作废。
+         * 不主动刷新的话，用户对着同一张旧图反复输入，永远对不上 ——
+         * 这也是「验证码怎么输都错」的成因之一。
+         */
+        if (this.showCaptcha) {
+          this.captchaCode = '';
+          void this.warmUp();
+        }
       } else {
         this.errorMessage = '登录失败，请稍后重试';
         Logger.error('登录异常：' + (error as Error).message);
       }
     } finally {
+      /**
+       * CAS 的 `execution` 是**一次性令牌**：提交过一次就作废。
+       *
+       * 这里不清的话，用户密码打错一次之后，之后每次点登录都带着同一个死令牌 ——
+       * 服务端一律判「凭据无效」，变成**怎么输都登不上**，只能杀进程重进重新预热。
+       * 清空后 `LocalAuthService` 会重新拉登录页现取一个新令牌。
+       *
+       * 例外：`CaptchaRequiredError` 分支（见 `keepExecution`）—— 那里的令牌是新下发的，
+       * 与屏幕上的验证码图片是**一对**，必须留着。
+       */
+      if (!succeeded && !keepExecution) {
+        this.execution = '';
+      }
       this.loading = false;
     }
   }

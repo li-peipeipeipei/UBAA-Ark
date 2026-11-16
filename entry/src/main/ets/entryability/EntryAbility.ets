@@ -1,7 +1,10 @@
-import { AbilityConstant, Configuration, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
+import {
+  AbilityConstant, bundleManager, Configuration, ConfigurationConstant, UIAbility, Want
+} from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import display from '@ohos.display';
+import { AppConfig } from '../common/AppConfig';
 import { GlobalContext } from '../common/GlobalContext';
 import { ImmersiveUtil } from '../common/ImmersiveUtil';
 import { resourceManager } from '@kit.LocalizationKit';
@@ -62,6 +65,16 @@ export default class EntryAbility extends UIAbility {
         ' code=' + (err as BusinessError).code);
     }
     GlobalContext.setContext(this.context);
+    // 版本号以**安装包**为准：常量与 app.json5 的 versionName 容易漂移（曾经停在 0.1.0），
+    // 关于页 / UA / 检查更新都会跟着报错。读失败就保留常量兜底。
+    try {
+      const info = bundleManager.getBundleInfoForSelfSync(
+        bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT);
+      AppConfig.applyVersionName(info.versionName);
+      Logger.info('应用版本：' + AppConfig.APP_VERSION);
+    } catch (err) {
+      Logger.warn('读取应用版本失败，使用兜底值：' + (err as BusinessError).message);
+    }
     // 预热本地存储：clientId 与连接配置需要在首帧前可用
     TokenStore.getOrCreateClientId();
     TokenStore.getApiBaseUrl();
@@ -174,9 +187,13 @@ export default class EntryAbility extends UIAbility {
 
   onForeground(): void {
     Logger.info('EntryAbility onForeground');
-    // App 回到前台：如果卡带了「跳课表页」的请求，这时才真正切过去
+    // App 回到前台：如果卡带了「跳课表页」的请求，这时才真正切过去。
+    // ⚠️ 只消费一次就必须清掉 lastWant —— 否则「临时」每次回前台都会重新写一次
+    // pendingRoute，MainPage 的 @Watch 便跟着每次触发 applyRoute（清栈 + 切页签）：
+    // 用户在任何页签、任何二级页，切个后台再回来都会被弹回课表页，栈也被清空。
     if (this.lastWant !== null) {
       this.consumeRoute(this.lastWant);
+      this.lastWant = null;
     }
     // 通知 UI 刷新（课表页订阅了这个 AppStorage 事件）
     AppStorage.set<boolean>('appForegroundTick', !this.foregroundTick);
@@ -207,8 +224,15 @@ export default class EntryAbility extends UIAbility {
      *   `buildPayload` 里现取配置），所以这里重算一次再 pushAll。
      */
     const dark: boolean = newColorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
+    // 只有**深浅色真的变了**才重推卡片。`onConfigurationUpdate` 在旋转、折叠屏展开、
+    // 分屏调整、语言切换时都会回调 —— 每次都 pushAll 的话，转场动画期间会同步做
+    // invalidate + 读 9 个 key + 逐张卡跨进程 IPC，就是「转屏卡一下」的来源。
+    const darkChanged: boolean = dark !== CardCache.darkHint;
     CardCache.darkHint = dark;
     AppStorage.setOrCreate('isDark', dark);
+    if (!darkChanged) {
+      return;
+    }
     /**
      * 无条件重推桌面卡片 —— 不走 `CardRefresher.refresh()`，
      * 那个方法在「本地没有课表元信息」时会跳过，导致卡片收不到新的 darkMode。

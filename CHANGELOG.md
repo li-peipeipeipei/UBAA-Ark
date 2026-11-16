@@ -89,6 +89,59 @@
 - `CasParser.hasLoginForm` 容忍单/双引号（模板改成单引号后不再误判）。
 - `LocalCampusService` 解析表格不再逐格 `new RegExp`；URL query 解码包 try（非法 `%` 不再抛 URIError）。
 
+### 修复（第二轮巡检：桌面卡片 / 启动流程 / 登录）
+
+**登录**
+
+- **密码打错一次后「怎么输都登不上」**：CAS 的 `execution` 是一次性令牌，提交过一次即作废，
+  但 `LoginPage` 只在「验证码」和「切连接模式」两处清空它 —— 普通凭据错误后一直复用死令牌，
+  服务端永远判「凭据无效」，只能杀进程重进。现在任何失败都清空，下次现取。
+  （例外：`CaptchaRequiredError` 带下来的新令牌必须保留，它与屏幕上的验证码图是一对。）
+- **验证码错一次后永远对不上**：图片与令牌都是一次性的，失败后旧图仍留在屏幕上，
+  用户反复对着它输。现在失败即清空输入并重新预热（换图 + 换令牌）。
+- **同一帧双击连发两次登录**：补入口防重入（只靠按钮 `enabled` 挡不住）。
+
+**桌面卡片**
+
+- **成绩卡 / 空闲教室卡未注册**：`GradeCard.ets`、`ClassroomCard.ets` 与对应字符串资源、
+  缓存写入、推送链路全都在，但 `form_config.json` 里没有这两项 —— 用户在「添加卡片」
+  里根本看不到，主应用却每次都在为它们读盘+推送。已补 `ubaa_grade_small` /
+  `ubaa_classroom_small`（均 1×2）。
+- **卡片白屏不可自愈**：周/日课表卡把 Preferences 里读到的 JSON 直接 `as` 用，
+  缺字段时渲染期读 `undefined.length` 直接抛异常，且 `@Watch` 不会自愈（只能删卡重加）。
+  现在 parse 后逐字段归一化。
+- **卡片刷新失败会永久空白**：`onAddForm` / `onUpdateForm` 里组数据没有 try/catch，
+  抛异常时系统认为本次刷新失败并不再重试。现在失败返回空 payload 走空态。
+- **formId 可能存进 null**：`onAddForm` 先校验 `IDENTITY_KEY` 再登记（否则每次 pushAll
+  都对 null 调 updateForm 报错且清不掉）。
+
+**启动与生命周期**
+
+- **每次回前台都被弹回课表页**：`onForeground` 用 `lastWant` 反复消费卡片路由，
+  `lastWant` 永不清空 → 点过一次卡片后，任何页签/二级页切后台再回来都会 `clearStack` +
+  跳课表。现在消费一次即置空。
+- **转屏/折叠屏展开时全量推卡片**：`onConfigurationUpdate` 无条件 `pushAll`（invalidate +
+  读 9 个 key + 逐卡 IPC），正好压在转场动画上。现在只在深浅色真的变化时才推。
+- **后台自检会踢掉刚登录的用户**：冷启动的会话自检是网络往返，用户期间登录成功后
+  旧结果照旧落地会把 `loggedIn` 置 false。加代次令牌，登录/登出即作废在途结果。
+- 删除 `Index` 里已失效的 `restoreSession`（52 行死代码，与「先亮界面 + 后台自检」并存的旧实现）。
+
+**其它**
+
+- **版本号漂移**：`AppConfig.APP_VERSION` 停在 `0.1.0`，而安装包已经是 `0.9.0` ——
+  关于页、User-Agent、检查更新都在报错版本。现在启动时用 `bundleManager` 读安装包的
+  真实 `versionName` 覆盖，字面量只作兜底。
+- **「检查更新」永远提示「已是最新版本」**：不看返回体，服务端说「有新版本 x.y.z」时
+  也弹这句。现在解析 `hasUpdate/latestVersion/forceUpdate` 后再提示。
+- **SPOC 连点作业叠出多个弹窗**：`openDetail` 无防重入，每次新建一个
+  `CustomDialogController`（旧的既不 close 也不释放）。现在加互斥 + 先关后开；
+  并在 `aboutToDisappear` 里关掉，避免对话框持有已卸载页面。
+- **`MaterialCardLayer` 每次重建都重挂材质**：`attributeModifier` 用对象字面量写在 build 里，
+  每次都是新实例。改为按「是否带投影」预建两个常量，build 只挑引用。
+- **我的页面隐蓝卡定时器未清理**：连点会叠定时器，页面销毁后仍写 `@State`。
+  现在保存 id、重复调用先清、`aboutToDisappear` 再清一次。
+
+
 ### 新增
 
 - **财务收入查询**（对齐上游 UBAA 2.0 `features/finance/`）：三段认证（SSO →

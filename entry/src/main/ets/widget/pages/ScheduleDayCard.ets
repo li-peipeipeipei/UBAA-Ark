@@ -152,10 +152,46 @@ struct ScheduleDayCard {
       return;
     }
     try {
-      this.view = JSON.parse(this.dayViewJson) as DayViewData;
+      const parsed = JSON.parse(this.dayViewJson) as DayViewData;
+      this.view = ScheduleDayCard.normalize(parsed);
     } catch (error) {
       this.view = null;
     }
+  }
+
+  /**
+   * 逐字段归一化：卡片数据跨进程读自 Preferences，旧缓存或上游缺字段时
+   * 渲染期读 `undefined.length` 会让整张卡白屏（@Watch 不会自愈）。
+   */
+  private static normalize(view: DayViewData): DayViewData {
+    const rawSlots = view.slots;
+    const slots: DayViewSlot[] = [];
+    if (Array.isArray(rawSlots)) {
+      for (let i = 0; i < rawSlots.length; i++) {
+        const s = rawSlots[i];
+        slots.push({
+          day: typeof s.day === 'number' ? s.day : 0,
+          begin: typeof s.begin === 'number' ? s.begin : 0,
+          end: typeof s.end === 'number' ? s.end : 0,
+          time: typeof s.time === 'string' ? s.time : '',
+          courseName: typeof s.courseName === 'string' ? s.courseName : '',
+          place: typeof s.place === 'string' ? s.place : '',
+          color: typeof s.color === 'string' ? s.color : ''
+        } as DayViewSlot);
+      }
+    }
+    const times: string[] = Array.isArray(view.times) ? view.times : [];
+    return {
+      headline: typeof view.headline === 'string' ? view.headline : '',
+      weekLabel: typeof view.weekLabel === 'string' ? view.weekLabel : '',
+      day: typeof view.day === 'number' ? view.day : 0,
+      slots: slots,
+      sections: typeof view.sections === 'number' ? view.sections : 0,
+      times: times,
+      dayLabel: typeof view.dayLabel === 'string' ? view.dayLabel : '',
+      dayCount: typeof view.dayCount === 'number' ? view.dayCount : 0,
+      ready: view.ready === true
+    } as DayViewData;
   }
 
   private openApp(): void {

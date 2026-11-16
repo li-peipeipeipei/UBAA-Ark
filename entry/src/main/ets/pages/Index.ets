@@ -1,4 +1,3 @@
-import { LoadingView } from '../components/CommonViews';
 import { AppColor } from '../components/AppTheme';
 import { Logger } from '../common/Logger';
 import { ApiError } from '../network/ApiError';
@@ -18,19 +17,23 @@ import { UserData } from '../model/ApiTypes';
  * - `StoredSession`（JWT）—— 中转模式的历史遗留；
  * - `LocalAuthSession`（上游 Cookie）—— 本地模式，登录态是 Cookie 而非令牌，
  *   因此不能用 `session.isValid()`（它只看 refreshToken）来判定登录与否。
+ *
+ * ⚠️ 这里**没有** loading 态：会话判定是同步的（读本地存储），首帧就能定下来。
+ * 早先那版「先探测、探测完再进主页」已经被「先亮界面 + 后台自检」取代
+ * （探测要往返上游，横竖屏重建时会闪一段「正在恢复登录状态…」）。
  */
 @Entry
 @Component
 struct Index {
-  /**
-   * 初值必须是 false。
-   *
-   * `@State` 在组件重建时回到初值 —— 若这里初值是 true，重建的第一帧必然显示
-   * 「正在恢复登录状态…」，然后 aboutToAppear 才把它改掉。横竖屏切换时正是这一帧
-   * 闪出来，看起来就是「APP 重载了」。
-   */
-  @State private checking: boolean = false;
   @State private loggedIn: boolean = false;
+  /**
+   * 后台自检的代次。
+   *
+   * 自检是一次网络往返，期间用户可能已经在登录页登录成功（或刚从 401 退回登录页又登进来）。
+   * 迟到的旧结果如果照旧落地，会把刚登录的用户直接弹回登录页。
+   * 每次自检发起时叫一次号，落地前比对；登录成功 / 登出时也递增，作废在途结果。
+   */
+  private verifySeq: number = 0;
 
   aboutToAppear(): void {
     // 诊断横竖屏切换后的「重载」发生在哪一层：这条打印说明 Index 组件被重建了
@@ -39,7 +42,6 @@ struct Index {
     const hasLocal: boolean = TokenStore.hasLocalSession();
     const session = TokenStore.getSession();
     if (!session.isValid() && !hasLocal) {
-      this.checking = false;
       return;
     }
     // **有会话就直接进主页**，探测放到后台。
@@ -48,16 +50,22 @@ struct Index {
     // 于是横竖屏切换重建 Index 时会闪一段「正在恢复登录状态…」——那也是「APP 重载了」
     // 的一部分。改成先亮界面、后台自检：401 才回登录页，其余情况不打扰用户。
     this.loggedIn = true;
-    this.checking = false;
-    void this.verifyInBackground();
+    const seq: number = ++this.verifySeq;
+    void this.verifyInBackground(seq);
   }
 
   /** 后台自检会话：只有上游明确说 401 才把用户请回登录页。 */
-  private async verifyInBackground(): Promise<void> {
+  private async verifyInBackground(seq: number): Promise<void> {
     try {
       const status = await ApiService.status();
+      if (seq !== this.verifySeq) {
+        return; // 已被更新的状态取代（例如用户刚刚登录成功）
+      }
       ApiService.persistUser(status.user);
     } catch (error) {
+      if (seq !== this.verifySeq) {
+        return;
+      }
       const apiError = error as ApiError;
       if (apiError instanceof ApiError && apiError.status === 401) {
         TokenStore.clear();
@@ -71,72 +79,20 @@ struct Index {
     }
   }
 
-  private async restoreSession(): Promise<void> {
-    const hasLocal: boolean = TokenStore.hasLocalSession();
-    const session = TokenStore.getSession();
-    if (!session.isValid() && !hasLocal) {
-      this.checking = false;
-      return;
-    }
-
-    // 探测失败重试一次：上游偶发抖动（DNS 慢、首包超时）时，一次探测失败就把
-    // 用户扔回登录页、要求重新输密码，是「偶尔打开 app 没能自动登录」的直接原因。
-    let lastError: Error | null = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      if (attempt > 0) {
-        await new Promise<void>((resolve: () => void) => {
-          setTimeout(() => {
-            resolve();
-          }, 600);
-        });
-      }
-      try {
-        const status = await ApiService.status();
-        ApiService.persistUser(status.user);
-        this.loggedIn = true;
-        this.checking = false;
-        return;
-      } catch (error) {
-        lastError = error as Error;
-        const apiError = error as ApiError;
-        // 上游**明确**表示未登录（401）：清掉两套登录态，避免带着死 Cookie 反复重试
-        if (apiError instanceof ApiError && apiError.status === 401) {
-          TokenStore.clear();
-          TokenStore.clearAllLocalSessions();
-          // 课表缓存**保留**：里面记了所属账号，重新登录同一账号可直接复用；
-          // 换账号时由 SchedulePage 比对后清空。
-          Logger.warn('会话已失效，需要重新登录：' + lastError.message);
-          this.checking = false;
-          return;
-        }
-      }
-    }
-
-    // 两次都没探测成功，且都不是明确的 401 —— 多为网络抖动或上游暂时不可用。
-    // 只要本地还留着 Cookie 会话，就乐观放行进主页：各数据页本来就有重试 + 会话
-    // 自愈（见 LocalAcademicService.byxtCall），而把用户推回登录页才是最差的结果。
-    if (hasLocal) {
-      Logger.warn('会话校验两次未成功，带着本地会话进入主页（页面会自行重试）');
-      this.loggedIn = true;
-    } else {
-      Logger.warn('恢复会话失败：' + (lastError === null ? '未知错误' : lastError.message));
-    }
-    this.checking = false;
-  }
-
   build() {
     Column() {
-      if (this.checking) {
-        LoadingView({ message: '正在恢复登录状态…' })
-      } else if (this.loggedIn) {
+      if (this.loggedIn) {
         MainPage({
           onLogout: () => {
+            this.verifySeq++;
             this.loggedIn = false;
           }
         })
       } else {
         LoginPage({
           onLoginSuccess: (user: UserData) => {
+            // 登录成功：作废可能还在飞的自检（它带的是旧会话的结论）
+            this.verifySeq++;
             this.loggedIn = true;
           }
         })

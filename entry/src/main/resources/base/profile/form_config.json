@@ -83,6 +83,46 @@
       "resizable": true,
       "formConfigAbility": "ability://EntryAbility",
       "metadata": []
+    },
+    {
+      "name": "ubaa_grade_small",
+      "displayName": "$string:card_grade_small_name",
+      "description": "$string:card_grade_small_desc",
+      "src": "./ets/widget/pages/GradeCard.ets",
+      "uiSyntax": "arkts",
+      "renderingMode": "fullColor",
+      "isDefault": false,
+      "isDynamic": true,
+      "updateEnabled": true,
+      "scheduledUpdateTime": "07:30",
+      "updateDuration": 0,
+      "multiScheduledUpdateTime": "07:30,11:50,16:50",
+      "defaultDimension": "1*2",
+      "supportDimensions": [
+        "1*2"
+      ],
+      "formConfigAbility": "ability://EntryAbility",
+      "metadata": []
+    },
+    {
+      "name": "ubaa_classroom_small",
+      "displayName": "$string:card_classroom_small_name",
+      "description": "$string:card_classroom_small_desc",
+      "src": "./ets/widget/pages/ClassroomCard.ets",
+      "uiSyntax": "arkts",
+      "renderingMode": "fullColor",
+      "isDefault": false,
+      "isDynamic": true,
+      "updateEnabled": true,
+      "scheduledUpdateTime": "07:30",
+      "updateDuration": 0,
+      "multiScheduledUpdateTime": "07:30,11:50,16:50",
+      "defaultDimension": "1*2",
+      "supportDimensions": [
+        "1*2"
+      ],
+      "formConfigAbility": "ability://EntryAbility",
+      "metadata": []
     }
   ]
 }

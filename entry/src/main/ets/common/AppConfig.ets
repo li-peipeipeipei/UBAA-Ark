@@ -40,8 +40,22 @@ export class AppConfig {
   /** 统一 API 前缀（历史遗留，配合 DEFAULT_API_BASE_URL 使用）。 */
   static readonly API_PREFIX: string = '/api/v1';
 
-  /** 客户端版本号，用于 User-Agent 与关于页展示。 */
-  static readonly APP_VERSION: string = '0.1.0';
+  /**
+   * 客户端版本号，用于 User-Agent、关于页与「检查更新」。
+   *
+   * ⚠️ **不要让它和 `AppScope/app.json5` 的 `versionName` 漂移**：这个常量曾经
+   * 停在 `0.1.0`，而安装包已经是 `0.9.0`，关于页和 UA 都在报错误的版本号。
+   * 现在启动时由 `EntryAbility` 用 `bundleManager` 读安装包里的真实 `versionName`
+   * 覆盖（见 `applyVersionName`），这里的字面量只作为读取失败时的兜底。
+   */
+  static APP_VERSION: string = '0.9.0';
+
+  /** 用安装包里真实的 versionName 覆盖上面的兜底值（启动时调用一次）。 */
+  static applyVersionName(versionName: string): void {
+    if (versionName !== undefined && versionName !== null && versionName.length > 0) {
+      AppConfig.APP_VERSION = versionName;
+    }
+  }
 
   /** 应用展示名（与 AppScope 的 app_name 保持一致）。 */
   static readonly APP_DISPLAY_NAME: string = 'UBAA';
