@@ -808,3 +808,30 @@ export interface FinanceIncomes {
   entries: FinanceIncome[];
   total: number;
 }
+
+/* ============================ 网费流量（上游 UBAA 2.0 对齐） ============================ */
+
+/** 十进制数值 + 单位（如 `90.001` + `G`）。 */
+export interface CampusAmount {
+  value: string;
+  unit: string;
+}
+
+/**
+ * 一个网络产品的流量。
+ *
+ * 三个流量字段都是**页面上原样给出的值**（`不含套餐`），不做套餐合并 ——
+ * 合并逻辑依赖另一张 `print_packages` 表，尚未实现；宁可显示原值并在界面注明，
+ * 也不要算一个自己都不确定的数。
+ */
+export interface NetworkProductUsage {
+  productName: string;
+  used: CampusAmount;
+  freeRemaining: CampusAmount;
+  billableRemaining: CampusAmount;
+}
+
+export interface NetworkUsage {
+  products: NetworkProductUsage[];
+  fetchedAt: number;
+}

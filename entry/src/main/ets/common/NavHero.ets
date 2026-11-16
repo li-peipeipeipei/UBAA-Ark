@@ -65,7 +65,7 @@ export class NavHero {
    */
   private static heroRoutes: string[] = [
     'exam', 'grade', 'classroom', 'signin', 'evaluation',
-    'spoc', 'ygdk', 'ihome', 'bykc', 'libbookHome', 'finance'
+    'spoc', 'ygdk', 'ihome', 'bykc', 'libbookHome', 'finance', 'network'
   ];
 
   static isHeroRoute(name: string): boolean {

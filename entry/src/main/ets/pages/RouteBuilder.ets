@@ -24,6 +24,7 @@ import { IhomePage } from './ihome/IhomePage';
 import { IhomeDetailPage } from './ihome/IhomeDetailPage';
 import { SpocPage } from './spoc/SpocPage';
 import { FinancePage } from './finance/FinancePage';
+import { NetworkPage } from './campus/NetworkPage';
 import { YgdkPage } from './activity/YgdkPage';
 import { BykcPage } from './bykc/BykcPage';
 import { BykcCoursesPage } from './bykc/BykcCoursesPage';
@@ -390,6 +391,19 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       }
     }
     .titleBar(destTitleBar('财务收入'))
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.NETWORK) {
+    HdsNavDestination() {
+      DestShell({ stack: stack }) {
+        NetworkPage()
+      }
+    }
+    .titleBar(destTitleBar('网费流量'))
     .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);
@@ -880,6 +894,25 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
     }
     .hideTitleBar(true)
     // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.NETWORK) {
+    NavDestination() {
+      NativeHeroDest({
+        title: '网费流量',
+        hero: true,
+        routeName: RouteName.NETWORK,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
     .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);

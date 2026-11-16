@@ -20,6 +20,7 @@ import { LibBookHomePage } from '../pages/library/LibBookHomePage';
 import { LibBookReservePage } from '../pages/library/LibBookReservePage';
 import { LibBookBookingsPage } from '../pages/library/LibBookBookingsPage';
 import { FinancePage } from '../pages/finance/FinancePage';
+import { NetworkPage } from '../pages/campus/NetworkPage';
 
 
 /**
@@ -51,6 +52,8 @@ export struct FeatureDestBody {
       SpocPage()
     } else if (this.name === RouteName.FINANCE) {
       FinancePage()
+    } else if (this.name === RouteName.NETWORK) {
+      NetworkPage()
     } else if (this.name === RouteName.YGDK) {
       YgdkPage()
     } else if (this.name === RouteName.IHOME) {

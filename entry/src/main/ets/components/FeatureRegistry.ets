@@ -148,6 +148,16 @@ export function allFeatures(): FeatureItem[] {
 
       colorDark: '#5AA9F0',
       route: RouteName.FINANCE
+    },
+    {
+      // 上游 UBAA 2.0「校园服务」里的网费流量：只读，走 zfw.buaa.edu.cn。
+      title: '网费流量',
+      icon: $r('app.media.ic_apps'),
+      color: AppColor.accentPurple,
+      colorValue: '#7B61FF',
+
+      colorDark: '#9E8AFF',
+      route: RouteName.NETWORK
     }
   ];
 }
