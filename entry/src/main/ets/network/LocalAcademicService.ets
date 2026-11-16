@@ -2,6 +2,7 @@ import { AppConfig } from '../common/AppConfig';
 import { DateUtil } from '../common/DateUtil';
 import { Logger } from '../common/Logger';
 import { ApiError } from './ApiError';
+import { MemoCache } from '../common/MemoCache';
 import { LocalWebVpn } from './LocalWebVpn';
 import { TokenStore } from './TokenStore';
 import { UpstreamClient, UpstreamResponse } from './UpstreamClient';
@@ -186,8 +187,30 @@ export class LocalAcademicService {
   private static appTask: Promise<void> | null = null;
   private static classroomTask: Promise<void> | null = null;
 
+  /*
+   * 数据缓存 key 与 TTL。
+   *
+   * TTL 取「秒级」而不是「分钟级」：这些数据学校侧随时可能临时调整（调课、补考安排），
+   * 缓存只为消除**同一次启动内**的重复请求，不承担「离线可用」的职责
+   * （离线看课表由 ScheduleCache 的磁盘缓存负责）。
+   */
+  private static readonly MEMO_TERMS: string = 'academic:terms';
+  private static readonly MEMO_WEEKS: string = 'academic:weeks:';
+  private static readonly MEMO_WEEKLY: string = 'academic:weekly:';
+  private static readonly MEMO_TODAY: string = 'academic:today:';
+  private static readonly MEMO_EXAMS: string = 'academic:exams:';
+  private static readonly MEMO_GRADES: string = 'academic:grades:';
+  private static readonly TTL_TERMS: number = 60000;
+  private static readonly TTL_WEEKS: number = 120000;
+  private static readonly TTL_WEEKLY: number = 30000;
+  private static readonly TTL_TODAY: number = 20000;
+  private static readonly TTL_EXAMS: number = 60000;
+  private static readonly TTL_GRADES: number = 60000;
+
   /** 登出时清空进程内会话（见 LocalSpocService.reset 的说明）。 */
   static reset(): void {
+    // 换账号 / 切连接模式：缓存里是上一个会话的数据，必须一起清掉
+    MemoCache.clear();
     LocalAcademicService.byxtReady = false;
     LocalAcademicService.appReady = false;
     LocalAcademicService.classroomReady = false;
@@ -199,7 +222,18 @@ export class LocalAcademicService {
   /* ------------------------------ 课表 ------------------------------ */
 
   /** 可选学期列表。 */
-  static async fetchTerms(): Promise<Term[]> {
+  /**
+   * 学期列表（带缓存；`force` = 用户显式刷新）。
+   *
+   * 缓存的意义不只是省一次请求：首页与课表页几乎同时启动，两者都会拉学期，
+   * 并发写同一个 Cookie 罐会互相覆盖（见 MemoCache 的说明）。
+   */
+  static async fetchTerms(force: boolean = false): Promise<Term[]> {
+    return await MemoCache.through<Term[]>(LocalAcademicService.MEMO_TERMS, LocalAcademicService.TTL_TERMS,
+      async (): Promise<Object> => await LocalAcademicService.doFetchTerms(), force);
+  }
+
+  private static async doFetchTerms(): Promise<Term[]> {
     await LocalAcademicService.ensureByxt();
     const response = await LocalAcademicService.byxtCall(
       'GET', BYXT_TERMS_URL, await LocalAcademicService.byxtReferer(BYXT_BASE +
@@ -209,7 +243,14 @@ export class LocalAcademicService {
   }
 
   /** 指定学期的周次划分。 */
-  static async fetchWeeks(termCode: string): Promise<Week[]> {
+  /** 指定学期的周次（带缓存）。 */
+  static async fetchWeeks(termCode: string, force: boolean = false): Promise<Week[]> {
+    return await MemoCache.through<Week[]>(LocalAcademicService.MEMO_WEEKS + termCode, LocalAcademicService.TTL_WEEKS,
+      async (): Promise<Object> =>
+        await LocalAcademicService.doFetchWeeks(termCode), force);
+  }
+
+  private static async doFetchWeeks(termCode: string): Promise<Week[]> {
     await LocalAcademicService.ensureByxt();
     const url = BYXT_WEEKS_URL + '?termCode=' + enc(termCode);
     const response = await LocalAcademicService.byxtCall(
@@ -220,7 +261,15 @@ export class LocalAcademicService {
   }
 
   /** 指定学期某周的课表。上游要求 POST 表单（原 `getWeeklySchedule` 同样是 POST）。 */
-  static async fetchWeeklySchedule(termCode: string, week: number): Promise<WeeklySchedule> {
+  /** 某一周的课表（带缓存；下拉刷新/切周比对要传 `force`）。 */
+  static async fetchWeeklySchedule(termCode: string, week: number,
+    force: boolean = false): Promise<WeeklySchedule> {
+    return await MemoCache.through<WeeklySchedule>(LocalAcademicService.MEMO_WEEKLY + termCode + ':' + week.toString(), LocalAcademicService.TTL_WEEKLY,
+      async (): Promise<Object> =>
+        await LocalAcademicService.doFetchWeeklySchedule(termCode, week), force);
+  }
+
+  private static async doFetchWeeklySchedule(termCode: string, week: number): Promise<WeeklySchedule> {
     await LocalAcademicService.ensureByxt();
     const body = 'termCode=' + enc(termCode) + '&type=week&week=' + week.toString();
     const response = await LocalAcademicService.byxtCall(
@@ -234,7 +283,13 @@ export class LocalAcademicService {
   }
 
   /** 今日课程摘要。 */
-  static async fetchTodayClasses(): Promise<TodayClass[]> {
+  /** 今日课程（带缓存；key 含日期，跨天自动失效）。 */
+  static async fetchTodayClasses(force: boolean = false): Promise<TodayClass[]> {
+    return await MemoCache.through<TodayClass[]>(LocalAcademicService.MEMO_TODAY + DateUtil.today(), LocalAcademicService.TTL_TODAY,
+      async (): Promise<Object> => await LocalAcademicService.doFetchTodayClasses(), force);
+  }
+
+  private static async doFetchTodayClasses(): Promise<TodayClass[]> {
     await LocalAcademicService.ensureByxt();
     const url = BYXT_TODAY_URL + '?rq=' + DateUtil.today() + '&lxdm=student';
     const response = await LocalAcademicService.byxtCall(
@@ -249,7 +304,14 @@ export class LocalAcademicService {
   /* ------------------------------ 考试 ------------------------------ */
 
   /** 指定学期的考试安排。上游的「未安排」列表没有对应接口，按原服务端一样留空。 */
-  static async fetchExams(termCode: string): Promise<ExamArrangementData> {
+  /** 考试安排（带缓存）。 */
+  static async fetchExams(termCode: string, force: boolean = false): Promise<ExamArrangementData> {
+    return await MemoCache.through<ExamArrangementData>(LocalAcademicService.MEMO_EXAMS + termCode, LocalAcademicService.TTL_EXAMS,
+      async (): Promise<Object> =>
+        await LocalAcademicService.doFetchExams(termCode), force);
+  }
+
+  private static async doFetchExams(termCode: string): Promise<ExamArrangementData> {
     await LocalAcademicService.ensureByxt();
     const url = BYXT_EXAMS_URL + '?termCode=' + enc(termCode);
     const response = await LocalAcademicService.byxtCall(
@@ -267,7 +329,14 @@ export class LocalAcademicService {
    * 学期编码形如 `2024-2025-1`，上游要拆成 `year=2024-2025` 与 `xq=1` 两个表单字段
    * （原 `parseBuaaScoreTermCode`）。
    */
-  static async fetchGrades(termCode: string): Promise<GradeData> {
+  /** 某学期成绩（带缓存）。 */
+  static async fetchGrades(termCode: string, force: boolean = false): Promise<GradeData> {
+    return await MemoCache.through<GradeData>(LocalAcademicService.MEMO_GRADES + termCode, LocalAcademicService.TTL_GRADES,
+      async (): Promise<Object> =>
+        await LocalAcademicService.doFetchGrades(termCode), force);
+  }
+
+  private static async doFetchGrades(termCode: string): Promise<GradeData> {
     const parsed = LocalAcademicService.parseTermCode(termCode);
     await LocalAcademicService.ensureApp();
 

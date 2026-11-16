@@ -5,6 +5,7 @@ import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import display from '@ohos.display';
 import { AppConfig } from '../common/AppConfig';
+import { StartupPrefetch } from '../common/StartupPrefetch';
 import { GlobalContext } from '../common/GlobalContext';
 import { ImmersiveUtil } from '../common/ImmersiveUtil';
 import { resourceManager } from '@kit.LocalizationKit';
@@ -204,6 +205,9 @@ export default class EntryAbility extends UIAbility {
 
   onBackground(): void {
     Logger.info('EntryAbility onBackground');
+    // 切后台就停掉启动预取：用户已经离开前台，继续跑只是白耗流量与电。
+    // 已完成的步骤留在内存缓存里，回前台照常复用。
+    StartupPrefetch.cancel();
   }
 
   onConfigurationUpdate(newConfig: Configuration): void {

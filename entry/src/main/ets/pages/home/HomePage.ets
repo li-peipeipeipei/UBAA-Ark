@@ -355,14 +355,14 @@ export struct HomePage {
       this.loadState = LoadState.LOADING;
     }
     try {
-      const classes: TodayClass[] = await ApiService.fetchTodayClasses();
+      const classes: TodayClass[] = await ApiService.fetchTodayClasses(!showLoading);
       // 接口返回的顺序是乱的，按开始时间重排（早的在上）
       this.todayClasses = sortTodayClasses(classes);
 
       // 首次登录时还没有缓存学期，此时不能直接跳过考试 —— 否则首页会缺掉倒计时卡片
       const termCode: string = await this.resolveTermCode();
       if (termCode.length > 0) {
-        const data = await ApiService.fetchExams(termCode);
+        const data = await ApiService.fetchExams(termCode, !showLoading);
         this.pickNextExam(data.arranged);
       }
       this.loadState = LoadState.SUCCESS;

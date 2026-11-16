@@ -1,6 +1,7 @@
 import { AppRouter, RouteName } from '../../common/AppRouter';
 import { AppConfig, connectionModeName } from '../../common/AppConfig';
 import { Logger } from '../../common/Logger';
+import { StartupPrefetch } from '../../common/StartupPrefetch';
 import { Toast } from '../../common/Toast';
 import { ApiService } from '../../network/ApiService';
 import { TokenStore } from '../../network/TokenStore';
@@ -126,11 +127,14 @@ export struct MinePage {
     this.loggingOut = true;
     try {
       await ApiService.logout();
+      // 登出后允许下次登录重新预热（预取状态是进程级的，不清就会一直不跑）
+      StartupPrefetch.reset();
       Toast.show('已退出登录');
       this.clearLocalData();
       this.onLogout();
     } catch (error) {
       Logger.warn('注销异常：' + (error as Error).message);
+      StartupPrefetch.reset();
       this.clearLocalData();
       this.onLogout();
     } finally {

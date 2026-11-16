@@ -1,4 +1,5 @@
 import { BackGuard } from '../common/BackGuard';
+import { StartupPrefetch } from '../common/StartupPrefetch';
 import { Toast } from '../common/Toast';
 import { NavHero } from '../common/NavHero';
 import { HeroMorph, KEY_HERO_PAGE_OPACITY, KEY_MORPH_TICK, MorphPhase, MorphRect } from '../common/HeroMorph';
@@ -574,6 +575,9 @@ export struct MainPage {
     setTimeout(() => {
       CardRefresher.refresh(GlobalContext.getContext());
     }, 600);
+    // 首帧之后预热最常用的几份数据（课表/考试/成绩），详见 common/StartupPrefetch。
+    // 它内部还会再等 900ms、只写内存缓存不碰界面 —— 不参与首帧，也不改首帧结构。
+    StartupPrefetch.start();
   }
 
   private onPendingRoute(): void {

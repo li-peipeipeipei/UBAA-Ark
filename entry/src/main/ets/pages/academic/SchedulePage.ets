@@ -1104,7 +1104,7 @@ export struct SchedulePage {
         let fetched: WeeklySchedule | null = null;
         try {
           // 每次都联网取一份，再和本地比 —— 用户要求「登录后自动比对差异」
-          fetched = await ApiService.fetchWeeklySchedule(termCode, n);
+          fetched = await ApiService.fetchWeeklySchedule(termCode, n, true);
         } catch (error) {
           Logger.warn('比对第' + n.toString() + '周失败：' + (error as Error).message);
         }
@@ -1346,11 +1346,15 @@ export struct SchedulePage {
    * 与旧 `selectWeek` 的区别：它**只更新数据、不切 Swiper 页、不转整页加载态** ——
    * 因为现在切周靠 Swiper（手指实时跟手），这一份只负责把「当前停的那一周」刷成最新。
    */
-  private async reloadWeek(week: number): Promise<void> {
+  /**
+   * @param force 是否绕开内存缓存。切页签时的自动刷新用 `false`（预取刚拿到的就是最新的），
+   *   用户点「重试」用 `true`（他明确要求重新拉一次）。
+   */
+  private async reloadWeek(week: number, force: boolean = false): Promise<void> {
     const requestId: number = ++this.weekRequestId;
     this.weekLoading = true;
     try {
-      const data: WeeklySchedule = await ApiService.fetchWeeklySchedule(this.termCode, week);
+      const data: WeeklySchedule = await ApiService.fetchWeeklySchedule(this.termCode, week, force);
       if (requestId !== this.weekRequestId) {
         return; // 期间又切到别的周了，这次结果作废
       }
@@ -2102,7 +2106,7 @@ export struct SchedulePage {
           if (this.weekErrors[week] === true) {
             ErrorView({
               message: '第' + week.toString() + '周加载失败',
-              onRetry: () => { this.reloadWeek(week); }
+              onRetry: () => { this.reloadWeek(week, true); }
             })
           } else {
             LoadingView({ message: '第' + week.toString() + '周加载中…' })
@@ -2821,7 +2825,7 @@ export struct SchedulePage {
           ? null : this.weekSchedules[n];
       let fetched: WeeklySchedule | null = null;
       try {
-        fetched = await ApiService.fetchWeeklySchedule(termCode, n);
+        fetched = await ApiService.fetchWeeklySchedule(termCode, n, true);
       } catch (error) {
         Logger.warn('刷新第' + n.toString() + '周失败：' + (error as Error).message);
       }

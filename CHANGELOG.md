@@ -89,6 +89,29 @@
 - `CasParser.hasLoginForm` 容忍单/双引号（模板改成单引号后不再误判）。
 - `LocalCampusService` 解析表格不再逐格 `new RegExp`；URL query 解码包 try（非法 `%` 不再抛 URIError）。
 
+### 新增（启动预加载，含可行性研究）
+
+研究文档：`docs/tech/startup-prefetch-feasibility.md`。
+
+结论是**不做「五个功能一起预取」**：按「参数确定 / 可复用 / 不写界面」三条门槛筛选后，
+前五功能里只有**课表、考试、成绩**可预取；空闲教室与博雅依赖用户选择参数、阳光打卡要额外走
+≤10 跳 oauth 链，预取收益为负，明确不做。
+
+- `common/MemoCache.ets`：TTL + **单飞**。单飞不只是省流量 —— 首页与课表页同时启动时，
+  两个请求会各自「整罐读 → 改 → 整罐写」Cookie，后写的覆盖前者。
+- `network/LocalAcademicService.ets`：`terms / weeks / weekly / today / exams / grades`
+  六个接口改为「缓存包装 + `doFetchXxx`」，新增 `force` 逃逸口；`reset()` 里清缓存。
+- `common/StartupPrefetch.ets`：首帧后 900ms 启动、总预算 9s、串行执行
+  （会话唤醒 → 学期 → 周次 → 当前周课表 → 考试 → 本学期成绩），
+  每步独立 try/catch，超预算 / 切后台（`onBackground`）/ 已登出立即停手。
+- 刷新路径必须 `force = true`：课表逐周比对（2 处）、重试按钮、首页下拉刷新
+  —— 否则「拿自己刚缓存的那份去比」，永远比不出差异。
+
+**与启动动画快照的关系**（研究文档第四节）：
+预取只写缓存、不碰 `@State`/`AppStorage`，界面变化仍由页面自己的状态机驱动；
+`start_window_background` 由 `#FFFFFF` 改为 `#F1F3F5`，与 `page_background` 完全一致，
+消除「启动窗口 → 首帧」的颜色突变（深色本来就是 `#000000`）。
+
 ### 修复（第二轮巡检：桌面卡片 / 启动流程 / 登录）
 
 **登录**

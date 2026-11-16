@@ -208,13 +208,13 @@ export class ApiService {
   /* ========================= 课表 ========================= */
 
   /** 学期列表。 */
-  static async fetchTerms(): Promise<Term[]> {
+  static async fetchTerms(force: boolean = false): Promise<Term[]> {
     if (TokenStore.getDemoMode()) {
       await MockData.pause();
       return MockData.terms();
     }
     if (ApiService.localMode()) {
-      return await LocalAcademicService.fetchTerms();
+      return await LocalAcademicService.fetchTerms(force);
     }
     const result = await HttpEngine.request(
       http.RequestMethod.GET,
@@ -224,13 +224,13 @@ export class ApiService {
   }
 
   /** 指定学期的教学周列表。 */
-  static async fetchWeeks(termCode: string): Promise<Week[]> {
+  static async fetchWeeks(termCode: string, force: boolean = false): Promise<Week[]> {
     if (TokenStore.getDemoMode()) {
       await MockData.pause();
       return MockData.weeks();
     }
     if (ApiService.localMode()) {
-      return await LocalAcademicService.fetchWeeks(termCode);
+      return await LocalAcademicService.fetchWeeks(termCode, force);
     }
     const result = await HttpEngine.request(
       http.RequestMethod.GET,
@@ -243,12 +243,13 @@ export class ApiService {
   }
 
   /** 指定学期的某周课表。 */
-  static async fetchWeeklySchedule(termCode: string, week: number): Promise<WeeklySchedule> {
+  static async fetchWeeklySchedule(termCode: string, week: number,
+    force: boolean = false): Promise<WeeklySchedule> {
     if (TokenStore.getDemoMode()) {
       return MockData.weeklySchedule();
     }
     if (ApiService.localMode()) {
-      return await LocalAcademicService.fetchWeeklySchedule(termCode, week);
+      return await LocalAcademicService.fetchWeeklySchedule(termCode, week, force);
     }
     const query = new Map<string, string>();
     query.set('termCode', termCode);
@@ -269,13 +270,13 @@ export class ApiService {
   }
 
   /** 今日课程摘要。 */
-  static async fetchTodayClasses(): Promise<TodayClass[]> {
+  static async fetchTodayClasses(force: boolean = false): Promise<TodayClass[]> {
     if (TokenStore.getDemoMode()) {
       await MockData.pause();
       return MockData.todayClasses();
     }
     if (ApiService.localMode()) {
-      return await LocalAcademicService.fetchTodayClasses();
+      return await LocalAcademicService.fetchTodayClasses(force);
     }
     const result = await HttpEngine.request(
       http.RequestMethod.GET,
@@ -286,13 +287,13 @@ export class ApiService {
 
   /* ========================= 考试 ========================= */
 
-  static async fetchExams(termCode: string): Promise<ExamArrangementData> {
+  static async fetchExams(termCode: string, force: boolean = false): Promise<ExamArrangementData> {
     if (TokenStore.getDemoMode()) {
       await MockData.pause();
       return MockData.exams(termCode);
     }
     if (ApiService.localMode()) {
-      return await LocalAcademicService.fetchExams(termCode);
+      return await LocalAcademicService.fetchExams(termCode, force);
     }
     const result = await HttpEngine.request(
       http.RequestMethod.GET,
@@ -306,13 +307,13 @@ export class ApiService {
 
   /* ========================= 成绩 ========================= */
 
-  static async fetchGrades(termCode: string): Promise<GradeData> {
+  static async fetchGrades(termCode: string, force: boolean = false): Promise<GradeData> {
     if (TokenStore.getDemoMode()) {
       await MockData.pause();
       return MockData.grades(termCode);
     }
     if (ApiService.localMode()) {
-      return await LocalAcademicService.fetchGrades(termCode);
+      return await LocalAcademicService.fetchGrades(termCode, force);
     }
     const result = await HttpEngine.request(
       http.RequestMethod.GET,
