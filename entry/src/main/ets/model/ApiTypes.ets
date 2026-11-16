@@ -777,3 +777,34 @@ export interface AnnouncementInfo {
   content?: string;
   publishedAt?: string;
 }
+
+/* ============================ 财务收入（上游 UBAA 2.0 对齐） ============================ */
+
+/**
+ * 一条收入记录。
+ *
+ * 字段名来自上游 `finance` 功能的 `FinanceIncome`（Rust core 的 parser 逐字段对应
+ * `chaxun.icw.buaa.edu.cn/api-zhcx/getStudentSRCX` 的返回）：
+ * `lsh` 流水号 / `ffxmmc` 发放项目 / `zy` 摘要 / `je` 金额 / `se` 税额 /
+ * `sfje` 实发 / `slbfb` 税率 / `lrrq` 录入日期 / `nian` 年 / `yue` 月。
+ *
+ * 金额一律存**分**（整数），避免浮点误差；显示时再除以 100。
+ */
+export interface FinanceIncome {
+  /** 流水号，同一次查询内唯一（用于分页去重）。 */
+  id: string;
+  project?: string;
+  description?: string;
+  amountCents?: number;
+  taxCents?: number;
+  paidCents?: number;
+  taxRate?: string;
+  recordedDate?: string;
+  year?: string;
+  month?: string;
+}
+
+export interface FinanceIncomes {
+  entries: FinanceIncome[];
+  total: number;
+}

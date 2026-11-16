@@ -23,6 +23,7 @@ import { JudgeDetailPage } from './evaluation/JudgeDetailPage';
 import { IhomePage } from './ihome/IhomePage';
 import { IhomeDetailPage } from './ihome/IhomeDetailPage';
 import { SpocPage } from './spoc/SpocPage';
+import { FinancePage } from './finance/FinancePage';
 import { YgdkPage } from './activity/YgdkPage';
 import { BykcPage } from './bykc/BykcPage';
 import { BykcCoursesPage } from './bykc/BykcCoursesPage';
@@ -381,6 +382,19 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
     })
     // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
     // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.FINANCE) {
+    HdsNavDestination() {
+      DestShell({ stack: stack }) {
+        FinancePage()
+      }
+    }
+    .titleBar(destTitleBar('财务收入'))
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
     .backgroundColor(Color.Transparent)
   } else if (name === RouteName.YGDK) {
     HdsNavDestination() {
@@ -838,6 +852,26 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
         title: 'SPOC 作业',
         hero: true,
         routeName: RouteName.SPOC,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
+    // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.FINANCE) {
+    NavDestination() {
+      NativeHeroDest({
+        title: '财务收入',
+        hero: true,
+        routeName: RouteName.FINANCE,
         stack: stack,
         onBack: () => {
           AppRouter.back(stack);

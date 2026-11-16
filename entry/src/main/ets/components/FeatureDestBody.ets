@@ -19,6 +19,7 @@ import { BykcDetailPage } from '../pages/bykc/BykcDetailPage';
 import { LibBookHomePage } from '../pages/library/LibBookHomePage';
 import { LibBookReservePage } from '../pages/library/LibBookReservePage';
 import { LibBookBookingsPage } from '../pages/library/LibBookBookingsPage';
+import { FinancePage } from '../pages/finance/FinancePage';
 
 
 /**
@@ -48,6 +49,8 @@ export struct FeatureDestBody {
       EvaluationPage()
     } else if (this.name === RouteName.SPOC) {
       SpocPage()
+    } else if (this.name === RouteName.FINANCE) {
+      FinancePage()
     } else if (this.name === RouteName.YGDK) {
       YgdkPage()
     } else if (this.name === RouteName.IHOME) {

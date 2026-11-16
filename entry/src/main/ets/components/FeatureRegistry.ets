@@ -137,6 +137,17 @@ export function allFeatures(): FeatureItem[] {
 
       colorDark: '#F0779F',
       route: RouteName.YGDK
+    },
+    {
+      // 上游 UBAA 2.0 的「财务收入」：只读查询，走 chaxun.icw.buaa.edu.cn。
+      // 图标复用 ic_grade（表格意象），配色用 accentBlue 与成绩页区分。
+      title: '财务收入',
+      icon: $r('app.media.ic_grade'),
+      color: AppColor.brand,
+      colorValue: '#1976D2',
+
+      colorDark: '#5AA9F0',
+      route: RouteName.FINANCE
     }
   ];
 }
