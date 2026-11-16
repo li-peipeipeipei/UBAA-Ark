@@ -178,11 +178,18 @@ export struct BykcDetailPage {
       return;
     }
     this.acting = true;
+    // 记住发起时的栈深：写操作 + 重新拉详情大约 1~2 秒，期间标题栏的返回是可用的。
+    // 用户若自己先返回了，`stack.size()` 已经变小 —— 这时再 pop 一次会把「选择课程」
+    // 列表页也弹掉，直接落到博雅首页。
+    const depthAtStart: number = this.stack.size();
     try {
       const message: string = await action();
       Toast.show(message);
+      // load 内部已吞异常（失败会切到 ERROR 态），不会打断后面的回退判断
       await this.load();
-      AppRouter.back(this.stack);
+      if (this.stack.size() === depthAtStart) {
+        AppRouter.back(this.stack);
+      }
     } catch (error) {
       Toast.show(error instanceof ApiError ?
         (error as ApiError).friendlyMessage() : '操作失败，请稍后重试');

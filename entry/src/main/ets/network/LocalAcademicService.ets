@@ -181,6 +181,20 @@ export class LocalAcademicService {
   private static byxtReady: boolean = false;
   private static appReady: boolean = false;
   private static classroomReady: boolean = false;
+  /** 正在进行的会话换取（并发请求共享同一次，避免各跑一遍 CAS 跳转链）。 */
+  private static byxtTask: Promise<void> | null = null;
+  private static appTask: Promise<void> | null = null;
+  private static classroomTask: Promise<void> | null = null;
+
+  /** 登出时清空进程内会话（见 LocalSpocService.reset 的说明）。 */
+  static reset(): void {
+    LocalAcademicService.byxtReady = false;
+    LocalAcademicService.appReady = false;
+    LocalAcademicService.classroomReady = false;
+    LocalAcademicService.byxtTask = null;
+    LocalAcademicService.appTask = null;
+    LocalAcademicService.classroomTask = null;
+  }
 
   /* ------------------------------ 课表 ------------------------------ */
 
@@ -549,11 +563,28 @@ export class LocalAcademicService {
    *
    * 先直接打教务接口让 CAS 自己跳；个别 CAS 过滤器不返回 302 而是直接吐登录页，
    * 这种情况再显式走一次 `sso/login?service=` 兜底。
+   *
+   * ⚠️ 并发请求必须**共享同一次换取**：冷启动时首页会同时拉学期 / 周次 / 今日课程，
+   * 三个请求都看到 `byxtReady=false` 就各跑一遍完整 CAS 跳转链（每条 3~8 次往返），
+   * 既多花几秒，又会并发覆盖同一个 Cookie 罐。下面三个 ensure* 都是这个道理。
    */
   private static async ensureByxt(): Promise<void> {
     if (LocalAcademicService.byxtReady) {
       return;
     }
+    if (LocalAcademicService.byxtTask !== null) {
+      return LocalAcademicService.byxtTask;
+    }
+    const task: Promise<void> = LocalAcademicService.doEnsureByxt();
+    LocalAcademicService.byxtTask = task;
+    try {
+      await task;
+    } finally {
+      LocalAcademicService.byxtTask = null;
+    }
+  }
+
+  private static async doEnsureByxt(): Promise<void> {
     let response = await UpstreamClient.follow(BYXT_CURRENT_USER_URL);
     if (!LocalAcademicService.isJson(response)) {
       Logger.warn('教务会话未就绪，显式走一次统一认证换取');
@@ -573,6 +604,19 @@ export class LocalAcademicService {
     if (LocalAcademicService.appReady) {
       return;
     }
+    if (LocalAcademicService.appTask !== null) {
+      return LocalAcademicService.appTask;
+    }
+    const task: Promise<void> = LocalAcademicService.doEnsureApp();
+    LocalAcademicService.appTask = task;
+    try {
+      await task;
+    } finally {
+      LocalAcademicService.appTask = null;
+    }
+  }
+
+  private static async doEnsureApp(): Promise<void> {
     const headers: Record<string, string> = {};
     headers['accept'] = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8';
     let response = await UpstreamClient.follow(APP_SCORE_URL, headers);
@@ -598,6 +642,19 @@ export class LocalAcademicService {
     if (LocalAcademicService.classroomReady) {
       return;
     }
+    if (LocalAcademicService.classroomTask !== null) {
+      return LocalAcademicService.classroomTask;
+    }
+    const task: Promise<void> = LocalAcademicService.doEnsureClassroom();
+    LocalAcademicService.classroomTask = task;
+    try {
+      await task;
+    } finally {
+      LocalAcademicService.classroomTask = null;
+    }
+  }
+
+  private static async doEnsureClassroom(): Promise<void> {
     const response = await UpstreamClient.follow(APP_CLASSROOM_SSO_URL, {});
     if (LocalAcademicService.isSsoPage(response)) {
       throw new ApiError(401, 'upstream_session_expired',

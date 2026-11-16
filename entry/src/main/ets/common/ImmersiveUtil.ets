@@ -147,6 +147,8 @@ export function transparentOf(argbHex: string): string {
  */
 export class ImmersiveUtil {
   private static mainWindow: window.Window | null = null;
+  /** 窗口监听是否已注册（`apply()` 重复调用时不再重复 on）。 */
+  private static listenersBound: boolean = false;
 
   /**
    * 方向策略：**必须在 `windowStage.loadContent()` 之前**调用。
@@ -201,21 +203,26 @@ export class ImmersiveUtil {
         });
 
       // 避让区变化（折叠屏展开、旋转、手势导航切换等）
-      win.on('avoidAreaChange', () => {
-        ImmersiveUtil.refreshAvoidArea(win);
-      });
-      // 深浅色切换
-      win.on('windowVisibilityChange', () => {
-        ImmersiveUtil.refreshAvoidArea(win);
-        // 全屏模式下系统偶尔会重置状态栏文字色，每次可见都重设一次
-        ImmersiveUtil.applySystemBarStyle(win);
-      });
-      // 窗口尺寸变化（分屏 / 自由窗口 / 横竖切换 / 折叠展开）。
-      // 与 avoidAreaChange 是两个独立回调、顺序不保证，所以这里成对刷新安全区。
-      win.on('windowSizeChange', (size: window.Size) => {
-        ImmersiveUtil.refreshAvoidArea(win);
-        ImmersiveUtil.publishWindowSize(win, size.width, size.height);
-      });
+      // ⚠️ 只注册一次：`apply()` 若被重复调用（能力重建 / 重新 loadContent），
+      // 每调一次都会在同一窗口上再挂一套监听，回调按倍数增长且无法解绑。
+      if (!ImmersiveUtil.listenersBound) {
+        ImmersiveUtil.listenersBound = true;
+        win.on('avoidAreaChange', () => {
+          ImmersiveUtil.refreshAvoidArea(win);
+        });
+        // 深浅色切换
+        win.on('windowVisibilityChange', () => {
+          ImmersiveUtil.refreshAvoidArea(win);
+          // 全屏模式下系统偶尔会重置状态栏文字色，每次可见都重设一次
+          ImmersiveUtil.applySystemBarStyle(win);
+        });
+        // 窗口尺寸变化（分屏 / 自由窗口 / 横竖切换 / 折叠展开）。
+        // 与 avoidAreaChange 是两个独立回调、顺序不保证，所以这里成对刷新安全区。
+        win.on('windowSizeChange', (size: window.Size) => {
+          ImmersiveUtil.refreshAvoidArea(win);
+          ImmersiveUtil.publishWindowSize(win, size.width, size.height);
+        });
+      }
       // 订阅后不一定立刻有事件，必须自己取一次首值，否则首帧永远停在 sm。
       const rect = win.getWindowProperties().windowRect;
       ImmersiveUtil.publishWindowSize(win, rect.width, rect.height);
@@ -252,6 +259,10 @@ export class ImmersiveUtil {
       const hVp: number = ui.px2vp(hPx);
       const bp: string = widthToBreakpoint(wVp);
       const hBp: string = heightToBreakpoint(hVp);
+      // windowSizeChange 在拖拽分屏 / 旋转动画期间会**每帧**回调，每次都写 hiLog
+      // 会给主线程加一层格式化 + 落盘开销。只在断点真的变了时打一条。
+      const prevBp: string = AppStorage.get<string>(KEY_BREAKPOINT) ?? '';
+      const prevHBp: string = AppStorage.get<string>(KEY_HEIGHT_BP) ?? '';
       AppStorage.setOrCreate<number>(KEY_WINDOW_WIDTH_VP, wVp);
       AppStorage.setOrCreate<number>(KEY_WINDOW_HEIGHT_VP, hVp);
       AppStorage.setOrCreate<string>(KEY_BREAKPOINT, bp);
@@ -259,7 +270,9 @@ export class ImmersiveUtil {
       AppStorage.setOrCreate<boolean>(KEY_IS_LANDSCAPE, wVp > hVp);
       AppStorage.setOrCreate<boolean>(KEY_IS_WIDE_SCREEN, isWideBreakpoint(bp));
       AppStorage.setOrCreate<boolean>(KEY_NAV_SPLIT_MODE, isSplitBreakpoint(bp));
-      Logger.info('LAYOUT w=' + wVp + 'vp h=' + hVp + 'vp bp=' + bp + '/' + hBp);
+      if (prevBp !== bp || prevHBp !== hBp) {
+        Logger.info('LAYOUT w=' + wVp + 'vp h=' + hVp + 'vp bp=' + bp + '/' + hBp);
+      }
       // 方向策略不在这里做：静态 orientation 已放开（auto_rotation_restricted），
       // 手机端的竖屏锁定由 EntryAbility 按设备形态决定（见 releaseOrientationForWideDevices）。
     } catch (error) {
@@ -274,9 +287,14 @@ export class ImmersiveUtil {
       const uiContext = win.getUIContext();
       const top = uiContext.px2vp(systemArea.topRect.height);
       const bottom = uiContext.px2vp(indicatorArea.bottomRect.height);
+      const prevTop: number = AppStorage.get<number>(KEY_TOP_SAFE_HEIGHT) ?? -1;
+      const prevBottom: number = AppStorage.get<number>(KEY_BOTTOM_SAFE_HEIGHT) ?? -1;
       AppStorage.setOrCreate(KEY_TOP_SAFE_HEIGHT, top);
       AppStorage.setOrCreate(KEY_BOTTOM_SAFE_HEIGHT, bottom);
-      Logger.info('LAYOUT 避让区 top=' + top + 'vp bottom=' + bottom + 'vp');
+      // 与 publishWindowSize 同理：这两个回调会成对高频触发，值没变就不打日志
+      if (prevTop !== top || prevBottom !== bottom) {
+        Logger.info('LAYOUT 避让区 top=' + top + 'vp bottom=' + bottom + 'vp');
+      }
     } catch (error) {
       Logger.error('获取避让区失败：' + (error as Error).message);
     }

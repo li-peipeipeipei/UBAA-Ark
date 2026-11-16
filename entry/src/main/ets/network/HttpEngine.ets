@@ -199,7 +199,11 @@ export class HttpEngine {
       );
       if (!result.isOk()) {
         Logger.warn('刷新令牌失败，状态码 ' + result.status);
-        TokenStore.clear();
+        // 只有服务端**明确否认** refreshToken（401/403）才清本地登录态。
+        // 5xx、502 网关错误页都属于临时故障 —— 一并清掉会逼用户重登。
+        if (result.status === 401 || result.status === 403) {
+          TokenStore.clear();
+        }
         return false;
       }
       const refreshed = JSON.parse(result.body) as TokenRefreshResponse;
@@ -213,7 +217,8 @@ export class HttpEngine {
       return true;
     } catch (error) {
       Logger.warn('刷新令牌异常：' + (error as Error).message);
-      TokenStore.clear();
+      // 网络类异常（DNS / 超时 / TLS 握手失败）不代表登录态失效：
+      // 这里清 token 会让一次校园网抖动直接把用户踢回登录页。保留令牌，下次再试。
       return false;
     }
   }

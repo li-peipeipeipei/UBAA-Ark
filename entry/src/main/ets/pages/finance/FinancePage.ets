@@ -180,7 +180,10 @@ export struct FinancePage {
                 if (index < this.entries.length - 1) {
                   Divider().color(AppColor.divider).strokeWidth(0.5)
                 }
-              }, (item: FinanceIncome) => item.id)
+              }, (item: FinanceIncome, index: number) =>
+                // 流水号缺失时 `id` 是空串，多条同时为空就会撞键（ArkUI 对相同键值的
+                // 行为是未定义的，表现为静默丢行）。空 id 用下标兜底保证唯一。
+                item.id.length > 0 ? item.id : 'row-' + index.toString())
             }
             .width('100%')
           }

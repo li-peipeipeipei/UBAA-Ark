@@ -46,8 +46,16 @@ export interface FeatureItem {
  * 按「一学期里用得最多的先后」排：查考试 / 成绩、找空教室、签到、选博雅、
  * 约图书馆、看作业、评教、提诉求、打卡。
  */
-export function allFeatures(): FeatureItem[] {
-  return [
+/*
+ * ⚠️ 清单只构建**一次**（模块级常量）。
+ *
+ * 原来每次调用 `allFeatures()` 都新建 12 个对象，每个还带一个 `$r()` 资源对象；
+ * 而 FeaturePage 的 build 里调了两次（ForEach + columnsTemplate），
+ * 意味着每次重渲染（切主题、onAreaChange 改列数、磁贴回弹）都要造 24 个对象、
+ * 24 次 `$r()`，并让 ForEach 拿到新数组多跑一轮 key 计算。
+ * 清单是静态的，构建一次就够；调用方**不要修改返回值**。
+ */
+const FEATURE_LIST: FeatureItem[] = [
     {
       title: '考试安排',
       icon: $r('app.media.ic_event'),
@@ -159,5 +167,9 @@ export function allFeatures(): FeatureItem[] {
       colorDark: '#9E8AFF',
       route: RouteName.NETWORK
     }
-  ];
+];
+
+/** 取功能清单（返回同一个数组实例，只读使用）。 */
+export function allFeatures(): FeatureItem[] {
+  return FEATURE_LIST;
 }

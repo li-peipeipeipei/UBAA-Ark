@@ -117,6 +117,12 @@ export class LocalLibBookService {
   /** 上一次请求的时间戳（token 过期时重登用）。 */
   private static lastRequestAt: number = 0;
 
+  /** 登出时清空进程内会话（见 LocalSpocService.reset 的说明）。 */
+  static reset(): void {
+    LocalLibBookService.token = '';
+    LocalLibBookService.lastRequestAt = 0;
+  }
+
   /* ----------------------------- 对外接口 ----------------------------- */
 
   /** 楼馆列表（含嵌套的楼层）。 */
@@ -384,11 +390,17 @@ export class LocalLibBookService {
    */
   private static async request(path: string, body: LibBookRequestBody): Promise<Object> {
     await LocalLibBookService.ensureLogin(false);
-    const raw: Object = await LocalLibBookService.postV4(path, body, true);
+    let raw: Object = await LocalLibBookService.postV4(path, body, true);
     if (LocalLibBookService.isLoginExpired(raw)) {
       LocalLibBookService.token = '';
       await LocalLibBookService.ensureLogin(true);
-      return LocalLibBookService.postV4(path, body, true);
+      // ⚠️ 重试结果必须走下面**同一套** code 校验，不能直接 return。
+      // 否则重试那一次返回 {code:500, message:'座位已被占用'} 时会被当成成功，
+      // 界面提示「预约成功」而实际没约上（写操作拿到误导性结果）。
+      raw = await LocalLibBookService.postV4(path, body, true);
+      if (LocalLibBookService.isLoginExpired(raw)) {
+        throw new Error('图书馆登录失效，请重新登录后再试');
+      }
     }
     const code: number = numOf(raw, 'code');
     if (code !== 0 && code !== 1) {

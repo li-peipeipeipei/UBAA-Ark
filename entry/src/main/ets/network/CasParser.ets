@@ -16,6 +16,10 @@ import { CaptchaInfo } from '../model/ApiTypes';
 /** `name="execution"` 的 hidden input（CAS 标准写法，name 在前）。 */
 const EXECUTION_RE = new RegExp('<input[^>]*name=["\']execution["\'][^>]*value=["\']([^"\']+)["\'][^>]*>', 'i');
 
+/** 登录表单里的用户名 / 密码域（单双引号都认，见 hasLoginForm 的说明）。 */
+const QUOTED_USERNAME: RegExp = new RegExp('name\\s*=\\s*["\']username["\']', 'i');
+const QUOTED_PASSWORD: RegExp = new RegExp('name\\s*=\\s*["\']password["\']', 'i');
+
 /** 少数模板会把 value 写在 name 前面。 */
 const EXECUTION_REVERSED_RE = new RegExp('<input[^>]*value=["\']([^"\']+)["\'][^>]*name=["\']execution["\'][^>]*>', 'i');
 
@@ -274,8 +278,9 @@ export class CasParser {
    * 拿它当判据会把登录成功误判成密码错误。
    */
   static hasLoginForm(html: string): boolean {
-    const lower = html.toLowerCase();
-    return lower.indexOf('name="username"') >= 0 && lower.indexOf('name="password"') >= 0;
+    // 容忍单/双引号与大小写：CAS 模板换主题时属性可能写成 name='username'，
+    // 只认双引号会漏判「被退回登录页」＝凭据错误，用户看到的就变成后续校验的通用 401。
+    return QUOTED_USERNAME.test(html) && QUOTED_PASSWORD.test(html);
   }
 
   /** 页面是否像 HTML 文档（用于识别「被登录页接管」）。 */

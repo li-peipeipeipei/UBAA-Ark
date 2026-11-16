@@ -121,6 +121,8 @@ export struct ClassroomPage {
         return;
       }
       this.roomMap = data.d.list;
+      // 换了校区 / 日期，节次字符串整批换新 —— 旧缓存不再有任何引用，顺手清掉
+      this.freeCache.clear();
       this.buildings = Object.keys(data.d.list);
       // 换过校区 / 日期后，原先选的教学楼可能不存在了 → 落回「全部」
       if (this.buildingFilter.length > 0 && this.buildings.indexOf(this.buildingFilter) < 0) {
@@ -260,9 +262,22 @@ export struct ClassroomPage {
   }
 
   /** kxsds（如 "1,2,5,6"）→ 空闲单节集合，便于查表。 */
+  /**
+   * `kxsds`（如 `"1,2,5,6"`）→ 节次号数组，**按字符串缓存**。
+   *
+   * 表格是「教室 × 14 节」的全量栅格：60 间 × 14 格 = 840 次 `isFree`，
+   * 不缓存就是 840 次 `split + parseInt`，全发生在同一帧里（进页面 / 切楼栋时掉帧）。
+   * 缓存后每间教室只解析一次。
+   */
+  private freeCache: Map<string, number[]> = new Map();
+
   private freeSet(kxsds: string): number[] {
     if (kxsds.length === 0) {
       return [];
+    }
+    const cached: number[] | undefined = this.freeCache.get(kxsds);
+    if (cached !== undefined) {
+      return cached;
     }
     const parts: string[] = kxsds.split(',');
     const result: number[] = [];
@@ -272,6 +287,7 @@ export struct ClassroomPage {
         result.push(n);
       }
     }
+    this.freeCache.set(kxsds, result);
     return result;
   }
 

@@ -84,11 +84,13 @@ export class CardRefresher {
 
       const weekView: CardWeekView =
         CardDataBuilder.buildWeekView(data, weeks, used, termName, isCurrentWeek ? today : 0);
-      CardCache.saveWeekView(context, weekView);
+      // 前两份不推送：一次刷新会连写三份卡片数据，每次都 pushAll 就是三倍的
+      // 跨进程 IPC + Preferences 重读（冷启动首屏明显卡）。只在最后一份推一次。
+      CardCache.saveWeekView(context, weekView, false);
 
       const dayView: CardDayView =
         CardDataBuilder.buildDayView(data, weeks, used, today, today, isCurrentWeek);
-      CardCache.saveDayView(context, dayView);
+      CardCache.saveDayView(context, dayView, false);
 
       const todayCard: CardToday =
         CardDataBuilder.buildToday(data, weeks, used, today, isCurrentWeek);

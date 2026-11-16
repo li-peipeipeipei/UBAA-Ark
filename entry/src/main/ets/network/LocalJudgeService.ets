@@ -150,6 +150,18 @@ export class LocalJudgeService {
   /** 详情缓存（课程 id + 作业 id → 详情），详情页复用时不必再抓一次。 */
   private static details: Map<string, JudgeAssignmentDetail> = new Map<string, JudgeAssignmentDetail>();
 
+  /**
+   * 登出时清空进程内会话。
+   *
+   * `details` 里存的是**具体作业的提交状态与得分**，属于用户数据 ——
+   * 换账号不清就会在详情页读到上一个账号的作业结果。
+   */
+  static reset(): void {
+    LocalJudgeService.activated = false;
+    LocalJudgeService.courses = [];
+    LocalJudgeService.details = new Map<string, JudgeAssignmentDetail>();
+  }
+
   /* ------------------------------ 对外 ------------------------------ */
 
   /**
@@ -172,7 +184,7 @@ export class LocalJudgeService {
       for (let j = 0; j < raws.length; j++) {
         let detail: JudgeAssignmentDetail | null = null;
         try {
-          detail = await LocalJudgeService.fetchDetailInternal(course, raws[j]);
+          detail = await LocalJudgeService.fetchDetailInternal(course, raws[j], true);
         } catch (error) {
           Logger.warn('希冀作业详情解析失败（' + raws[j].title + '）：' + (error as Error).message);
         }
@@ -330,14 +342,24 @@ export class LocalJudgeService {
     return LocalJudgeService.parseAssignments(html, course);
   }
 
+  /**
+   * 抓一条作业的详情并解析。
+   *
+   * @param bypassCache 列表刷新时必须传 `true`：缓存没有 TTL，命中就直接返回旧对象，
+   *   用户提交代码后下拉刷新会一直看到旧的「未提交 / 上次得分」，只能杀进程才更新。
+   *   详情页可以复用缓存（首屏省一次往返）。
+   */
   private static async fetchDetailInternal(
     course: JudgeCourseRaw,
-    raw: JudgeAssignmentRaw
+    raw: JudgeAssignmentRaw,
+    bypassCache: boolean = false
   ): Promise<JudgeAssignmentDetail | null> {
     const key = course.courseId + '|' + raw.assignmentId;
-    const cached = LocalJudgeService.details.get(key);
-    if (cached !== undefined) {
-      return cached;
+    if (!bypassCache) {
+      const cached = LocalJudgeService.details.get(key);
+      if (cached !== undefined) {
+        return cached;
+      }
     }
     const html = await LocalJudgeService.fetchHtml(
       JUDGE_BASE + '/assignment/index.jsp?assignID=' + raw.assignmentId, true);

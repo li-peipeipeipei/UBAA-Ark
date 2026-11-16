@@ -2,7 +2,7 @@ import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { GlobalContext } from '../common/GlobalContext';
-import { WeeklySchedule, Week, Term } from '../model/ApiTypes';
+import { CourseClass, SectionTime, WeeklySchedule, Week, Term } from '../model/ApiTypes';
 
 /**
  * 课表本地缓存（离线优先）。
@@ -197,7 +197,24 @@ export class ScheduleCache {
 
   /** 读某一周的课表；没缓存返回 null。 */
   static loadWeek(termCode: string, week: number): WeeklySchedule | null {
-    return ScheduleCache.read<WeeklySchedule>(ScheduleCache.weekKey(termCode, week));
+    const data: WeeklySchedule | null =
+      ScheduleCache.read<WeeklySchedule>(ScheduleCache.weekKey(termCode, week));
+    if (data === null || data === undefined) {
+      return null;
+    }
+    // ⚠️ 形状校验：`read` 只做 JSON.parse，不做类型检查。旧版本写下的缓存、
+    // 或写入过程中被杀进程截断的数据，可能缺 `arrangedList` / `sectionTimes`。
+    // 直接拿去渲染会在 build 期读 `.length` 抛 TypeError —— 课表页直接白屏，
+    // 而且 `restoreFromCache` 的 try/catch 护不住渲染期。
+    // 校验不过就当没缓存，让上层走网络重新拉。
+    const list: CourseClass[] | undefined = data.arrangedList;
+    const times: SectionTime[] | undefined = data.sectionTimes;
+    if (!Array.isArray(list) || !Array.isArray(times)) {
+      hilog.warn(DOMAIN, TAG, '课表缓存形状异常，已丢弃：term=%{public}s week=%{public}d',
+        termCode, week);
+      return null;
+    }
+    return data;
   }
 
   /** 缓存里记住的当前学期代码。 */

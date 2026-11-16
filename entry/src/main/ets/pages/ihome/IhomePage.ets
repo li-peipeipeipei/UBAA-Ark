@@ -44,6 +44,12 @@ export struct IhomePage {
   @State private categoryId: number = 0;
   @State private categories: IhomeCategory[] = [];
   @State private loadingMore: boolean = false;
+  /**
+   * 请求序号（单调递增）。每个异步请求发出前叫一次号，回来时比对 —— 序号变了说明
+   * 已经有更新的请求在跑（切 scope / 切筛选 / 搜索），本次结果整份丢弃。
+   * 否则慢请求后到会把新列表覆盖成旧数据。
+   */
+  private reqSeq: number = 0;
   @State private expandedNoticeId: number = 0;
 
   aboutToAppear(): void {
@@ -71,15 +77,25 @@ export struct IhomePage {
       this.entries = [];
       this.page = 1;
     }
+    // 请求序号：切换 scope / 筛选 / 关键词都会连发多个请求，慢的那个后到会覆盖新结果
+    // （表现为「切到我的关注，列表里却是我的发起的内容」）。回来时序号对不上就整份丢弃。
+    const seq: number = ++this.reqSeq;
+    const scopeAtSend: IhomeScope = this.scope;
     try {
       const result = await ApiService.fetchIhomePage(
-        this.scope, this.page, this.keyword, this.filter, this.categoryId);
+        scopeAtSend, this.page, this.keyword, this.filter, this.categoryId);
+      if (seq !== this.reqSeq) {
+        return;
+      }
       this.entries = reset ? result.entries : this.entries.concat(result.entries);
       this.page = result.page > 0 ? result.page : this.page;
       this.lastPage = result.lastPage > 0 ? result.lastPage : 1;
       this.total = result.total;
       this.loadState = LoadState.SUCCESS;
     } catch (error) {
+      if (seq !== this.reqSeq) {
+        return;
+      }
       this.errorMessage = error instanceof ApiError
         ? (error as ApiError).friendlyMessage() : 'iHome 加载失败';
       this.loadState = LoadState.ERROR;
@@ -88,11 +104,19 @@ export struct IhomePage {
   }
 
   private async loadNotices(): Promise<void> {
+    const seq: number = ++this.reqSeq;
     this.loadState = LoadState.LOADING;
     try {
-      this.notices = await ApiService.fetchIhomeNotices();
+      const list = await ApiService.fetchIhomeNotices();
+      if (seq !== this.reqSeq) {
+        return;
+      }
+      this.notices = list;
       this.loadState = LoadState.SUCCESS;
     } catch (error) {
+      if (seq !== this.reqSeq) {
+        return;
+      }
       this.errorMessage = error instanceof ApiError
         ? (error as ApiError).friendlyMessage() : '公告加载失败';
       this.loadState = LoadState.ERROR;
@@ -104,15 +128,25 @@ export struct IhomePage {
       return;
     }
     this.loadingMore = true;
+    // 先叫号：如果这期间用户切了 scope / 筛选，`load()` 会把 reqSeq 顶掉，
+    // 这里回来时就不再往新列表里 concat 旧 scope 的下一页（否则会出现跨 scope 混合数据）。
+    const seq: number = ++this.reqSeq;
+    const scopeAtSend: IhomeScope = this.scope;
     this.page = this.page + 1;
     try {
       const result = await ApiService.fetchIhomePage(
-        this.scope, this.page, this.keyword, this.filter, this.categoryId);
+        scopeAtSend, this.page, this.keyword, this.filter, this.categoryId);
+      if (seq !== this.reqSeq) {
+        return;
+      }
       this.entries = this.entries.concat(result.entries);
       this.page = result.page > 0 ? result.page : this.page;
       this.lastPage = result.lastPage > 0 ? result.lastPage : this.page;
       this.total = result.total;
     } catch (error) {
+      if (seq !== this.reqSeq) {
+        return;
+      }
       const message = error instanceof ApiError
         ? (error as ApiError).friendlyMessage() : '加载更多失败';
       Toast.show(message);
@@ -140,7 +174,33 @@ export struct IhomePage {
       return;
     }
     this.filter = filter;
+    // 列表整批换掉，展开中的公告随之消失 —— 同时撤掉那层返回键登记，
+    // 否则会留下一个「关不掉的空面板」把下一次返回吞掉。
+    this.collapseNotice();
     this.load(true);
+  }
+
+  /**
+   * 收起公告并撤掉返回键登记（与 `toggleNotice` 里的 register 成对）。
+   *
+   * ⚠️ `BackGuard` 是**全局静态栈**：漏掉一层会让此后所有页面的返回键都先被它吃掉，
+   * 表现为「返回键失灵」（要按两次、甚至要杀进程）。
+   */
+  private collapseNotice(): void {
+    if (this.expandedNoticeId !== 0) {
+      this.expandedNoticeId = 0;
+      BackGuard.unregister();
+    }
+  }
+
+  /**
+   * 页面销毁时收掉登记。
+   *
+   * 不清理的话，`BackGuard` 里会留下一个指向已卸载组件状态的闭包 ——
+   * 下次任何页面按返回都会调它（访问已销毁的 `@State`）。
+   */
+  aboutToDisappear(): void {
+    this.collapseNotice();
   }
 
   private openDetail(entry: IhomeEntry): void {

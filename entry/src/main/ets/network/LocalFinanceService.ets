@@ -152,6 +152,23 @@ function centsOf(value: string | number | null | undefined): number | undefined 
   return negative ? -total : total;
 }
 
+/**
+ * 百分号解码；串里有非法转义时原样返回。
+ *
+ * 学校侧偶尔给出非法的 `%` 转义，`decodeURIComponent` 会抛 URIError ——
+ * 那是裸 Error 不是 ApiError，上层只能显示英文原始错误，整条登录链也断在这里。
+ */
+function percentDecode(text: string): string {
+  if (text.indexOf('%') < 0) {
+    return text;
+  }
+  try {
+    return decodeURIComponent(text);
+  } catch (error) {
+    return text;
+  }
+}
+
 /** 从 URL 的 query 里取值（同名取唯一一个，与上游 `field()` 一致）。 */
 function queryValue(url: string, name: string): string {
   const at: number = url.indexOf('?');
@@ -166,15 +183,11 @@ function queryValue(url: string, name: string): string {
     const part: string = parts[i];
     const eq: number = part.indexOf('=');
     const key: string = eq < 0 ? part : part.substring(0, eq);
-    if (decodeURIComponent(key) !== name) {
+    if (percentDecode(key) !== name) {
       continue;
     }
     const raw: string = eq < 0 ? '' : part.substring(eq + 1);
-    try {
-      found = decodeURIComponent(raw.replace(/\+/g, ' '));
-    } catch (err) {
-      found = raw;
-    }
+    found = percentDecode(raw.replace(/\+/g, ' '));
     count++;
   }
   return count === 1 ? found : '';

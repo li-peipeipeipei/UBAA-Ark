@@ -226,6 +226,14 @@ function intOf(value: string | number | null | undefined): number {
 export class LocalEvaluationService {
   /** 本次进程是否已打通 /pjxt 的 CAS 会话。 */
   private static activated: boolean = false;
+  /** 正在进行的激活（并发请求共享同一次，避免各跑一遍逐跳链）。 */
+  private static activateTask: Promise<void> | null = null;
+
+  /** 登出时清空进程内会话（见 LocalSpocService.reset 的说明）。 */
+  static reset(): void {
+    LocalEvaluationService.activated = false;
+    LocalEvaluationService.activateTask = null;
+  }
 
   /* ------------------------------ 对外 ------------------------------ */
 
@@ -364,6 +372,21 @@ export class LocalEvaluationService {
     if (LocalEvaluationService.activated) {
       return;
     }
+    // 并发共享同一次激活：评教页会同时拉课程与进度，两个请求都看到 activated=false
+    // 就各跑一遍 /pjxt/cas 逐跳链（最多 10 跳），后完成的还会覆盖前者的会话。
+    if (LocalEvaluationService.activateTask !== null) {
+      return LocalEvaluationService.activateTask;
+    }
+    const task: Promise<void> = LocalEvaluationService.doActivate();
+    LocalEvaluationService.activateTask = task;
+    try {
+      await task;
+    } finally {
+      LocalEvaluationService.activateTask = null;
+    }
+  }
+
+  private static async doActivate(): Promise<void> {
     let current: string = PJXT_BASE + '/cas';
     for (let hop = 0; hop < MAX_CAS_HOPS; hop++) {
       const response = await UpstreamClient.get(current, false);

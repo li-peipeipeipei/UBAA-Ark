@@ -148,15 +148,31 @@ export struct EvaluationPage {
     this.submitTotal = targets.length;
 
     const collected: EvaluationResult[] = [];
-    for (let i = 0; i < targets.length; i++) {
-      const result = await ApiService.submitEvaluation(targets[i]);
-      collected.push(result);
-      this.results = collected.slice();
-      this.finishedCount = i + 1;
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        // 每门课单独吞异常：网络抖一下不该中断后面的课，更不能让整个流程跳出去
+        // 导致 finally 之前的 BackGuard.unregister() 被跳过（那会把返回键永久锁死）。
+        try {
+          collected.push(await ApiService.submitEvaluation(targets[i]));
+        } catch (error) {
+          collected.push({
+            success: false,
+            message: error instanceof ApiError
+              ? (error as ApiError).friendlyMessage() : '提交失败，请重试',
+            courseName: targets[i].kcmc
+          } as EvaluationResult);
+          Logger.warn('评教提交失败：' + (error as Error).message);
+        }
+        this.results = collected.slice();
+        this.finishedCount = i + 1;
+      }
+    } finally {
+      // ⚠️ 必须放 finally：中途 return / 异常时漏掉这两行，
+      // `submitting` 会永久为 true（遮罩不消失），且 BackGuard 里留下一个永远返回 false
+      // 的闭包 —— 之后所有页面的返回键都失效，只能杀进程。
+      this.submitting = false;
+      BackGuard.unregister();
     }
-
-    this.submitting = false;
-    BackGuard.unregister();
     const successCount = this.countSuccess(collected);
     Toast.show('评教完成：成功 ' + successCount + ' 门，失败 ' +
       (collected.length - successCount) + ' 门');

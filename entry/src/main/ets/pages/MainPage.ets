@@ -788,11 +788,27 @@ export struct MainPage {
       this.clearStack(index);
       return;
     }
+    this.dropStaleBackGuards();
     this.currentIndex = index;
     // 切到课表页时通知它刷新当前周（页签内容是常驻的，onPageShow 不触发）
     if (index === 1) {
       this.scheduleHeader.onRefresh();
     }
+  }
+
+  /**
+   * 切页签时清掉上一页留下的返回键登记。
+   *
+   * 页签内容是**常驻**的（HdsTabs 不销毁、`aboutToDisappear` 不触发），页面里打开的
+   * 浮层（公告正文、筛选面板、学期选择…）注册的 `BackGuard` 层会一直留在全局栈里。
+   * 用户切到别的页签再按返回时，那层「关掉一个看不见的面板」的动作先吃掉这次返回，
+   * 表现就是**返回键失灵**（要按第二次）。
+   *
+   * 代价：原页签里仍然开着的面板，回来后按返回不再先关它（还能点面板自己的关闭按钮 /
+   * 点遮罩关掉）。相比「全局返回键失灵」，这个代价可接受。
+   */
+  private dropStaleBackGuards(): void {
+    BackGuard.clear();
   }
 
   /** 是否用侧边导航形态（平板横屏 / 2in1 / 宽自由窗口）。平板竖屏仍走底部页签。 */
@@ -1113,6 +1129,7 @@ export struct MainPage {
         return;
       }
       this.tabsReady = true;
+      this.dropStaleBackGuards();
       this.currentIndex = index;
       // 切到课表页时通知它刷新当前周。
       //

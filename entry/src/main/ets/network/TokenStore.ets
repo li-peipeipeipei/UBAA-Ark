@@ -471,7 +471,13 @@ export class TokenStore {
     }
     try {
       const parsed = JSON.parse(raw) as StoredCookie[];
-      return parsed === null ? [] : parsed;
+      // 形状校验：缓存里可能是对象/字符串（旧版本写坏、或被截断的 JSON）。
+      // 直接当数组用，下一次 `jar.push` 就会抛 TypeError，波及所有后续请求。
+      if (!Array.isArray(parsed)) {
+        Logger.warn('Cookie 缓存形状异常，已丢弃');
+        return [];
+      }
+      return parsed;
     } catch (error) {
       Logger.error('Cookie 解析失败：' + (error as Error).message);
       return [];

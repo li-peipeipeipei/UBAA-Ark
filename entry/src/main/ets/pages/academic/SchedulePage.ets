@@ -1133,7 +1133,12 @@ export struct SchedulePage {
         fresh.push(fetched);
         freshNums.push(n);
         dirty++;
-        if (!this.refreshInFlight && dirty % 3 === 0) {
+        // 后台预取时想让用户边等边看到周次逐个出现，但每提交一次就要 `slice()` 两个
+        // @State 数组 —— 数组换引用会让已挂载的 3 页（含 7×14 格 + 课程块，约 900 个节点）
+        // 全部重建。原来固定「每 3 周提交一次」，首轮预取抖动 6 次，正好压在用户刚进页面
+        // 滑课表的时刻。改成**按时间节流**：两次提交至少隔 400ms。
+        if (!this.refreshInFlight && Date.now() - this.lastCommitAt >= 400) {
+          this.lastCommitAt = Date.now();
           this.weekSchedules = this.weekSchedules.slice();
           this.weekErrors = this.weekErrors.slice();
           ScheduleCache.saveWeeks(termCode, fresh.splice(0, fresh.length),
@@ -2708,6 +2713,8 @@ export struct SchedulePage {
   @State private refreshingWeeks: boolean[] = [];
   /** 下拉刷新是否在跑（互斥用）。 */
   private refreshInFlight: boolean = false;
+  /** 上次把预取结果提交到 @State 的时刻（按时间节流，见后台预取那段注释）。 */
+  private lastCommitAt: number = 0;
   /** 是否需要「整学期联网比对」：只在本页无缓存 / 账号变化时置 true。 */
   private needFullRefresh: boolean = false;
   /** 下拉刷新的冷却截止时间：挡住 Refresh 组件因重建而重复触发的 onRefreshing。 */
@@ -3033,6 +3040,12 @@ export struct SchedulePage {
           }, 32);
         })
         .onChange((index: number) => {
+          // ⚠️ 必须判边界：换学期时 `applyWeeks` 会把 weeks 换成新数组（长度可能更短），
+          // 而 Swiper 仍挂载在原下标上 —— 此时回调带的 index 可能已超出新数组长度，
+          // `this.weeks[index].serialNumber` 会抛 TypeError（课表页白屏）。
+          if (index < 0 || index >= this.weeks.length) {
+            return;
+          }
           const week = this.weeks[index].serialNumber;
           // 程序化跨周动画的中间页：跳过，只认最终目标那一页
           if (this.gotoTargetWeek >= 0 && week !== this.gotoTargetWeek) {

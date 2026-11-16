@@ -105,14 +105,23 @@ export struct LibBookReservePage {
   }
 
   private async loadAreas(): Promise<void> {
+    // 级联请求必须记住「发起时的选择」：连点两个楼馆时，先发的慢响应后到会覆盖新结果，
+    // 变成「选的是 B 楼，列表/座位却是 A 楼的」—— 最后提交预约会把 B 的 id 和 A 的
+    // areaId 拼在一起，约到错误的座位。
+    const libId: string = this.selectedLibraryId;
+    const storeyId: string = this.selectedStoreyId;
+    const day: string = this.selectedDay;
     this.areasLoading = true;
     this.areas = [];
     this.seats = [];
     this.selectedAreaId = '';
     this.selectedSeatId = '';
     try {
-      const list = await LocalLibBookService.fetchAreas(
-        this.selectedLibraryId, this.selectedStoreyId, this.selectedDay);
+      const list = await LocalLibBookService.fetchAreas(libId, storeyId, day);
+      if (libId !== this.selectedLibraryId || storeyId !== this.selectedStoreyId ||
+        day !== this.selectedDay) {
+        return; // 已被更新的选择取代，整份丢弃
+      }
       this.areas = list;
       if (list.length > 0) {
         this.selectedAreaId = list[0].id;
@@ -121,17 +130,23 @@ export struct LibBookReservePage {
     } catch (error) {
       Logger.warn('图书馆分区加载失败：' + (error as Error).message);
     } finally {
-      this.areasLoading = false;
+      if (libId === this.selectedLibraryId && storeyId === this.selectedStoreyId) {
+        this.areasLoading = false;
+      }
     }
   }
 
   private async loadAreaDetailAndSeats(): Promise<void> {
+    const areaId: string = this.selectedAreaId;
     this.seatsLoading = true;
     this.seats = [];
     this.slots = [];
     this.selectedSeatId = '';
     try {
-      const detail = await LocalLibBookService.fetchAreaDetail(this.selectedAreaId);
+      const detail = await LocalLibBookService.fetchAreaDetail(areaId);
+      if (areaId !== this.selectedAreaId) {
+        return; // 分区已切走，这份详情属于别的分区
+      }
       // 自动取第一个可预约日期
       if (detail.dates.length > 0) {
         this.selectedDay = detail.dates[0];
@@ -145,7 +160,9 @@ export struct LibBookReservePage {
     } catch (error) {
       Logger.warn('图书馆分区详情加载失败：' + (error as Error).message);
     } finally {
-      this.seatsLoading = false;
+      if (areaId === this.selectedAreaId) {
+        this.seatsLoading = false;
+      }
     }
   }
 
@@ -153,16 +170,22 @@ export struct LibBookReservePage {
     if (this.slots.length === 0) {
       return;
     }
+    const areaId: string = this.selectedAreaId;
+    const day: string = this.selectedDay;
+    const slot: LibBookSlot = this.slots[0];
     this.seatsLoading = true;
     try {
-      const slot = this.slots[0];
-      const list = await LocalLibBookService.fetchSeats(
-        this.selectedAreaId, this.selectedDay, slot.start, slot.end);
+      const list = await LocalLibBookService.fetchSeats(areaId, day, slot.start, slot.end);
+      if (areaId !== this.selectedAreaId || day !== this.selectedDay) {
+        return;
+      }
       this.seats = list;
     } catch (error) {
       Logger.warn('图书馆座位加载失败：' + (error as Error).message);
     } finally {
-      this.seatsLoading = false;
+      if (areaId === this.selectedAreaId) {
+        this.seatsLoading = false;
+      }
     }
   }
 

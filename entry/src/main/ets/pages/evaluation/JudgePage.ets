@@ -21,6 +21,35 @@ function nowText(): string {
 }
 
 /**
+ * 筛选胶囊（独立组件）。
+ *
+ * ⚠️ **不能用带参 `@Builder` 渲染**：`@Builder` 的参数是「值传递 + 不参与刷新」，
+ * 首帧算出的 `active` 会一直留着 —— 点「只看未完成」后列表内容变了，胶囊却不变色、
+ * 文案也不换，看起来就是「点了没反馈」。
+ * 本工程 `GradeHeader`（箭头永远点不动）与 `BykcFilterChip`（选中态不重绘）
+ * 都踩过同一个坑，这里用 `@Prop` 才是正确写法。
+ */
+@Component
+struct JudgeFilterChip {
+  @Prop label: string = '';
+  @Prop active: boolean = false;
+  onTap: () => void = () => {
+  };
+
+  build() {
+    Text(this.label)
+      .fontSize(AppFont.caption)
+      .fontColor(this.active ? Color.White : AppColor.textSecondary)
+      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+      .backgroundColor(this.active ? AppColor.brand : AppColor.surfaceSubtle)
+      .borderRadius(999)
+      .onClick(() => {
+        this.onTap();
+      })
+  }
+}
+
+/**
  * 希冀作业列表。
  *
  * 交互对齐原版：默认只看「未完成」（未提交 / 进行中），可搜索，可切「显示已截止」
@@ -41,6 +70,8 @@ export struct JudgePage {
   @State private onlyUnfinished: boolean = true;
   @State private includeExpired: boolean = false;
   @State private loadingHint: string = '正在获取希冀作业…';
+  /** 「当前时间」快照，由 `rebuild()` 刷新；供过期判定逐行复用（避免每行 new Date）。 */
+  private nowCache: string = nowText();
 
   aboutToAppear(): void {
     this.load();
@@ -65,6 +96,8 @@ export struct JudgePage {
 
   /** 按「只看未完成 + 关键词」过滤出可见列表。 */
   private rebuild(): void {
+    // 顺带刷新「当前时间」快照：过期判定只在这里取一次时钟，不在 build 里逐行 new Date
+    this.nowCache = nowText();
     const list: JudgeAssignmentSummary[] = [];
     const keyword = this.query.trim().toLowerCase();
     for (let i = 0; i < this.assignments.length; i++) {
@@ -117,7 +150,9 @@ export struct JudgePage {
     if (item.dueTime === undefined || item.dueTime.length === 0) {
       return false;
     }
-    return item.dueTime < nowText();
+    // 用 rebuild 时算好的快照：`nowText()` 每次都 new Date + 4 次 pad2，
+    // 而每条记录在 build 里要被判定两次（颜色 + 文案），一屏 20 条就是 40 次 Date 构造。
+    return item.dueTime < this.nowCache;
   }
 
   private statusColor(item: JudgeAssignmentSummary): Resource {
@@ -173,12 +208,20 @@ export struct JudgePage {
         })
 
       Row({ space: AppSize.gapSmall }) {
-        this.filterChip('只看未完成', this.onlyUnfinished, () => {
-          this.onlyUnfinished = !this.onlyUnfinished;
-          this.rebuild();
+        JudgeFilterChip({
+          label: '只看未完成',
+          active: this.onlyUnfinished,
+          onTap: () => {
+            this.onlyUnfinished = !this.onlyUnfinished;
+            this.rebuild();
+          }
         })
-        this.filterChip(this.includeExpired ? '已含历史作业' : '显示已截止', this.includeExpired, () => {
-          this.toggleIncludeExpired();
+        JudgeFilterChip({
+          label: this.includeExpired ? '已含历史作业' : '显示已截止',
+          active: this.includeExpired,
+          onTap: () => {
+            this.toggleIncludeExpired();
+          }
         })
       }
       .width('100%')
@@ -188,19 +231,6 @@ export struct JudgePage {
     .borderRadius(AppSize.cardRadius)
     .backgroundColor(AppColor.surface)
     .alignItems(HorizontalAlign.Start)
-  }
-
-  @Builder
-  filterChip(label: string, active: boolean, onTap: () => void) {
-    Text(label)
-      .fontSize(AppFont.caption)
-      .fontColor(active ? Color.White : AppColor.textSecondary)
-      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-      .backgroundColor(active ? AppColor.brand : AppColor.surfaceSubtle)
-      .borderRadius(999)
-      .onClick(() => {
-        onTap();
-      })
   }
 
   @Builder

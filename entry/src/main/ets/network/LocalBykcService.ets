@@ -270,6 +270,14 @@ function numberOf(source: Object, key: string): number {
 export class LocalBykcService {
   /** 会话 token（内存态，进程重启即失效）。 */
   private static token: string | null = null;
+  /** 正在进行的登录（并发请求共享同一次 CAS 跳转链）。 */
+  private static loginTask: Promise<string> | null = null;
+
+  /** 登出时清空进程内会话（见 LocalSpocService.reset 的说明）。 */
+  static reset(): void {
+    LocalBykcService.token = null;
+    LocalBykcService.loginTask = null;
+  }
 
   /* ---------------------------- 对外接口 ---------------------------- */
 
@@ -542,6 +550,21 @@ export class LocalBykcService {
     if (!force && current !== null) {
       return current;
     }
+    // 并发共享同一次换取：首页/详情会同时发多个博雅请求，都看到 token=null 时
+    // 会各走一遍 /sscv/cas/login 跳转链，后完成的覆盖前者的 token。
+    if (!force && LocalBykcService.loginTask !== null) {
+      return LocalBykcService.loginTask;
+    }
+    const task: Promise<string> = LocalBykcService.doLogin();
+    LocalBykcService.loginTask = task;
+    try {
+      return await task;
+    } finally {
+      LocalBykcService.loginTask = null;
+    }
+  }
+
+  private static async doLogin(): Promise<string> {
     let token = await LocalBykcService.walkForToken(BYKC_BASE + PATH_CAS_LOGIN);
     if (token.length === 0) {
       token = await LocalBykcService.walkForToken(BYKC_BASE + PATH_CAS_LOGIN_FALLBACK);

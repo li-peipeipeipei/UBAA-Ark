@@ -704,7 +704,12 @@ export struct HomePage {
             if (index < this.todayClasses.length - 1) {
               Divider().color(AppColor.divider).strokeWidth(0.5)
             }
-          }, (item: TodayClass, index: number) => index.toString())
+          }, (item: TodayClass, index: number) =>
+            // key 必须反映数据身份，不能用 index：下拉刷新（不切 LOADING）时数组整体
+            // 被替换，若 key 全是 "0"/"1"/"2"，ArkUI 会认为节点没变而**不重跑 itemGenerator**
+            // —— 卡片标题写着「3 节课」，下面三行还是刷新前的旧课（调课/换教室后看得到）。
+            item.bizName + '|' + (item.time === undefined ? '' : item.time) +
+              '|' + (item.place === undefined ? '' : item.place) + '|' + index.toString())
         }
         .width('100%')
       }

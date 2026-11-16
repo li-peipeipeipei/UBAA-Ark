@@ -52,10 +52,12 @@ function cellText(html: string): string {
   return compact.replace(/（/g, '(').replace(/）/g, ')');
 }
 
-/** 从属性串里取某个属性的值。 */
-function attrOf(attrs: string, name: string): string {
-  const pattern: RegExp = new RegExp(name + '\\s*=\\s*"([^"]*)"');
-  const found: RegExpMatchArray | null = attrs.match(pattern);
+/** `data-col-seq="7"` 的取值正则（模块级常量，避免逐格 new RegExp）。 */
+const COL_SEQ_PATTERN: RegExp = /data-col-seq\s*=\s*"([^"]*)"/;
+
+/** 从属性串里取 `data-col-seq` 的值（表头与每个单元格都会调，高频路径）。 */
+function colSeqOf(attrs: string): string {
+  const found: RegExpMatchArray | null = attrs.match(COL_SEQ_PATTERN);
   return found === null || found.length < 2 ? '' : found[1];
 }
 
@@ -108,6 +110,10 @@ export class LocalCampusService {
       throw new ApiError(401, 'invalid_token', '网费服务会话已失效，请重新登录后再试');
     }
     if (!response.isOk()) {
+      // ⚠️ 任何非 2xx 都要清标记：会话过期时上游回的是 **302 跳登录页**（不是 401/403），
+      // 只清 401/403 的话 `activated` 会一直留着 true，`ensureActivated` 此后永久短路，
+      // 用户每次进网费页都报「HTTP 302」且再也不会重试 —— 只能杀进程。
+      LocalCampusService.activated = false;
       throw new ApiError(response.status, 'campus_error',
         '网费页面加载失败（HTTP ' + response.status + '），请稍后重试');
     }
@@ -191,7 +197,7 @@ export class LocalCampusService {
       if (open === null) {
         continue;
       }
-      const seq: string = attrOf(open[1], 'data-col-seq');
+      const seq: string = colSeqOf(open[1]);
       const label: string = cellText(raw);
       if (label === LABEL_USED) {
         isTarget = true;
@@ -235,7 +241,7 @@ export class LocalCampusService {
       if (open === null) {
         continue;
       }
-      const seq: string = attrOf(open[1], 'data-col-seq');
+      const seq: string = colSeqOf(open[1]);
       if (seq.length === 0) {
         continue;
       }

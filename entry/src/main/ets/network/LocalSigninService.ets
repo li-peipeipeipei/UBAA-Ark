@@ -161,6 +161,13 @@ export class LocalSigninService {
   private static userId: string = '';
   private static sessionId: string = '';
 
+  /** 登出时清空进程内会话（见 LocalSpocService.reset 的说明）。 */
+  static reset(): void {
+    LocalSigninService.ready = false;
+    LocalSigninService.userId = '';
+    LocalSigninService.sessionId = '';
+  }
+
   /* ------------------------------ 对外 ------------------------------ */
 
   /**

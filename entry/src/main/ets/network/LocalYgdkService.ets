@@ -303,6 +303,15 @@ interface ClockinRange {
 export class LocalYgdkService {
   private static auth: YgdkAuthData | null = null;
   private static context: YgdkContext | null = null;
+  /** 正在进行的登录（并发请求共享同一次 oauth 跳转链）。 */
+  private static loginTask: Promise<YgdkAuthData> | null = null;
+
+  /** 登出时清空进程内会话（见 LocalSpocService.reset 的说明）。 */
+  static reset(): void {
+    LocalYgdkService.auth = null;
+    LocalYgdkService.context = null;
+    LocalYgdkService.loginTask = null;
+  }
 
   /** 概览：分类 / 运动项目 / 学期统计（学期、周、月、日次数与目标）+ 自动填写默认值。 */
   static async fetchOverview(): Promise<YgdkOverview> {
@@ -692,6 +701,21 @@ export class LocalYgdkService {
     if (!force && current !== null) {
       return current;
     }
+    // 并发共享同一次换取：概览页会同时拉「概览 + 记录」，两个请求都看到 auth=null
+    // 就各走一遍 oauth 跳转链（最多 10 跳），后完成的还会覆盖前者的会话。
+    if (!force && LocalYgdkService.loginTask !== null) {
+      return LocalYgdkService.loginTask;
+    }
+    const task: Promise<YgdkAuthData> = LocalYgdkService.doLogin();
+    LocalYgdkService.loginTask = task;
+    try {
+      return await task;
+    } finally {
+      LocalYgdkService.loginTask = null;
+    }
+  }
+
+  private static async doLogin(): Promise<YgdkAuthData> {
     const code: string = await LocalYgdkService.fetchOauthCode();
     const auth: YgdkAuthData = await LocalYgdkService.exchangeCode(code);
     LocalYgdkService.auth = auth;

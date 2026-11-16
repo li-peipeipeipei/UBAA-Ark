@@ -14,6 +14,41 @@ import { GradeSummaryCard } from '../../components/GradeSummaryCard';import { Gr
 import { Grade, GradeData, Term } from '../../model/ApiTypes';
 
 /**
+ * 概览卡要显示的 5 个值。
+ *
+ * **为什么要预计算**：`calculateGradeStatistics` 每次都要把整份成绩遍历两遍
+ * （算绩点还要 `parseFloat`）。原先在 build 里直接调了 8 次（两个卡片 × 4 项 + 课程数），
+ * 「全部成绩」是跨所有学期的上百门课 —— 任何一次状态变化（包括后台每拉完一学期
+ * 就 rebuild 一次）都要重跑一整轮，滚动时反复触发，是成绩页最明显的卡顿来源。
+ * 现在只在数据真的变化时算一次，build 里只读字符串。
+ */
+interface GradeSummaryText {
+  courseCount: string;
+  credits: string;
+  gpa: string;
+  weighted: string;
+  arithmetic: string;
+}
+
+function emptyGradeSummary(): GradeSummaryText {
+  return {
+    courseCount: '--', credits: '--', gpa: '--', weighted: '--', arithmetic: '--'
+  } as GradeSummaryText;
+}
+
+/** 一次遍历算出 5 个展示值（`calculateGradeStatistics` 只调一次）。 */
+function summarizeGrades(grades: Grade[]): GradeSummaryText {
+  const stats: GradeStatistics = calculateGradeStatistics(grades);
+  return {
+    courseCount: stats.courseCount.toString(),
+    credits: stats.totalCredits > 0 ? formatNumber(stats.totalCredits) : '--',
+    gpa: stats.gpa === null ? '--' : formatGradePoint(stats.gpa),
+    weighted: stats.weightedAverage === null ? '--' : formatNumber(stats.weightedAverage),
+    arithmetic: stats.arithmeticAverage === null ? '--' : formatNumber(stats.arithmeticAverage)
+  } as GradeSummaryText;
+}
+
+/**
  * 成绩查询。
  *
  * 版式对齐原版 UBAA 的成绩页（参考图 IMG_1668）：
@@ -38,6 +73,9 @@ export struct GradePage {
   @State private allGrades: Grade[] = [];
   /** 「全部成绩」还在后台加载（显示「统计中」，与原版一致）。 */
   @State private summaryLoading: boolean = false;
+  /** 两个概览卡的预计算值（数据变化时重算，build 只读）。 */
+  @State private allSummary: GradeSummaryText = emptyGradeSummary();
+  @State private termSummary: GradeSummaryText = emptyGradeSummary();
   @State private termName: string = '';
   /**
    * 学期切换的**状态镜像**（「本学期」卡里的箭头用它判断边界）。
@@ -146,6 +184,7 @@ export struct GradePage {
         return;
       }
       this.grades = cached;
+      this.refreshSummaries();
       return;
     }
     const data: GradeData = await ApiService.fetchGrades(termCode);
@@ -154,6 +193,7 @@ export struct GradePage {
       return;
     }
     this.grades = data.grades;
+    this.refreshSummaries();
   }
 
   /**
@@ -198,6 +238,13 @@ export struct GradePage {
       }
     });
     this.allGrades = merged;
+    this.refreshSummaries();
+  }
+
+  /** 重算两个概览卡（数据变更后调用一次，替代 build 里的 8 次全量统计）。 */
+  private refreshSummaries(): void {
+    this.termSummary = summarizeGrades(this.grades);
+    this.allSummary = summarizeGrades(this.allGrades);
   }
 
   /** 切换学期（「本学期」卡里的 ‹ ›）。 */
@@ -289,26 +336,8 @@ export struct GradePage {
   }
 
   /* ------------------------------ 概览数值 ------------------------------ */
-
-  private gpaTextOf(grades: Grade[]): string {
-    const stats: GradeStatistics = calculateGradeStatistics(grades);
-    return stats.gpa === null ? '--' : formatGradePoint(stats.gpa);
-  }
-
-  private weightedTextOf(grades: Grade[]): string {
-    const stats: GradeStatistics = calculateGradeStatistics(grades);
-    return stats.weightedAverage === null ? '--' : formatNumber(stats.weightedAverage);
-  }
-
-  private arithmeticTextOf(grades: Grade[]): string {
-    const stats: GradeStatistics = calculateGradeStatistics(grades);
-    return stats.arithmeticAverage === null ? '--' : formatNumber(stats.arithmeticAverage);
-  }
-
-  private creditsTextOf(grades: Grade[]): string {
-    const stats: GradeStatistics = calculateGradeStatistics(grades);
-    return stats.totalCredits > 0 ? formatNumber(stats.totalCredits) : '--';
-  }
+  // 概览的 5 个值已在 `refreshSummaries()` 里预计算（见文件头 GradeSummaryText 的说明），
+  // 这里不再提供「按数组现算」的方法 —— 避免有人又在 build 里调起来。
 
   /* ------------------------------ 视图 ------------------------------ */
 
@@ -491,20 +520,20 @@ export struct GradePage {
             loading: this.summaryLoading,
             courseCountText: '',
             creditsText: '',
-            gpaText: this.gpaTextOf(this.allGrades),
-            weightedText: this.weightedTextOf(this.allGrades),
-            arithmeticText: this.arithmeticTextOf(this.allGrades)
+            gpaText: this.allSummary.gpa,
+            weightedText: this.allSummary.weighted,
+            arithmeticText: this.allSummary.arithmetic
           })
           // 本学期（右上角挂学期切换：学期名 + 前后箭头）
           GradeSummaryCard({
             title: '本学期',
             showCourseAndCredits: true,
             loading: false,
-            courseCountText: calculateGradeStatistics(this.grades).courseCount.toString(),
-            creditsText: this.creditsTextOf(this.grades),
-            gpaText: this.gpaTextOf(this.grades),
-            weightedText: this.weightedTextOf(this.grades),
-            arithmeticText: this.arithmeticTextOf(this.grades),
+            courseCountText: this.termSummary.courseCount,
+            creditsText: this.termSummary.credits,
+            gpaText: this.termSummary.gpa,
+            weightedText: this.termSummary.weighted,
+            arithmeticText: this.termSummary.arithmetic,
             trailing: (): void => {
               this.termSwitch();
             }

@@ -309,6 +309,20 @@ export class LocalSpocService {
   private static refreshToken: string = '';
   private static roleCode: string = '';
 
+
+  /**
+   * 登出时清空进程内会话。
+   *
+   * `TokenStore.clear()` 只清磁盘令牌，这些静态字段还留在内存里 ——
+   * 换了账号却继续用上一个账号的 token，首个请求必失败一次，
+   * 严重时（服务端按 token 认人）会读写到别人的数据。
+   */
+  static reset(): void {
+    LocalSpocService.token = '';
+    LocalSpocService.refreshToken = '';
+    LocalSpocService.roleCode = '';
+  }
+
   /** 当前学期的作业列表。 */
   /**
    * SPOC 网页版的登录直链（带当前会话的 token / refreshToken）。

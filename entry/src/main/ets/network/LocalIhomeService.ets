@@ -232,7 +232,12 @@ function tokenFromUrl(url: string): string {
     if (key === 'type') {
       type = value;
     } else if (key === 'token') {
-      token = decodeURIComponent(value);
+      // 非法百分号转义会让 decodeURIComponent 抛 URIError，把整条 token 换取链打断
+      try {
+        token = decodeURIComponent(value);
+      } catch (error) {
+        token = value;
+      }
     }
   }
   return type === '0' ? token : '';

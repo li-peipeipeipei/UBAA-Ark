@@ -12,6 +12,9 @@ import { LocalYgdkService } from './LocalYgdkService';
 import { LocalEvaluationService } from './LocalEvaluationService';
 import { LocalJudgeService } from './LocalJudgeService';
 import { LocalIhomeService } from './LocalIhomeService';
+import { LocalLibBookService } from './LocalLibBookService';
+import { LocalCampusService } from './LocalCampusService';
+import { LocalFinanceService } from './LocalFinanceService';
 import { MockData } from './MockData';
 import { StoredSession, TokenStore } from './TokenStore';
 import {
@@ -149,10 +152,36 @@ export class ApiService {
     if (TokenStore.getDemoMode()) {
       TokenStore.clear();
       TokenStore.clearAllLocalSessions();
+      ApiService.resetLocalServices();
       return;
     }
     await LocalAuthService.logout();
     TokenStore.clear();
+    ApiService.resetLocalServices();
+  }
+
+  /**
+   * 清掉各 `Local*Service` 的**进程内**会话缓存。
+   *
+   * `TokenStore.clear()` 只清磁盘上的令牌；这些服务的静态字段（token / 会话 id /
+   * 已激活标志 / 作业详情缓存）还留在内存里。不清的话：
+   * - 换账号后首个请求用旧令牌，必失败一次；
+   * - 更糟的是希冀的作业详情缓存在内存里，新账号点进详情会看到**上一个账号**的
+   *   提交状态与得分。
+   *
+   * 放在 `logout()` 里统一做，比让每个页面各自记得清理可靠。
+   */
+  private static resetLocalServices(): void {
+    LocalAcademicService.reset();
+    LocalSpocService.reset();
+    LocalBykcService.reset();
+    LocalYgdkService.reset();
+    LocalSigninService.reset();
+    LocalLibBookService.reset();
+    LocalJudgeService.reset();
+    LocalEvaluationService.reset();
+    LocalCampusService.reset();
+    LocalFinanceService.reset();
   }
 
   /** 验证码图片地址（本地模式直接指向统一认证的验证码接口）。 */

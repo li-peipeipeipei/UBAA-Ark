@@ -292,8 +292,15 @@ export class CardCache {
 
   /* ------------------------- 主应用写入 ------------------------- */
 
-  /** 写今天概览 + 课表快照（主应用每次拉完课表调用）。 */
-  static saveToday(context: common.Context, today: CardToday, weekLabel: string): void {
+  /**
+   * 写今天概览 + 课表快照（主应用每次拉完课表调用）。
+   *
+   * @param push 是否立刻推送所有卡片。批量写多份数据时只在**最后一份**传 `true` ——
+   *   每次 pushAll 都会重读 formIds + 重新 buildPayload（6 次 Preferences 读 + JSON 序列化）
+   *   再对每张卡片发一次跨进程 IPC，连写三次就是三倍开销（冷启动首屏会明显卡）。
+   */
+  static saveToday(context: common.Context, today: CardToday, weekLabel: string,
+    push: boolean = true): void {
     const store = CardCache.store(context);
     if (store === null) {
       return;
@@ -309,7 +316,9 @@ export class CardCache {
       logWarn('写入课表缓存失败：' + (error as Error).message);
       return;
     }
-    CardCache.pushAll(context);
+    if (push) {
+      CardCache.pushAll(context);
+    }
   }
 
   /** 写最近一场考试（ExamPage 拉完后调用）。 */
@@ -351,13 +360,13 @@ export class CardCache {
   }
 
   /** 写周课表卡数据（一整周七天）。 */
-  static saveWeekView(context: common.Context, view: CardWeekView): void {
-    CardCache.save(context, KEY_WEEK_VIEW, view, '周课表');
+  static saveWeekView(context: common.Context, view: CardWeekView, push: boolean = true): void {
+    CardCache.save(context, KEY_WEEK_VIEW, view, '周课表', push);
   }
 
   /** 写日课表卡数据（某一天全天）。 */
-  static saveDayView(context: common.Context, view: CardDayView): void {
-    CardCache.save(context, KEY_DAY_VIEW, view, '日课表');
+  static saveDayView(context: common.Context, view: CardDayView, push: boolean = true): void {
+    CardCache.save(context, KEY_DAY_VIEW, view, '日课表', push);
   }
 
   /**
@@ -366,7 +375,8 @@ export class CardCache {
    * 统一在这里 `put + flush`：写完要落盘，卡片进程（另一个进程）才读得到 ——
    * 只 put 不 flush的话，另一个进程可能还在读旧值。
    */
-  private static save(context: common.Context, key: string, value: Object, name: string): void {
+  private static save(context: common.Context, key: string, value: Object, name: string,
+    push: boolean = true): void {
     const store = CardCache.store(context);
     if (store === null) {
       return;
@@ -381,7 +391,10 @@ export class CardCache {
     }
     // 写完必须主动推送：卡片只在定点时刻（07:30/11:50/16:50）才会自己去读缓存，
     // 不推的话，用户在应用里刷新完回到桌面，看到的仍是旧数据。
-    CardCache.pushAll(context);
+    // 批量写多份时由调用方只在最后一份传 true，避免重复推送。
+    if (push) {
+      CardCache.pushAll(context);
+    }
   }
 
   /**

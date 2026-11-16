@@ -6,6 +6,12 @@
  */
 export class DateUtil {
   private static readonly DAY_MILLIS: number = 86400000;
+  /**
+   * 日期前缀匹配（模块级常量，避免每次 `parse` 都重新编译正则）。
+   *
+   * 月份/日期允许 1~2 位：上游的日期串**不保证补零**。
+   */
+  private static readonly DATE_PREFIX: RegExp = /^(\d{4})-(\d{1,2})-(\d{1,2})/;
 
   static pad(value: number): string {
     return value < 10 ? '0' + value.toString() : value.toString();
@@ -29,13 +35,18 @@ export class DateUtil {
 
   /** 解析 yyyy-MM-dd；也兼容 "2026-06-15 08:00" 这类带时间的前缀。 */
   static parse(text: string): Date | null {
-    if (text.length < 10) {
+    // ⚠️ 不能按固定下标切：上游偶尔返回 "2026-1-5"（月/日不补零），
+    // 固定下标会切出 month="1-" → 1、day=" 0" → 0，`new Date(2026, 0, 0)`
+    // 落到 2025-12-31 —— 卡片「本周」与考试倒计时会整体错一天。
+    const matched: RegExpMatchArray | null = text.match(DateUtil.DATE_PREFIX);
+    if (matched === null) {
       return null;
     }
-    const year = parseInt(text.substring(0, 4));
-    const month = parseInt(text.substring(5, 7));
-    const day = parseInt(text.substring(8, 10));
-    if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day)) {
+    const year: number = Number.parseInt(matched[1], 10);
+    const month: number = Number.parseInt(matched[2], 10);
+    const day: number = Number.parseInt(matched[3], 10);
+    if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day) ||
+      month < 1 || month > 12 || day < 1 || day > 31) {
       return null;
     }
     return new Date(year, month - 1, day);
