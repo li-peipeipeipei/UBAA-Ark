@@ -405,8 +405,9 @@ export class LocalCloudPrintService {
     const headers: Record<string, string> = {};
     headers['accept'] = 'application/json, text/plain, */*';
     headers['content-length'] = '0';
+    // 只读的登录态检查（空 POST）：允许自动换路重试
     const response: UpstreamResponse = await UpstreamClient.postForm(
-      LocalCloudPrintService.endpoint('Auth/Check'), '', true, headers);
+      LocalCloudPrintService.endpoint('Auth/Check'), '', true, headers, true);
     if (!response.isOk()) {
       return false;
     }

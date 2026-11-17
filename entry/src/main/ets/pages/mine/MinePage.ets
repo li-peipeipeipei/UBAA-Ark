@@ -1,5 +1,5 @@
 import { AppRouter, RouteName } from '../../common/AppRouter';
-import { AppConfig, connectionModeName } from '../../common/AppConfig';
+import { AppConfig, ConnectionMode, RoutePolicy, connectionModeName } from '../../common/AppConfig';
 import { Logger } from '../../common/Logger';
 import { StartupPrefetch } from '../../common/StartupPrefetch';
 import { Toast } from '../../common/Toast';
@@ -212,6 +212,20 @@ export struct MinePage {
     .opacity(this.pushVeil ? 0 : 1)
   }
 
+  /**
+   * 连接设置一行的摘要。
+   *
+   * 自动策略下写「自动 · 当前 <实际路线>」—— 只写「自动」用户不知道现在走的哪条，
+   * 真出了问题无从判断。
+   */
+  private connectionSummary(): string {
+    const policy: RoutePolicy = TokenStore.getRoutePolicy();
+    if (policy !== RoutePolicy.AUTO) {
+      return '当前：' + connectionModeName(TokenStore.getConnectionMode());
+    }
+    return '自动 · 当前' + connectionModeName(TokenStore.getConnectionMode());
+  }
+
   @Builder
   menuRow(title: string, subtitle: string, symbol: Resource, onClick: () => void) {
     Row({ space: AppSize.gap }) {
@@ -323,7 +337,7 @@ export struct MinePage {
               this.openRoute(RouteName.USER_INFO);
             })
             Divider().color(AppColor.divider).strokeWidth(0.5)
-            this.menuRow('连接设置', '当前：' + connectionModeName(TokenStore.getConnectionMode()),
+            this.menuRow('连接设置', this.connectionSummary(),
               $r('sys.symbol.wifi'), () => {
                 this.openRoute(RouteName.SETTINGS);
               })

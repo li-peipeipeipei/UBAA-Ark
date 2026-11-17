@@ -92,6 +92,10 @@ export class AppConfig {
   static readonly PREF_API_BASE_URL: string = 'api_base_url';
   static readonly PREF_CLIENT_ID: string = 'client_id';
   static readonly PREF_CONNECTION_MODE: string = 'connection_mode';
+  /** 路线策略（AUTO / DIRECT / WEBVPN）。AUTO 下实际模式存 `PREF_AUTO_PINNED_MODE`。 */
+  static readonly PREF_ROUTE_POLICY: string = 'route_policy';
+  /** AUTO 策略下当前锁定的实际模式（由 RouteEngine 维护，重启后沿用最后一次可用路线）。 */
+  static readonly PREF_AUTO_PINNED_MODE: string = 'auto_pinned_mode';
   static readonly PREF_DEMO_MODE: string = 'demo_mode';
 
   /** 历史遗留：按模式隔离的服务地址键。 */
@@ -156,6 +160,58 @@ export enum ConnectionMode {
 
 /** 首次启动、且用户从未选择过模式时的默认值。 */
 export const DEFAULT_CONNECTION_MODE: ConnectionMode = ConnectionMode.DIRECT;
+
+/**
+ * 用户可选的路线策略（对齐上游 `RoutePolicy`，见 docs/tech/auto-route-switch.md）。
+ *
+ * - AUTO：按校园网关可达性**自动**在直连 / WebVPN 之间选择，无需用户判断自己在哪。
+ * - DIRECT / WEBVPN：显式锁定，与旧行为一致。
+ *
+ * 注意区分：`RoutePolicy` 是「用户想怎么选」，`ConnectionMode` 是「本次实际走哪条」。
+ * AUTO 下的 `ConnectionMode` 由 `RouteEngine` 维护（探测 + 故障切换），其余代码
+ * 只读 `TokenStore.getConnectionMode()` 拿实际模式，不需要感知策略。
+ */
+export enum RoutePolicy {
+  AUTO = 'AUTO',
+  DIRECT = 'DIRECT',
+  WEBVPN = 'WEBVPN'
+}
+
+/** 首次启动、且用户从未选择过策略时的默认值：自动（本功能的意义所在）。 */
+export const DEFAULT_ROUTE_POLICY: RoutePolicy = RoutePolicy.AUTO;
+
+export class RoutePolicyMeta {
+  policy: RoutePolicy;
+  displayName: string;
+  description: string;
+
+  constructor(policy: RoutePolicy, displayName: string, description: string) {
+    this.policy = policy;
+    this.displayName = displayName;
+    this.description = description;
+  }
+}
+
+export function allRoutePolicies(): RoutePolicyMeta[] {
+  return [
+    new RoutePolicyMeta(RoutePolicy.AUTO, '自动（推荐）',
+      '探测校园网关自动选择：校内走直连，校外走 WebVPN；网络变化时自动切换'),
+    new RoutePolicyMeta(RoutePolicy.DIRECT, '校内直连',
+      '始终直接访问学校系统，需连接校园网或校园 VPN'),
+    new RoutePolicyMeta(RoutePolicy.WEBVPN, 'WebVPN',
+      '始终经 WebVPN 网关加密转发，校外可用，速度略慢')
+  ];
+}
+
+export function routePolicyName(policy: RoutePolicy): string {
+  const list = allRoutePolicies();
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].policy === policy) {
+      return list[i].displayName;
+    }
+  }
+  return '自动（推荐）';
+}
 
 export class ConnectionModeMeta {
   mode: ConnectionMode;

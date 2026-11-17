@@ -5,6 +5,7 @@ import { Logger } from '../common/Logger';
 import { ApiError } from './ApiError';
 import { HttpEngine } from './HttpEngine';
 import { LocalWebVpn } from './LocalWebVpn';
+import { RouteAdapt, RouteEngine } from './RouteEngine';
 import { StoredCookie, TokenStore } from './TokenStore';
 
 /** 上游响应。 */
@@ -44,6 +45,15 @@ class SendOptions {
    * 见 `postRaw()` 的说明。
    */
   rawBody: ArrayBuffer | null = null;
+
+  /**
+   * 是否是「读」请求（幂等、可安全重放）。
+   *
+   * 只有读请求才允许在自动换路后重试一次 —— 上游合同明文「写入…不自动重发」：
+   * 写请求一旦发出，重发可能造成重复提交（作业/评教/打卡都承受不起）。
+   * `get` / `getBinary` 置 true，`post*` 一律保持 false。
+   */
+  isRead: boolean = false;
 }
 
 /** 日期类英文缩写 —— 用来区分「多个 Set-Cookie 的逗号」与「Expires 里的逗号」。 */
@@ -185,8 +195,46 @@ export function stripQuery(url: string): string {
  * 2. **模式改写统一收口**：所有地址都要按当前连接模式翻译（见 LocalWebVpn.rewrite）。
  */
 export class UpstreamClient {
-  /** 发起请求。logicalUrl 必须是「校内原始地址」，模式改写在这里统一完成。 */
+  /**
+   * 发起请求（含自动换路重试）。
+   *
+   * 读请求在**网络层失败**且策略为自动时，交给 `RouteEngine` 判定要不要换条路再试一次
+   * （对齐上游 `read_with_fallback!`：只有 NetworkError / Timeout 才回退，
+   * 认证失败、业务拒绝、5xx 一律不回退）。写请求永不自动重发。
+   */
   private static async send(
+    method: string,
+    logicalUrl: string,
+    options: SendOptions
+  ): Promise<UpstreamResponse> {
+    try {
+      return await UpstreamClient.sendOnce(method, logicalUrl, options);
+    } catch (error) {
+      const apiError = error as ApiError;
+      const networkFailure: boolean = apiError instanceof ApiError && apiError.networkFailure;
+      if (!options.isRead || !networkFailure) {
+        throw error as Error;
+      }
+      const adapt: RouteAdapt = await RouteEngine.adaptToNetwork();
+      if (adapt === RouteAdapt.SWITCHED) {
+        Logger.warn('自动切换路线后重试读请求：' + method + ' ' + logicalUrl);
+        return await UpstreamClient.sendOnce(method, logicalUrl, options);
+      }
+      if (adapt === RouteAdapt.NEED_RELOGIN) {
+        // 路线已经切过去了，但那条路还没有登录态：原地重试只会得到一串 401。
+        // 直接把「下一步该做什么」说清楚；**不**用 401 抛，避免上层把另一条路
+        // 上仍然有效的会话一并清掉。
+        const reason: string = apiError.message.length > 0 ? apiError.message : '请求失败';
+        throw new ApiError(0, 'route_changed',
+          '网络环境已变化，且新的通道尚未登录；请重新登录后继续（' + reason + '）',
+          true, apiError.target);
+      }
+      throw error as Error;
+    }
+  }
+
+  /** 单次请求：改写地址、组头、发送、吸收 Cookie。失败抛 `ApiError`。 */
+  private static async sendOnce(
     method: string,
     logicalUrl: string,
     options: SendOptions
@@ -520,6 +568,7 @@ export class UpstreamClient {
   ): Promise<UpstreamResponse> {
     const options = new SendOptions();
     options.followRedirects = followRedirects;
+    options.isRead = true;
     if (extraHeaders !== undefined) {
       options.extraHeaders = extraHeaders;
     }
@@ -530,19 +579,29 @@ export class UpstreamClient {
     const options = new SendOptions();
     options.followRedirects = followRedirects;
     options.binary = true;
+    options.isRead = true;
     return await UpstreamClient.send('GET', logicalUrl, options);
   }
 
+  /**
+   * 表单 POST。
+   *
+   * @param isRead 该 POST 是否是**只读查询**（如财务列表、登录态检查）。
+   *               只读 POST 与 GET 一样允许自动换路重试；**写入（提交/签到/评教）必须
+   *               保持默认 false** —— 重发可能造成重复提交。
+   */
   static async postForm(
     logicalUrl: string,
     body: string,
     followRedirects: boolean = true,
-    extraHeaders?: Record<string, string>
+    extraHeaders?: Record<string, string>,
+    isRead: boolean = false
   ): Promise<UpstreamResponse> {
     const options = new SendOptions();
     options.followRedirects = followRedirects;
     options.body = body;
     options.contentType = 'application/x-www-form-urlencoded; charset=UTF-8';
+    options.isRead = isRead;
     if (extraHeaders !== undefined) {
       options.extraHeaders = extraHeaders;
     }
@@ -582,16 +641,19 @@ export class UpstreamClient {
    *
    * 默认不跟随重定向：SPOC 的登录跳转链要靠调用方逐跳读 `Location` 抓 token。
    */
+  /** JSON POST。`isRead` 语义同 `postForm`：只读查询传 true，写入保持 false。 */
   static async postJson(
     logicalUrl: string,
     body: string,
     followRedirects: boolean = false,
-    extraHeaders?: Record<string, string>
+    extraHeaders?: Record<string, string>,
+    isRead: boolean = false
   ): Promise<UpstreamResponse> {
     const options = new SendOptions();
     options.followRedirects = followRedirects;
     options.body = body;
     options.contentType = 'application/json; charset=UTF-8';
+    options.isRead = isRead;
     if (extraHeaders !== undefined) {
       options.extraHeaders = extraHeaders;
     }

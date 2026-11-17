@@ -260,8 +260,9 @@ export class LocalFinanceService {
       };
       const headers: Record<string, string> = {};
       headers['Authorization'] = 'Bearer ' + credential.token;
+      // 只读查询（分页拉列表）：允许自动换路重试，最后一次 true
       const response: UpstreamResponse = await UpstreamClient.postJson(
-        CHAXUN_LIST, JSON.stringify(payload), false, headers);
+        CHAXUN_LIST, JSON.stringify(payload), false, headers, true);
       if (response.status === 401) {
         throw new ApiError(401, 'invalid_token', '财务登录已失效，请重新登录后再试');
       }

@@ -2,6 +2,7 @@ import { AppColor } from '../components/AppTheme';
 import { Logger } from '../common/Logger';
 import { ApiError } from '../network/ApiError';
 import { ApiService } from '../network/ApiService';
+import { RouteEngine } from '../network/RouteEngine';
 import { TokenStore } from '../network/TokenStore';
 import { LoginPage } from './auth/LoginPage';
 import { MainPage } from './MainPage';
@@ -49,6 +50,10 @@ struct Index {
   aboutToAppear(): void {
     // 诊断横竖屏切换后的「重载」发生在哪一层：这条打印说明 Index 组件被重建了
     Logger.info('Index aboutToAppear');
+
+    // 自动路线下先把「活会话所在的那条路」找回来（同步、无请求）：
+    // 故障切换可能把路线钉到一条还没登录的路上，不先校正会平白弹出登录页。
+    RouteEngine.ensureSessionRoute();
 
     const hasLocal: boolean = TokenStore.hasLocalSession();
     const session = TokenStore.getSession();

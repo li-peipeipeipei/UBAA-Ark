@@ -139,7 +139,7 @@ export class LocalAuthService {
     } else {
       if (!loginPage.isOk()) {
         throw new ApiError(loginPage.status, 'cas_page_failed',
-          '统一身份认证页面加载失败（HTTP ' + loginPage.status + '），请确认网络或改用 WebVPN 模式');
+          '统一身份认证页面加载失败（HTTP ' + loginPage.status + '），请确认网络；连接方式建议用「自动」');
       }
 
       const html = loginPage.body;

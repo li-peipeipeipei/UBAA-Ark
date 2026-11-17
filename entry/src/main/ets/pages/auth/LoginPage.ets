@@ -2,16 +2,19 @@ import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import {
   AppConfig,
   ConnectionMode,
-  ConnectionModeMeta,
-  DEFAULT_CONNECTION_MODE,
-  allConnectionModes,
-  connectionModeName
+  DEFAULT_ROUTE_POLICY,
+  RoutePolicy,
+  RoutePolicyMeta,
+  allRoutePolicies,
+  connectionModeName,
+  routePolicyName
 } from '../../common/AppConfig';
 import { KEY_TOP_SAFE_HEIGHT } from '../../common/ImmersiveUtil';
 import { Logger } from '../../common/Logger';
 import { Toast } from '../../common/Toast';
 import { ApiError, CaptchaRequiredError } from '../../network/ApiError';
 import { ApiService } from '../../network/ApiService';
+import { RouteEngine } from '../../network/RouteEngine';
 import { SavedCredentials, TokenStore } from '../../network/TokenStore';
 import { CaptchaInfo, UserData } from '../../model/ApiTypes';
 
@@ -35,7 +38,9 @@ export struct LoginPage {
   @State errorMessage: string = '';
   @State showCaptcha: boolean = false;
   @State captchaImageUri: string = '';
-  @State mode: ConnectionMode = DEFAULT_CONNECTION_MODE;
+  @State mode: ConnectionMode = ConnectionMode.DIRECT;
+  /** 用户选的路线策略：AUTO 自动 / 锁直连 / 锁 WebVPN。 */
+  @State policy: RoutePolicy = DEFAULT_ROUTE_POLICY;
   @State showModeSheet: boolean = false;
   @State demoMode: boolean = false;
   /** 登录失败是否源于服务端故障（据此给出「开启演示模式」的出路）。 */
@@ -44,11 +49,26 @@ export struct LoginPage {
   @State rememberPassword: boolean = true;
 
   private execution: string = '';
+  /**
+   * `warmUp()` 取令牌时所在的路线。
+   *
+   * CAS 的 `execution` 是**某一个登录页**的一次性令牌，换了路线（换了上游域名）
+   * 就作废。自动选路可能在预热之后才把路线定下来 —— 不记录就会拿 A 路的令牌
+   * 去 B 路提交，服务端一律判「凭据无效」，而用户明明没输错。
+   */
+  private warmedMode: ConnectionMode = ConnectionMode.DIRECT;
 
   aboutToAppear(): void {
+    this.policy = TokenStore.getRoutePolicy();
     this.mode = TokenStore.getConnectionMode();
     this.demoMode = TokenStore.getDemoMode();
     this.restoreCredentials();
+    // 自动策略下后台探一次校园网，把「当前走哪条」显示出来（不阻塞表单）
+    if (this.policy === RoutePolicy.AUTO && !this.demoMode) {
+      void RouteEngine.prepareForLogin().then((mode: ConnectionMode) => {
+        this.mode = mode;
+      });
+    }
     this.warmUp();
   }
 
@@ -99,6 +119,8 @@ export struct LoginPage {
     }
     try {
       const preload = await ApiService.preload(TokenStore.getOrCreateClientId());
+      // 记下令牌是在哪条路上取的（预热期间自动选路可能刚把路线定下来）
+      this.warmedMode = TokenStore.getConnectionMode();
       if (preload.execution !== undefined && preload.execution.length > 0) {
         this.execution = preload.execution;
       }
@@ -160,87 +182,134 @@ export struct LoginPage {
     // 两者必须配对使用。这种情形不能清 execution，否则用户看着旧图输入的验证码
     // 会和新的令牌对不上，怎么输都错。
     let keepExecution: boolean = false;
-    try {
-      const user: UserData = await ApiService.login(
-        this.username.trim(),
-        this.password,
-        TokenStore.getOrCreateClientId(),
-        this.captchaCode,
-        this.execution
-      ).then((response) => {
-        ApiService.persistLogin(response, this.username.trim());
-        return response.user;
-      });
 
-      Toast.show('欢迎回来，' + user.name);
-      succeeded = true;
-      // 登录成功后按勾选状态落盘 / 清理凭据
-      this.syncSavedCredentials();
-      this.onLoginSuccess(user);
-    } catch (error) {
-      if (error instanceof CaptchaRequiredError) {
-        const challenge = error as CaptchaRequiredError;
-        this.execution = challenge.execution;
-        keepExecution = true;
-        this.captchaImageUri = this.buildCaptchaUri(challenge.captcha);
-        this.showCaptcha = true;
-        this.captchaCode = '';
-        this.errorMessage = challenge.message;
-      } else if (error instanceof ApiError) {
-        const apiError = error as ApiError;
-        this.errorMessage = apiError.friendlyMessage();
-        // 网络层失败时补上目标地址，避免「不知道连的是哪个地址」这种无从下手的报错
-        if (apiError.target.length > 0) {
-          this.errorMessage += '（' + apiError.target + '）';
-        }
-        // 直连模式下最常见的失败原因就是不在校园网内 —— 直接给出可执行的下一步
-        if (apiError.networkFailure && this.mode === ConnectionMode.DIRECT) {
-          this.errorMessage += '；若当前不在校园网，请切到 WebVPN 模式';
-        }
-        this.serverDown = apiError.code === 'upstream_down';
-        /**
-         * 带验证码失败后必须**换一张图 + 换一个 execution**。
-         *
-         * 验证码是一次性的：错一次之后，屏幕上这张图和手里的 execution 都已作废。
-         * 不主动刷新的话，用户对着同一张旧图反复输入，永远对不上 ——
-         * 这也是「验证码怎么输都错」的成因之一。
-         */
-        if (this.showCaptcha) {
-          this.captchaCode = '';
-          void this.warmUp();
-        }
-      } else {
-        this.errorMessage = '登录失败，请稍后重试';
-        Logger.error('登录异常：' + (error as Error).message);
-      }
-    } finally {
-      /**
-       * CAS 的 `execution` 是**一次性令牌**：提交过一次就作废。
-       *
-       * 这里不清的话，用户密码打错一次之后，之后每次点登录都带着同一个死令牌 ——
-       * 服务端一律判「凭据无效」，变成**怎么输都登不上**，只能杀进程重进重新预热。
-       * 清空后 `LocalAuthService` 会重新拉登录页现取一个新令牌。
-       *
-       * 例外：`CaptchaRequiredError` 分支（见 `keepExecution`）—— 那里的令牌是新下发的，
-       * 与屏幕上的验证码图片是**一对**，必须留着。
-       */
-      if (!succeeded && !keepExecution) {
-        this.execution = '';
-      }
-      this.loading = false;
+    // 自动策略：先探测校园网，把这次登录走哪条路定下来（校内→直连 / 校外→WebVPN）。
+    // 这是「登录自动切换」的第一步 —— 用户不再需要判断自己在不在校园网。
+    const autoMode: boolean = this.policy === RoutePolicy.AUTO;
+    if (autoMode) {
+      this.mode = await RouteEngine.prepareForLogin();
     }
+    // 路线可能刚被自动选路改掉：预热拿的令牌属于旧路线，直接提交必被判「凭据无效」。
+    // 丢掉旧令牌、按新路线重新预热一次（比让用户白输一次密码便宜得多）。
+    if (this.execution.length > 0 && this.mode !== this.warmedMode) {
+      Logger.info('预热令牌所属路线已变（' + this.warmedMode + '→' + this.mode + '），重新预热');
+      this.execution = '';
+      this.showCaptcha = false;
+      this.captchaCode = '';
+      await this.warmUp();
+    }
+
+    // 最多两次：第二次只在「自动策略 + 网络层失败」时发生（换另一条路重试）。
+    // 凭据错误、验证码、业务拒绝都不换路 —— 那与走哪条路无关。
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const user: UserData = await ApiService.login(
+          this.username.trim(),
+          this.password,
+          TokenStore.getOrCreateClientId(),
+          this.captchaCode,
+          this.execution
+        ).then((response) => {
+          ApiService.persistLogin(response, this.username.trim());
+          return response.user;
+        });
+
+        Toast.show('欢迎回来，' + user.name);
+        succeeded = true;
+        // 登录成功后按勾选状态落盘 / 清理凭据
+        this.syncSavedCredentials();
+        this.onLoginSuccess(user);
+        break;
+      } catch (error) {
+        const apiError = error as ApiError;
+        const networkFailure: boolean =
+          apiError instanceof ApiError && apiError.networkFailure;
+
+        // —— 自动切换：网络层失败就换另一条路再试一次 ——
+        if (autoMode && networkFailure && attempt === 0) {
+          const other: ConnectionMode = this.mode === ConnectionMode.DIRECT ?
+            ConnectionMode.WEBVPN : ConnectionMode.DIRECT;
+          Logger.warn('登录网络层失败（' + this.mode + '），自动切换到 ' + other + ' 重试');
+          this.mode = other;
+          RouteEngine.pinMode(other);
+          // 换路 = 换上游域名：旧的一次性令牌与验证码全部作废
+          this.execution = '';
+          this.showCaptcha = false;
+          this.captchaCode = '';
+          this.errorMessage = '';
+          await this.warmUp();
+          continue;
+        }
+
+        if (error instanceof CaptchaRequiredError) {
+          const challenge = error as CaptchaRequiredError;
+          this.execution = challenge.execution;
+          keepExecution = true;
+          this.captchaImageUri = this.buildCaptchaUri(challenge.captcha);
+          this.showCaptcha = true;
+          this.captchaCode = '';
+          this.errorMessage = challenge.message;
+        } else if (error instanceof ApiError) {
+          this.errorMessage = apiError.friendlyMessage();
+          // 网络层失败时补上目标地址，避免「不知道连的是哪个地址」这种无从下手的报错
+          if (apiError.target.length > 0) {
+            this.errorMessage += '（' + apiError.target + '）';
+          }
+          if (apiError.networkFailure) {
+            if (autoMode) {
+              // 两条路都试过了 —— 说明真的是网络不通，而不是选错了路
+              this.errorMessage += '；已自动尝试直连与 WebVPN 两条路线均不通，请检查网络';
+            } else if (this.mode === ConnectionMode.DIRECT) {
+              // 锁定直连时最常见的失败原因就是不在校园网内 —— 给出可执行的下一步
+              this.errorMessage += '；若当前不在校园网，请切到「自动」或 WebVPN 模式';
+            }
+          }
+          this.serverDown = apiError.code === 'upstream_down';
+          /**
+           * 带验证码失败后必须**换一张图 + 换一个 execution**。
+           *
+           * 验证码是一次性的：错一次之后，屏幕上这张图和手里的 execution 都已作废。
+           * 不主动刷新的话，用户对着同一张旧图反复输入，永远对不上 ——
+           * 这也是「验证码怎么输都错」的成因之一。
+           */
+          if (this.showCaptcha) {
+            this.captchaCode = '';
+            void this.warmUp();
+          }
+        } else {
+          this.errorMessage = '登录失败，请稍后重试';
+          Logger.error('登录异常：' + (error as Error).message);
+        }
+        break;
+      }
+    }
+
+    /**
+     * CAS 的 `execution` 是**一次性令牌**：提交过一次就作废。
+     *
+     * 这里不清的话，用户密码打错一次之后，之后每次点登录都带着同一个死令牌 ——
+     * 服务端一律判「凭据无效」，变成**怎么输都登不上**，只能杀进程重进重新预热。
+     * 清空后 `LocalAuthService` 会重新拉登录页现取一个新令牌。
+     *
+     * 例外：`CaptchaRequiredError` 分支（见 `keepExecution`）—— 那里的令牌是新下发的，
+     * 与屏幕上的验证码图片是**一对**，必须留着。
+     */
+    if (!succeeded && !keepExecution) {
+      this.execution = '';
+    }
+    this.loading = false;
   }
 
   @Builder
   modeSheet() {
     Column({ space: AppSize.gap }) {
-      Text('连接模式')
+      Text('连接方式')
         .fontSize(AppFont.subtitle)
         .fontWeight(FontWeight.Medium)
         .fontColor(AppColor.textPrimary)
         .width('100%')
 
-      ForEach(allConnectionModes(), (item: ConnectionModeMeta) => {
+      ForEach(allRoutePolicies(), (item: RoutePolicyMeta) => {
         Row() {
           Column({ space: 2 }) {
             Text(item.displayName)
@@ -253,7 +322,7 @@ export struct LoginPage {
           .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
 
-          if (item.mode === this.mode) {
+          if (item.policy === this.policy) {
             SymbolGlyph($r('sys.symbol.checkmark'))
               .fontSize(18)
               .fontColor([AppColor.brand])
@@ -262,14 +331,14 @@ export struct LoginPage {
         .width('100%')
         .padding(AppSize.cardPadding)
         .borderRadius(AppSize.cardRadius)
-        .backgroundColor(item.mode === this.mode ? AppColor.brandContainer : AppColor.surfaceSubtle)
+        .backgroundColor(item.policy === this.policy ? AppColor.brandContainer : AppColor.surfaceSubtle)
         .onClick(() => {
-          const changed: boolean = item.mode !== this.mode;
-          this.mode = item.mode;
-          TokenStore.setConnectionMode(item.mode);
+          const changed: boolean = item.policy !== this.policy;
+          this.policy = item.policy;
+          this.mode = RouteEngine.resolvePolicy(item.policy);
           this.showModeSheet = false;
           if (changed) {
-            // 换模式就是换了上游域名：之前取到的一次性令牌与验证码全部作废，
+            // 换方式可能换上游域名：之前取到的一次性令牌与验证码全部作废，
             // 必须重新预热，否则拿旧 execution 提交一定被判为凭据无效
             this.execution = '';
             this.showCaptcha = false;
@@ -278,7 +347,7 @@ export struct LoginPage {
             this.warmUp();
           }
         })
-      }, (item: ConnectionModeMeta) => item.mode)
+      }, (item: RoutePolicyMeta) => item.policy)
     }
     .width('100%')
     .padding(AppSize.pagePadding)
@@ -477,7 +546,7 @@ export struct LoginPage {
               SymbolGlyph($r('sys.symbol.arrow_clockwise'))
                 .fontSize(14)
                 .fontColor([AppColor.textTertiary])
-              Text('连接模式：' + this.currentModeName())
+              Text('连接：' + this.currentModeName())
                 .fontSize(AppFont.caption)
                 .fontColor(AppColor.textSecondary)
                 .layoutWeight(1)
@@ -527,13 +596,17 @@ export struct LoginPage {
     })
   }
 
+  /**
+   * 连接方式的展示文案。
+   *
+   * 自动策略下要让用户看得到「现在到底走哪条」——只写「自动」等于没写，
+   * 出问题时无从下手。所以补上当前实际路线。
+   */
   private currentModeName(): string {
-    const list = allConnectionModes();
-    for (let i = 0; i < list.length; i++) {
-      if (list[i].mode === this.mode) {
-        return list[i].displayName;
-      }
+    const name: string = routePolicyName(this.policy);
+    if (this.policy !== RoutePolicy.AUTO) {
+      return name;
     }
-    return connectionModeName(this.mode);
+    return name + '（当前：' + connectionModeName(this.mode) + '）';
   }
 }

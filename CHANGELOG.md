@@ -7,6 +7,27 @@
 
 > 目标：对齐上游 UBAA 2.0 的功能面。分支 `release/0.9.0`。
 
+### 新增（登录自动切换直连 / WebVPN，含可行性研究）
+
+对齐上游 `RoutePolicy::Auto`（`connection.rs` + `facade/routing.rs`，契约见
+`docs/contracts/route-policy.md`）。可行性研究见 `docs/tech/auto-route-switch.md`。
+
+- **路线策略** `AUTO / DIRECT / WEBVPN`（默认 **AUTO**）：策略与「实际路线」分成两个键，
+  程序只维护后者，用户意图永不被覆盖。登录页与设置页三选一。
+- **校园网探测** `CampusProbe`：对 `gw.buaa.edu.cn:80` 做纯 TCP 探测（不发 HTTP/TLS、
+  不带凭据），500ms 总预算、只认 `10.0.0.0/8`（排除代理 fake-ip）、3 秒缓存 + 单飞。
+  用 `connection.getAddressesByName` + `socket.TCPSocket.connect`，**无需新增权限**。
+- **登录自动切换**：登录前探测 → 校内直连 / 校外 WebVPN；网络层失败自动换另一条路再试
+  一次（凭据错误/验证码不换路）。预热令牌跨路线会作废并自动重新预热。
+- **读请求自动回退**：网络层失败时重新探测，切到另一条**已有会话**的路重试一次
+  （`get`/`getBinary` 与只读 `post*`；**写入永不自动重发**）。
+- **换网自愈**：订阅 `netAvailable/netCapabilitiesChange/netLost`（1.5s 去抖）+ 回前台复查；
+  启动时把「活会话所在的那条路」找回来，避免平白弹登录页。
+
+🔴 **与上游的刻意差异**：不做「校外并发双路登录」。同账号两次并发 CAS 登录会翻倍认证
+请求、可能触发风控/锁号（本项目把账号锁死风险列为红线），且双会话要求登录 UI 表达
+两条路各自的状态。单会话下校外统一走 WebVPN，功能完全可用，只是都经网关转发。
+
 ### 新增（功能补全，2026-11-17 下午）
 
 按 `docs/tech/upstream-2.0-alignment.md` 的差距表补 5 项（研讨室/云盘/日程按约定不做）：

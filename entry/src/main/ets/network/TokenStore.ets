@@ -1,6 +1,6 @@
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
-import { AppConfig, ConnectionMode, DEFAULT_CONNECTION_MODE } from '../common/AppConfig';
+import { AppConfig, ConnectionMode, DEFAULT_ROUTE_POLICY, RoutePolicy } from '../common/AppConfig';
 import { GlobalContext } from '../common/GlobalContext';
 import { Logger } from '../common/Logger';
 
@@ -344,16 +344,74 @@ export class TokenStore {
     TokenStore.flush();
   }
 
-  static getConnectionMode(): ConnectionMode {
-    const value = TokenStore.readString(AppConfig.PREF_CONNECTION_MODE, DEFAULT_CONNECTION_MODE);
-    if (value === ConnectionMode.WEBVPN) {
-      return ConnectionMode.WEBVPN;
+  /**
+   * 路线策略（用户意图）：AUTO 自动 / DIRECT 锁直连 / WEBVPN 锁 WebVPN。
+   *
+   * 未显式设置时按旧版 `connection_mode` 迁移（老用户选过什么就还是什么），
+   * 两处都没有才是 AUTO —— 新装用户直接享受自动切换。
+   */
+  static getRoutePolicy(): RoutePolicy {
+    const value: string = TokenStore.readString(AppConfig.PREF_ROUTE_POLICY, '');
+    if (value === RoutePolicy.AUTO) {
+      return RoutePolicy.AUTO;
     }
-    return ConnectionMode.DIRECT;
+    if (value === RoutePolicy.DIRECT) {
+      return RoutePolicy.DIRECT;
+    }
+    if (value === RoutePolicy.WEBVPN) {
+      return RoutePolicy.WEBVPN;
+    }
+    const legacy: string = TokenStore.readString(AppConfig.PREF_CONNECTION_MODE, '');
+    if (legacy === ConnectionMode.WEBVPN) {
+      return RoutePolicy.WEBVPN;
+    }
+    if (legacy === ConnectionMode.DIRECT) {
+      return RoutePolicy.DIRECT;
+    }
+    return DEFAULT_ROUTE_POLICY;
   }
 
+  static setRoutePolicy(policy: RoutePolicy): void {
+    TokenStore.writeString(AppConfig.PREF_ROUTE_POLICY, policy);
+    TokenStore.flush();
+  }
+
+  /**
+   * AUTO 策略下当前锁定的实际路线。
+   *
+   * 与策略分开存的理由：策略是用户意图（不该被程序改），实际路线是**运行时结论**
+   * （探测/故障切换会改它），两者混在一个键里就会出现「程序偷偷改了用户的设置」。
+   */
+  static getAutoPinnedMode(): ConnectionMode {
+    const value: string = TokenStore.readString(AppConfig.PREF_AUTO_PINNED_MODE, '');
+    return value === ConnectionMode.WEBVPN ? ConnectionMode.WEBVPN : ConnectionMode.DIRECT;
+  }
+
+  static setAutoPinnedMode(mode: ConnectionMode): void {
+    TokenStore.writeString(AppConfig.PREF_AUTO_PINNED_MODE, mode);
+    TokenStore.flush();
+  }
+
+  /**
+   * 本次请求**实际**走哪条路线（全 app 的取路口）。
+   *
+   * 显式策略直接返回；AUTO 返回 `RouteEngine` 维护的锁定值。
+   */
+  static getConnectionMode(): ConnectionMode {
+    const policy: RoutePolicy = TokenStore.getRoutePolicy();
+    if (policy === RoutePolicy.DIRECT) {
+      return ConnectionMode.DIRECT;
+    }
+    if (policy === RoutePolicy.WEBVPN) {
+      return ConnectionMode.WEBVPN;
+    }
+    return TokenStore.getAutoPinnedMode();
+  }
+
+  /** 显式锁定模式（等价于把策略设成 DIRECT / WEBVPN）。 */
   static setConnectionMode(mode: ConnectionMode): void {
-    TokenStore.writeString(AppConfig.PREF_CONNECTION_MODE, mode);
+    TokenStore.setRoutePolicy(mode === ConnectionMode.WEBVPN ? RoutePolicy.WEBVPN : RoutePolicy.DIRECT);
+    TokenStore.setAutoPinnedMode(mode);
     TokenStore.flush();
   }
 

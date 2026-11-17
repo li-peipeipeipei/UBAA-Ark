@@ -779,7 +779,9 @@ export class LocalAcademicService {
     body: string
   ): Promise<UpstreamResponse> {
     if (method === 'POST') {
-      return await UpstreamClient.postForm(url, body, false, headers);
+      // byxtCall 的5个调用点全是只读查询（课表/考试/成绩/教室）；写入走的是
+      // 另外的直连 postForm（如评教提交），不过这里 —— 所以允许自动换路重试。
+      return await UpstreamClient.postForm(url, body, false, headers, true);
     }
     return await UpstreamClient.get(url, false, headers);
   }

@@ -3,6 +3,7 @@ import {
 } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { connection } from '@kit.NetworkKit';
 import display from '@ohos.display';
 import { AppConfig } from '../common/AppConfig';
 import { StartupPrefetch } from '../common/StartupPrefetch';
@@ -12,6 +13,7 @@ import { resourceManager } from '@kit.LocalizationKit';
 import { CardCache } from '../common/CardCache';
 import { CardRefresher } from '../common/CardRefresher';
 import { Logger } from '../common/Logger';
+import { RouteEngine } from '../network/RouteEngine';
 import { TokenStore } from '../network/TokenStore';
 import { KEY_MAIN_TAB_INDEX } from '../common/NavStacks';
 import { NavHero } from '../common/NavHero';
@@ -180,10 +182,68 @@ export default class EntryAbility extends UIAbility {
 
     // 沉浸式全屏 + 光感基础：内容延伸到状态栏 / 导航条，并做安全区避让
     ImmersiveUtil.apply(windowStage, colorMode);
+
+    // 自动路线：订阅换网事件（探测缓存随之作废），只注册一次
+    this.registerNetworkWatch();
   }
 
   onWindowStageDestroy(): void {
     Logger.info('EntryAbility onWindowStageDestroy');
+    this.unregisterNetworkWatch();
+  }
+
+  /**
+   * 网络变化监听（自动路线依赖）。
+   *
+   * 探测结果缓存 3 秒，换网后必须作废 —— 否则新网络上的第一次判断还是旧结论
+   * （在校园网探到的 CAMPUS 会一直沿用到校外，路线永远不切）。
+   * 上游合同要求「宿主直接订阅平台连接事件……返回前台重新检查网络」。
+   */
+  private netConnection: connection.NetConnection | null = null;
+
+  private registerNetworkWatch(): void {
+    if (this.netConnection !== null) {
+      return;
+    }
+    try {
+      const net = connection.createNetConnection();
+      net.register((err: BusinessError) => {
+        if (err.code !== 0) {
+          Logger.warn('网络变化监听注册失败：' + err.message);
+        }
+      });
+      // 三个事件连着来是常态（netLost → netCapabilitiesChange → netAvailable），
+      // RouteEngine.notifyNetworkChanged 内部 1.5s 去抖，不必在这里再挡。
+      net.on('netAvailable', () => {
+        RouteEngine.notifyNetworkChanged();
+      });
+      net.on('netCapabilitiesChange', () => {
+        RouteEngine.notifyNetworkChanged();
+      });
+      net.on('netLost', () => {
+        RouteEngine.notifyNetworkChanged();
+      });
+      this.netConnection = net;
+      Logger.info('网络变化监听已注册');
+    } catch (error) {
+      Logger.warn('注册网络变化监听异常：' + (error as Error).message);
+    }
+  }
+
+  private unregisterNetworkWatch(): void {
+    if (this.netConnection === null) {
+      return;
+    }
+    try {
+      this.netConnection.unregister((err: BusinessError) => {
+        if (err.code !== 0) {
+          Logger.warn('网络变化监听注销失败：' + err.message);
+        }
+      });
+    } catch (error) {
+      Logger.warn('注销网络变化监听异常：' + (error as Error).message);
+    }
+    this.netConnection = null;
   }
 
   onForeground(): void {
@@ -196,6 +256,8 @@ export default class EntryAbility extends UIAbility {
       this.consumeRoute(this.lastWant);
       this.lastWant = null;
     }
+    // 回前台重新校一次网络：关 App 期间可能已经换网（宿舍 Wi-Fi → 教室流量）
+    RouteEngine.notifyNetworkChanged();
     // 通知 UI 刷新（课表页订阅了这个 AppStorage 事件）
     AppStorage.set<boolean>('appForegroundTick', !this.foregroundTick);
   }

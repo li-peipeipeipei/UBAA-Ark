@@ -1,8 +1,17 @@
-import { AppConfig, ConnectionMode, ConnectionModeMeta, DEFAULT_CONNECTION_MODE, allConnectionModes, connectionModeName } from '../../common/AppConfig';
+import {
+  AppConfig,
+  ConnectionMode,
+  DEFAULT_ROUTE_POLICY,
+  RoutePolicy,
+  RoutePolicyMeta,
+  allRoutePolicies,
+  connectionModeName
+} from '../../common/AppConfig';
 import { Logger } from '../../common/Logger';
 import { Toast } from '../../common/Toast';
 import { ApiService } from '../../network/ApiService';
 import { DiagnosticResult, NetworkDiagnostics } from '../../network/NetworkDiagnostics';
+import { RouteEngine } from '../../network/RouteEngine';
 import { TokenStore } from '../../network/TokenStore';
 import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
@@ -49,7 +58,8 @@ function parseVersionCheck(raw: string): VersionCheckResult | null {
  */
 @Component
 export struct SettingsPage {
-  @State private mode: ConnectionMode = DEFAULT_CONNECTION_MODE;
+  @State private mode: ConnectionMode = ConnectionMode.DIRECT;
+  @State private policy: RoutePolicy = DEFAULT_ROUTE_POLICY;
   @State private checking: boolean = false;
   @State private diagnosing: boolean = false;
   @State private diagnoseHeadline: string = '';
@@ -59,6 +69,7 @@ export struct SettingsPage {
   @State private loggedIn: boolean = false;
 
   aboutToAppear(): void {
+    this.policy = TokenStore.getRoutePolicy();
     this.mode = TokenStore.getConnectionMode();
     this.demoMode = TokenStore.getDemoMode();
     this.loggedIn = TokenStore.hasLocalSession();
@@ -111,7 +122,7 @@ export struct SettingsPage {
   }
 
   @Builder
-  modeRow(item: ConnectionModeMeta, last: boolean) {
+  policyRow(item: RoutePolicyMeta, last: boolean) {
     Column() {
       Row() {
         Column({ space: 2 }) {
@@ -121,11 +132,17 @@ export struct SettingsPage {
           Text(item.description)
             .fontSize(AppFont.caption)
             .fontColor(AppColor.textTertiary)
+          if (item.policy === RoutePolicy.AUTO && this.policy === RoutePolicy.AUTO) {
+            // 自动策略下把「现在实际走哪条」亮出来 —— 只写「自动」等于没写
+            Text(RouteEngine.describeCurrent())
+              .fontSize(AppFont.caption)
+              .fontColor(AppColor.brand)
+          }
         }
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
 
-        if (item.mode === this.mode) {
+        if (item.policy === this.policy) {
           SymbolGlyph($r('sys.symbol.checkmark'))
             .fontSize(18)
             .fontColor([AppColor.brand])
@@ -134,15 +151,15 @@ export struct SettingsPage {
       .width('100%')
       .padding({ top: 10, bottom: 10 })
       .onClick(() => {
-        if (item.mode === this.mode) {
+        if (item.policy === this.policy) {
           return;
         }
-        this.mode = item.mode;
-        TokenStore.setConnectionMode(item.mode);
-        // 换模式 = 换上游域名，上一次的诊断结论已经不适用了
+        this.policy = item.policy;
+        this.mode = RouteEngine.resolvePolicy(item.policy);
+        // 换方式 = 可能换上游域名，上一次的诊断结论已经不适用了
         this.diagnoseHeadline = '';
         this.diagnoseDetail = '';
-        this.loggedIn = TokenStore.hasLocalSession(item.mode);
+        this.loggedIn = TokenStore.hasLocalSession(this.mode);
       })
 
       if (!last) {
@@ -179,7 +196,7 @@ export struct SettingsPage {
 
             Text(this.mode === ConnectionMode.WEBVPN
               ? 'WebVPN 模式下所有校内地址都会加密后经 d.buaa.edu.cn 转发，校外可用。'
-              : '校内直连要求设备处在校园网内（或已连接校园 VPN）；校外请切到 WebVPN 模式。')
+              : '校内直连要求设备处在校园网内（或已连接校园 VPN）；校外建议把连接方式设为「自动」。')
               .fontSize(AppFont.caption)
               .fontColor(AppColor.textTertiary)
               .width('100%')
@@ -221,11 +238,15 @@ export struct SettingsPage {
           .width('100%')
         }
 
-        SectionCard({ title: '连接模式', subtitle: '影响网关选择，切换后需重新登录', showAction: false }) {
+        SectionCard({
+          title: '连接方式',
+          subtitle: '自动 = 按校园网关可达性在直连 / WebVPN 之间切换；显式锁定后切换需重新登录',
+          showAction: false
+        }) {
           Column() {
-            ForEach(allConnectionModes(), (item: ConnectionModeMeta, index: number) => {
-              this.modeRow(item, index === allConnectionModes().length - 1)
-            }, (item: ConnectionModeMeta) => item.mode)
+            ForEach(allRoutePolicies(), (item: RoutePolicyMeta, index: number) => {
+              this.policyRow(item, index === allRoutePolicies().length - 1)
+            }, (item: RoutePolicyMeta) => item.policy)
           }
           .width('100%')
         }
