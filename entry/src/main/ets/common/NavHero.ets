@@ -62,10 +62,15 @@ export class NavHero {
    * 只有这些路由的 PUSH/POP 才由我们接管转场，其余（博雅子页、设置…）走系统默认 ——
    * 否则一旦点过一次卡片，后面任何 push 都会被误判成「从卡片展开」。
    * 铺开到全部入口时，这里逐个加名字即可。
+   *
+   * ⚠️ **必须与 RouteBuilder 里 `hero: true` 的 13 个目的地一一对应**：
+   * 只在 RouteBuilder 标了 hero 而漏加这里 → 打开时不播卡片放大（走系统默认转场），
+   * 收起时 `NativeHeroDest` 照样登记 hero、朝一张**从未登记的卡片**缩回 →
+   * 动画中途无处可落，表现为「开/关动画异常消失」（云打印踩过）。
    */
   private static heroRoutes: string[] = [
     'exam', 'grade', 'classroom', 'signin', 'evaluation',
-    'spoc', 'ygdk', 'ihome', 'bykc', 'libbookHome', 'finance', 'network'
+    'spoc', 'ygdk', 'ihome', 'bykc', 'libbookHome', 'finance', 'network', 'cloudPrint'
   ];
 
   static isHeroRoute(name: string): boolean {
