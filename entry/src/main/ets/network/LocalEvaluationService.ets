@@ -388,18 +388,30 @@ export class LocalEvaluationService {
 
   private static async doActivate(): Promise<void> {
     let current: string = PJXT_BASE + '/cas';
+    let currentLogical: string = PJXT_BASE + '/cas';
     for (let hop = 0; hop < MAX_CAS_HOPS; hop++) {
       const response = await UpstreamClient.get(current, false);
-      // 3xx：继续跟下一跳，并在跳向统一认证时立刻判定为「确实没会话」
+      // 3xx：继续跟下一跳。
       if (response.isRedirect()) {
         const next: string = resolveLocation(response.url, response.location);
         const nextLogical: string = await LocalWebVpn.fromWebVpnUrl(next);
-        if (isSsoUrl(nextLogical)) {
+        /**
+         * ⚠️ **不能「下一跳出现 sso 就判失效」**（原来就是这么写的，导致登录后
+         * 第一次打开评教必报「登录状态已失效」）。
+         *
+         * 有会话时 CAS 的签发路径必然经过 sso：
+         * `spoc…/pjxt/cas` → 302 `sso.buaa.edu.cn/login?service=…` →
+         * 302 回 `spoc…/pjxt/cas?ticket=ST-…` → 302 `spoc…/pjxt/…`。
+         * 只有**当前页与下一跳都在 sso**（回不到业务站）才是真失效。
+         * 与 `LocalFinanceService.walkPortal` 的判据一致。
+         */
+        if (isSsoUrl(nextLogical) && isSsoUrl(currentLogical)) {
           LocalEvaluationService.activated = false;
           throw new ApiError(401, 'invalid_token',
             '统一身份认证会话已失效，请重新登录后再试');
         }
         current = next;
+        currentLogical = nextLogical;
         continue;
       }
       if (response.status === 401) {

@@ -257,16 +257,30 @@ export class LocalCampusService {
       return;
     }
     let current: string = NETWORK_LOGIN;
+    let currentLogical: string = NETWORK_LOGIN;
     for (let hop = 0; hop < MAX_HOPS; hop++) {
       const response: UpstreamResponse = await UpstreamClient.get(current, false);
       if (response.isRedirect()) {
         const next: string = resolveLocation(response.url, response.location);
         const nextLogical: string = await LocalWebVpn.fromWebVpnUrl(next);
-        if (isSso(nextLogical)) {
+        /**
+         * ⚠️ **不能「下一跳出现 sso 就判失效」**。
+         *
+         * 统一认证**有**会话时的正常签发路径就是：
+         * `zfw…/sso/cas/index` → 302 `sso.buaa.edu.cn/login?service=…` →
+         * 302 回 `zfw…/callback?ticket=ST-…` → 302 `zfw…/pay/card`。
+         * 中间那跳**必然**落在 sso 域名上，看到它就抛错等于「只要需要签发就报登录失效」——
+         * 表现为登录后第一次打开网费必失败（财务页不受影响，因为它用的是双重判据）。
+         *
+         * 真正的判据：**当前页和下一跳都停在 sso**（回不到业务站）才算会话没了。
+         * 与 `LocalFinanceService.walkPortal` 保持一致。
+         */
+        if (isSso(nextLogical) && isSso(currentLogical)) {
           throw new ApiError(401, 'invalid_token',
             '统一身份认证会话已失效，请重新登录后再试');
         }
         current = next;
+        currentLogical = nextLogical;
         continue;
       }
       if (response.status === 401 || response.status === 403) {
