@@ -21,8 +21,10 @@ import {
   CourseDetail,
   CourseDetailDialog
 } from '../../components/CourseDetailDialog';
-import { CourseClass, Exam, Term, TodayClass, Week, WeeklySchedule } from '../../model/ApiTypes';
+import { CourseClass, Exam, SpocAssignment, Term, TodayClass, Week, WeeklySchedule } from '../../model/ApiTypes';
 import { KEY_BREAKPOINT } from '../../common/Breakpoint';
+import { RecentFeatures } from '../../common/RecentFeatures';
+import { allFeatures, FeatureItem } from '../../components/FeatureRegistry';
 
 /** 取今日课程时间串 `15:50-17:25` 里的开始时间（取不到返回空串）。 */
 function startTimeOf(item: TodayClass): string {
@@ -227,6 +229,10 @@ export struct HomePage {
    */
   @StorageProp(KEY_IS_DARK) private isDark: boolean = false;
   @State private loadState: LoadState = LoadState.LOADING;
+  /** 「最近使用」的路由名（按最近优先，最多 4 个）。 */
+  @State private recentRoutes: string[] = [];
+  /** 待办：未提交且未过期的作业（按截止时间排序，最多 3 条）。 */
+  @State private todos: SpocAssignment[] = [];
   @State private errorMessage: string = '';
   @State private todayClasses: TodayClass[] = [];
   @State private hasNextExam: boolean = false;
@@ -266,7 +272,11 @@ export struct HomePage {
 
 
   aboutToAppear(): void {
+    // 「最近使用」是本地记录，同步读，不阻塞首帧
+    this.recentRoutes = RecentFeatures.list(4);
     this.loadHome(true);
+    // 待办（作业截止）后台加载，失败静默 —— 不影响首页主体
+    this.loadTodos();
     // 后台预加载本周课表（不阻塞首页渲染）—— 点课程时才有完整的详情可用
     this.preloadCourses();
   }
@@ -718,6 +728,172 @@ export struct HomePage {
     }
   }
 
+
+  /** 「最近使用」的功能入口（本地记录的真实使用轨迹，最多 4 个）。 */
+  @Builder
+  recentSection() {
+    Column({ space: AppSize.gap }) {
+      Text('最近使用')
+        .fontSize(AppFont.subtitle)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(AppColor.textPrimary)
+        .width('100%')
+
+      if (this.recentItems().length === 0) {
+        Text('用过「考试安排」「成绩查询」等，这里会留下快捷入口')
+          .fontSize(AppFont.caption)
+          .fontColor(AppColor.textTertiary)
+          .width('100%')
+      } else {
+        Row({ space: 10 }) {
+          ForEach(this.recentItems(), (item: FeatureItem) => {
+            Column({ space: 6 }) {
+              Stack({ alignContent: Alignment.Center }) {
+                Column()
+                  .width(44)
+                  .height(44)
+                  .borderRadius(14)
+                  .backgroundColor(item.color)
+                Image(item.icon)
+                  .width(22)
+                  .height(22)
+                  .fillColor(Color.White)
+              }
+              .width(44)
+              .height(44)
+
+              Text(item.title)
+                .fontSize(AppFont.caption)
+                .fontColor(AppColor.textSecondary)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Center)
+            .onClick(() => {
+              AppRouter.open(this.stack, item.route);
+            })
+          }, (item: FeatureItem) => 'recent-' + item.route)
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  /** 最近使用的功能项（按 route 反查注册表；查不到的跳过，不留空壳入口）。 */
+  private recentItems(): FeatureItem[] {
+    const all: FeatureItem[] = allFeatures();
+    const out: FeatureItem[] = [];
+    for (let i = 0; i < this.recentRoutes.length && out.length < 4; i++) {
+      const route: string = this.recentRoutes[i];
+      for (let j = 0; j < all.length; j++) {
+        if (all[j].route === route) {
+          out.push(all[j]);
+          break;
+        }
+      }
+    }
+    return out;
+  }
+
+
+  /**
+   * 待办：未提交且未过期的作业。
+   *
+   * 只取最近 3 条（再多就成清单了），按截止时间升序。
+   * 加载失败静默 —— 待办是增值信息，不该因为拉不到而打扰首页。
+   */
+  private async loadTodos(): Promise<void> {
+    try {
+      const data = await ApiService.fetchSpocAssignments();
+      const now: string = DateUtil.today();
+      const out: SpocAssignment[] = [];
+      for (let i = 0; i < data.assignments.length; i++) {
+        const item = data.assignments[i];
+        if (item.submitted === true) {
+          continue;
+        }
+        const due: string = item.dueTime === undefined ? '' : item.dueTime;
+        if (due.length === 0) {
+          continue;
+        }
+        // 已过期的不进待办（过期未交在 SPOC 页里看）
+        if (due.substring(0, 10) < now) {
+          continue;
+        }
+        out.push(item);
+      }
+      out.sort((a: SpocAssignment, b: SpocAssignment): number => {
+        const left: string = a.dueTime === undefined ? '' : a.dueTime;
+        const right: string = b.dueTime === undefined ? '' : b.dueTime;
+        return left < right ? -1 : (left > right ? 1 : 0);
+      });
+      this.todos = out.slice(0, 3);
+    } catch (error) {
+      // 待办拉不到不影响首页，静默
+    }
+  }
+
+  /** 待办区块：作业截止（考试倒计时在上方的 examBanner，不重复）。 */
+  @Builder
+  todoSection() {
+    Column({ space: AppSize.gap }) {
+      Text('待办')
+        .fontSize(AppFont.subtitle)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(AppColor.textPrimary)
+        .width('100%')
+
+      if (this.todos.length === 0) {
+        Text('没有临近截止的作业')
+          .fontSize(AppFont.caption)
+          .fontColor(AppColor.textTertiary)
+          .width('100%')
+      } else {
+        Column({ space: 0 }) {
+          ForEach(this.todos, (item: SpocAssignment, index: number) => {
+            Row({ space: AppSize.gap }) {
+              Column({ space: 2 }) {
+                Text(item.title)
+                  .fontSize(AppFont.body)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(AppColor.textPrimary)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .width('100%')
+                Text(item.courseName + ' · 截止 ' + (item.dueTime === undefined ? '' : item.dueTime))
+                  .fontSize(AppFont.caption)
+                  .fontColor(AppColor.textTertiary)
+                  .maxLines(1)
+                  .width('100%')
+              }
+              .layoutWeight(1)
+              .alignItems(HorizontalAlign.Start)
+
+              SymbolGlyph($r('sys.symbol.chevron_right'))
+                .fontSize(14)
+                .fontColor([AppColor.textTertiary])
+            }
+            .width('100%')
+            .padding({ top: 10, bottom: 10 })
+            .onClick(() => {
+              AppRouter.open(this.stack, RouteName.SPOC);
+            })
+            if (index < this.todos.length - 1) {
+              Divider().color(AppColor.divider).strokeWidth(0.5)
+            }
+          }, (item: SpocAssignment, index: number) =>
+            item.assignmentId.length > 0 ? item.assignmentId : 'todo-' + index.toString())
+        }
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
   build() {
     // 下拉刷新外壳：Refresh 包 Scroll，内容停在顶部时继续下拉即触发。
     // 注意：顶部模糊依赖「clip(false)+expandSafeArea()」这套扩展，Refresh 作为
@@ -758,8 +934,16 @@ export struct HomePage {
               this.examBanner()
             }
 
+            // 待办（作业截止）
+            this.todoSection()
+
             // 今日课程（快捷入口已移除：功能集中在功能页，主页只留「今天要上什么课」）
             this.todaySection()
+
+            // 「最近使用」快捷入口（本地记录的真实使用轨迹）
+            if (this.recentItems().length > 0) {
+              this.recentSection()
+            }
           }
 
           // 为悬浮底栏预留高度（barOverlap 模式下内容会被底栏覆盖）

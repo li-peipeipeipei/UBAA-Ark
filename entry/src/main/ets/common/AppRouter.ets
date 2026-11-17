@@ -1,5 +1,6 @@
 
 import { BackGuard } from './BackGuard';
+import { RecentFeatures } from './RecentFeatures';
 
 /**
  * 路由表。
@@ -82,6 +83,8 @@ export class AppRouter {
 
   /** 打开二级页：统一走压栈（分栏已取消）。 */
   static open(stack: NavPathStack, name: string, param?: object, animated: boolean = true): void {
+    // 记一次「最近使用」：首页的快捷入口按真实使用轨迹显示（上游「最近使用的功能」）
+    RecentFeatures.record(name);
     AppRouter.push(stack, name, param, animated);
   }
 
