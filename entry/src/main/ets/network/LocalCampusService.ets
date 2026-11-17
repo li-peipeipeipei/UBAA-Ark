@@ -387,10 +387,12 @@ export class LocalCampusService {
          * 合并失败就退回页面原值 —— 解析不出套餐子表只是少合并，绝不错算。
          */
         let freeMerged: CampusAmount = free;
-        const rawCells: Map<string, string> = splitCells(rows[r]);
-        const freeCellHtml: string = rawCells.get(columns.get(LABEL_FREE) as string) ?? '';
-        if (freeCellHtml.length > 0 && freeCellHtml.indexOf('<table') >= 0) {
-          const flows: CampusAmount[] = packageFlows(freeCellHtml);
+        // ⚠️ 上游 `packages::free_remaining(row, base)` 是在**整个产品行**里找嵌套
+        // 套餐子表（`product.select(TABLE)`），不是只看「免费剩余」那一格 ——
+        // 子表常常挂在「产品名称」那个 <td> 里。只搜一格会漏掉，合并就永远不生效。
+        const rowHtml: string = rows[r];
+        if (rowHtml.indexOf('<table') >= 0) {
+          const flows: CampusAmount[] = packageFlows(rowHtml);
           if (flows.length > 0) {
             const all: CampusAmount[] = [free];
             for (let k = 0; k < flows.length; k++) {

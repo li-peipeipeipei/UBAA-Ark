@@ -294,7 +294,11 @@ export class LocalCloudPrintService {
     await LocalCloudPrintService.ensureSession();
     const headers: Record<string, string> = {};
     headers['accept'] = 'application/json, text/plain, */*';
-    const url: string = (path.indexOf('PrintJob/Get') >= 0 || path.indexOf('Scan/Get') >= 0) ?
+    // 上游 read.rs：文档列表与 Station/GetList 带随机 timestamp（防缓存）；
+    // Station/GetSrvList 用干净的 endpoint。
+    const needStamp: boolean = path.indexOf('PrintJob/Get') >= 0 ||
+      path.indexOf('Scan/Get') >= 0 || path.indexOf('Station/GetList') >= 0;
+    const url: string = needStamp ?
       LocalCloudPrintService.timestamped(path) : LocalCloudPrintService.endpoint(path);
     const response: UpstreamResponse = await UpstreamClient.get(url, true, headers);
     if (response.status === 401) {
@@ -416,7 +420,18 @@ export class LocalCloudPrintService {
       if (result === null) {
         return false;
       }
-      return strOf(result, 'szLogonName').length > 0;
+      const logonName: string = strOf(result, 'szLogonName');
+      if (logonName.length === 0) {
+        return false;
+      }
+      // 上游 auth.rs 的 check() 还要求**账号匹配**：登着别人的号不能当"已登录"。
+      // 我们用登录名（学号）比对；比不上就当未登录，走重新登录链。
+      const expected: string = TokenStore.getSession().username;
+      if (expected.length > 0 && expected !== logonName) {
+        Logger.warn('云打印会话属于其它账号（' + logonName + '），按未登录处理');
+        return false;
+      }
+      return true;
     } catch (error) {
       return false;
     }

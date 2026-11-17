@@ -228,6 +228,16 @@ export class LocalPortalService {
     LocalPortalService.activateTask = null;
   }
 
+  /**
+   * 是否认证类错误（要向上抛、触发重登）。
+   *
+   * 对齐上游 `record()`：`AuthenticationRequired` / 会话冲突不转 Failure，
+   * 否则用户会看到「五项全是 —」却不知道是该重新登录了。
+   */
+  private static isAuthError(error: Object): boolean {
+    return error instanceof ApiError && ((error as ApiError).status === 401);
+  }
+
   /* ------------------------------ 指标取数 ------------------------------ */
 
   private static async metricAmount(ids: Map<string, string>, key: string,
@@ -241,6 +251,10 @@ export class LocalPortalService {
       const amount = amountOf(data);
       return metricOk(label, amount.value, amount.unit);
     } catch (error) {
+      // 对齐上游 record()：认证类错误**向上抛**（该重登了），其余转 Failure
+      if (LocalPortalService.isAuthError(error)) {
+        throw error as Error;
+      }
       return metricFail(label, (error as Error).message);
     }
   }
@@ -255,6 +269,9 @@ export class LocalPortalService {
       const data = envelope(await LocalPortalService.json(DETAIL_URL + encodeURIComponent(id)));
       return metricOk(label, countOf(data), '');
     } catch (error) {
+      if (LocalPortalService.isAuthError(error)) {
+        throw error as Error;
+      }
       return metricFail(label, (error as Error).message);
     }
   }

@@ -2,7 +2,7 @@ import { LoadState } from '../../common/AppRouter';
 import { Logger } from '../../common/Logger';
 import { ApiError } from '../../network/ApiError';
 import { LocalFinanceService } from '../../network/LocalFinanceService';
-import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
+import { AppColor, AppFont, AppMaterial, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import {
   ErrorView, InfoRow, LoadingView, SectionCard
@@ -107,100 +107,164 @@ struct FinanceDetailDialog {
   periodText: string = '';
   recordedText: string = '';
   serialText: string = '';
+
+  /**
+   * 沉浸材质是否可用（API ≥ 26、应用级没被 DISABLE、材质构造成功）。
+   * 不可用时走兜底玻璃样式 —— 与 `CourseDetailDialog` / `SpocDetailDialog` 同一套。
+   */
   private readonly materialActive: boolean = immersiveMaterialActive();
 
   build() {
+    if (this.materialActive) {
+      this.immersiveCard();
+    } else {
+      // API 26 以下的设备取不到系统材质，退回「半透明玻璃底 + 高斯模糊」的手动样式
+      this.glassCard();
+    }
+  }
+
+  /** 沉浸材质卡（API ≥ 26）。 */
+  @Builder
+  immersiveCard() {
     Stack() {
-      if (this.materialActive) {
-        MaterialCardLayer({ layerRadius: AppSize.cardRadiusLarge })
-      }
-
+      MaterialCardLayer({ layerRadius: AppSize.cardRadiusLarge })
       Column() {
-        Row() {
-          Text('收入明细')
-            .fontSize(AppFont.title)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(AppColor.textPrimary)
-            .maxLines(1)
-
-          Stack() {
-            if (this.materialActive) {
-              MaterialCardLayer({ layerRadius: 20, layerShadow: false })
-            } else {
-              Column()
-                .width('100%')
-                .height('100%')
-                .borderRadius(20)
-                .backgroundColor(AppColor.circleButtonSurface)
-            }
-            Button({ type: ButtonType.Normal, stateEffect: false }) {
-              SymbolGlyph($r('sys.symbol.xmark'))
-                .fontSize(24)
-                .fontColor([AppColor.textPrimary])
-            }
-            .width(40)
-            .height(40)
-            .borderRadius(20)
-            .backgroundColor(Color.Transparent)
-            .onClick(() => {
-              if (this.controller !== undefined) {
-                this.controller.close();
-              }
-            })
-          }
-          .width(40)
-          .height(40)
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.SpaceBetween)
-        .alignItems(VerticalAlign.Center)
-        .margin({ bottom: 8 })
-
-        Divider().color(AppColor.divider).strokeWidth(0.5)
-
-        Scroll() {
-          Column() {
-            if (this.project.length > 0) {
-              Text(this.project)
-                .fontSize(AppFont.subtitle)
-                .fontWeight(FontWeight.Medium)
-                .fontColor(AppColor.textPrimary)
-                .width('100%')
-            }
-            if (this.description.length > 0) {
-              Text(this.description)
-                .fontSize(AppFont.body)
-                .fontColor(AppColor.textSecondary)
-                .width('100%')
-                .margin({ top: 6 })
-            }
-            Column() {
-              InfoRow({ label: '应发金额', value: this.amountText })
-              InfoRow({ label: '扣税', value: this.taxText })
-              InfoRow({ label: '实发金额', value: this.paidText })
-              InfoRow({ label: '税率', value: this.taxRateText })
-              InfoRow({ label: '所属年月', value: this.periodText })
-              InfoRow({ label: '录入日期', value: this.recordedText })
-              InfoRow({ label: '流水号', value: this.serialText, showDivider: false })
-            }
-            .width('100%')
-            .margin({ top: 10 })
-          }
-          .width('100%')
-          .padding({ top: 10, bottom: 6 })
-        }
-        .scrollBar(BarState.Off)
-        .layoutWeight(1)
-        .width('100%')
+        this.cardContent()
       }
       .width('100%')
-      .constraintSize({ maxHeight: '78%' })
-      .padding(AppSize.cardPadding)
+      .padding(AppSize.cardPadding + 4)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('86%')
+    .constraintSize({ maxWidth: 400 })
+    .borderRadius(AppSize.cardRadiusLarge)
+    .backgroundColor(Color.Transparent)
+  }
+
+  /** 兜底玻璃卡（API 26 以下设备）：半透明底 + 大半径高斯模糊 + 细描边。 */
+  @Builder
+  glassCard() {
+    Column() {
+      this.cardContent()
+    }
+    .width('86%')
+    .constraintSize({ maxWidth: 400 })
+    .padding(AppSize.cardPadding + 4)
+    .backdropBlur(AppMaterial.blurLarge)
+    .backgroundColor(AppColor.glassSurface)
+    .border({ width: 0.5, color: AppColor.divider })
+    .borderRadius(AppSize.cardRadiusLarge)
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  /** 标题栏 + 明细行（与课程详情弹窗同一套版式）。 */
+  @Builder
+  cardContent() {
+    Row() {
+      Text('收入明细')
+        .fontSize(AppFont.title)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(AppColor.textPrimary)
+        .maxLines(1)
+
+      Stack() {
+        if (this.materialActive) {
+          MaterialCardLayer({ layerRadius: 20, layerShadow: false })
+        } else {
+          Column()
+            .width('100%')
+            .height('100%')
+            .borderRadius(20)
+            .backgroundColor(AppColor.circleButtonSurface)
+        }
+        Button({ type: ButtonType.Normal, stateEffect: false }) {
+          SymbolGlyph($r('sys.symbol.xmark'))
+            .fontSize(24)
+            .fontColor([AppColor.textPrimary])
+        }
+        .width(40)
+        .height(40)
+        .borderRadius(20)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          if (this.controller !== undefined) {
+            this.controller.close();
+          }
+        })
+      }
+      .width(40)
+      .height(40)
     }
     .width('100%')
-    .backgroundColor(AppColor.surface)
-    .borderRadius(AppSize.cardRadiusLarge)
+    .justifyContent(FlexAlign.SpaceBetween)
+    .alignItems(VerticalAlign.Center)
+    .margin({ bottom: 8 })
+
+    Divider()
+      .color(AppColor.divider)
+      .strokeWidth(0.5)
+
+    Scroll() {
+      Column() {
+        if (this.project.length > 0) {
+          Text(this.project)
+            .fontSize(AppFont.subtitle)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(AppColor.textPrimary)
+            .width('100%')
+        }
+        if (this.description.length > 0) {
+          Text(this.description)
+            .fontSize(AppFont.body)
+            .fontColor(AppColor.textSecondary)
+            .width('100%')
+            .margin({ top: 6 })
+        }
+        ForEach(this.rows(), (row: FinanceDetailRow) => {
+          Row() {
+            Text(row.label)
+              .fontSize(AppFont.body)
+              .fontColor(AppColor.textSecondary)
+              .width(72)
+            Text(row.value.length > 0 ? row.value : '—')
+              .fontSize(AppFont.body)
+              .fontColor(AppColor.textPrimary)
+              .layoutWeight(1)
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Top)
+          .padding({ top: 7, bottom: 7 })
+        }, (row: FinanceDetailRow) => row.label)
+      }
+      .width('100%')
+    }
+    .scrollBar(BarState.Off)
+    // 滑动到上限有回弹，内容不满也响应手势（见 CourseDetailDialog 同处注释）
+    .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+    .constraintSize({ maxHeight: 380 })
+    .margin({ top: 4 })
   }
+
+  /** 明细行（与课程详情弹窗的 rows 同构）。 */
+  private rows(): FinanceDetailRow[] {
+    const out: FinanceDetailRow[] = [];
+    out.push({ label: '应发金额', value: this.amountText } as FinanceDetailRow);
+    out.push({ label: '扣税', value: this.taxText } as FinanceDetailRow);
+    out.push({ label: '实发金额', value: this.paidText } as FinanceDetailRow);
+    out.push({ label: '税率', value: this.taxRateText } as FinanceDetailRow);
+    out.push({ label: '所属年月', value: this.periodText } as FinanceDetailRow);
+    out.push({ label: '录入日期', value: this.recordedText } as FinanceDetailRow);
+    out.push({ label: '流水号', value: this.serialText } as FinanceDetailRow);
+    return out;
+  }
+}
+
+/** 明细行（与 `CourseDetailRow` 同构，键用 label）。 */
+interface FinanceDetailRow {
+  label: string;
+  value: string;
 }
 
 /** 年份筛选胶囊（独立组件，见 JudgeFilterChip 的说明：带状态的不能用 @Builder 传参）。 */
@@ -304,20 +368,36 @@ export struct FinancePage {
 
   /* ------------------------------ 派生数据 ------------------------------ */
 
-  /** 可选年份（升序，用于筛选胶囊）。 */
+  /**
+   * 某条记录所属年份：优先 `year` 字段，缺失时从 `recordedDate` 的前 4 位推。
+   *
+   * 只按 `year` 判会漏掉那些「有录入日期但没填年份」的记录 —— 选了某一年后它们
+   * 会整批消失，用户以为数据丢了。
+   */
+  private yearOf(item: FinanceIncome): string {
+    const year: string = item.year ?? '';
+    if (year.length > 0) {
+      return year;
+    }
+    const recorded: string = item.recordedDate ?? '';
+    return recorded.length >= 4 ? recorded.substring(0, 4) : '';
+  }
+
+  /** 可选年份（倒序，最新在前，用于筛选胶囊）。 */
   private years(): string[] {
     const seen: Map<string, boolean> = new Map<string, boolean>();
     const list: string[] = [];
     for (let i = 0; i < this.entries.length; i++) {
-      const year: string = this.entries[i].year ?? '';
+      const year: string = this.yearOf(this.entries[i]);
       if (year.length === 0 || seen.has(year)) {
         continue;
       }
       seen.set(year, true);
       list.push(year);
     }
+    // 倒序：最新年份在前（用户最常查最近的）
     list.sort((a: string, b: string): number => {
-      return a < b ? -1 : (a > b ? 1 : 0);
+      return a < b ? 1 : (a > b ? -1 : 0);
     });
     return list;
   }
@@ -329,7 +409,7 @@ export struct FinancePage {
     for (let i = 0; i < this.entries.length; i++) {
       const item = this.entries[i];
       if (this.yearFilter.length > 0) {
-        const year: string = item.year ?? '';
+        const year: string = this.yearOf(item);
         if (year !== this.yearFilter) {
           continue;
         }
@@ -511,7 +591,8 @@ export struct FinancePage {
   @Builder
   filterBar() {
     Column({ space: 10 }) {
-      TextInput({ text: this.query, placeholder: '搜索项目或摘要' })
+      // 双向绑定：单向绑定在每次 onChange 后重绘会让输入光标跳到行首
+      TextInput({ text: $$this.query, placeholder: '搜索项目或摘要' })
         .height(40)
         .fontSize(AppFont.body)
         .fontColor(AppColor.textPrimary)
