@@ -292,12 +292,9 @@ export class LocalPortalService {
 
   /* ------------------------------ 请求层 ------------------------------ */
 
-  /**
-   * 打一个 JSON 接口。
-   *
-   * 请求头按上游 `get(api=true)`：`Accept` 取 JSON 类、`X-Requested-With: XMLHttpRequest`、
-   * `Referer: <portal home>`。缺 `X-Requested-With` 时有些网关会把 JSON 请求当浏览器导航返回 HTML。
-   */
+  // 打一个 JSON 接口。
+  // 请求头按上游 get(api=true)：Accept 取 JSON 类、X-Requested-With: XMLHttpRequest、
+  // Referer 为 portal home。缺 X-Requested-With 时有些网关会把 JSON 请求当浏览器导航返回 HTML。
   private static async json(url: string): Promise<Object> {
     await LocalPortalService.ensurePortal();
     const headers: Record<string, string> = {};
@@ -353,10 +350,8 @@ export class LocalPortalService {
       if (response.isRedirect()) {
         const next: string = resolveLocation(response.url, response.location);
         const nextLogical: string = await LocalWebVpn.fromWebVpnUrl(next);
-        /**
-         * 与网费/财务一致的双重判据：**当前页与下一跳都在 sso** 才算失效。
-         * 只看下一跳会把 CAS 的正常签发中转（`sso/login?service=…`）误判成会话没了。
-         */
+        // 与网费/财务一致的双重判据：当前页与下一跳都在 sso 才算失效。
+        // 只看下一跳会把 CAS 的正常签发中转（sso/login?service=）误判成会话没了。
         if (isSso(nextLogical) && isSso(currentLogical)) {
           throw new ApiError(401, 'invalid_token',
             '统一身份认证会话已失效，请重新登录后再试');

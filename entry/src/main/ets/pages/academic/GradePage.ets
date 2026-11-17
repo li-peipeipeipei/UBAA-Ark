@@ -1,4 +1,5 @@
 import { LoadState } from '../../common/AppRouter';
+import { OfflineCache, OfflineKey, offlineNote } from '../../common/OfflineCache';
 import { CardCache, CardGrade } from '../../common/CardCache';
 import { GlobalContext } from '../../common/GlobalContext';
 import { GradeStatistics, calculateGradeStatistics, formatGradePoint, formatNumber } from '../../common/GradeStats';
@@ -12,6 +13,12 @@ import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { ErrorView, LoadingView } from '../../components/CommonViews';
 import { GradeSummaryCard } from '../../components/GradeSummaryCard';import { GradeHeaderModel } from '../../components/GradeHeader';
 import { Grade, GradeData, Term } from '../../model/ApiTypes';
+
+/** 离线缓存里的成绩（对象字面量不能赋给 Record，须有具名 interface）。 */
+interface GradeOffline {
+  grades: Grade[];
+  termName: string;
+}
 
 /**
  * 概览卡要显示的 5 个值。
@@ -66,6 +73,8 @@ export struct GradePage {
   header: GradeHeaderModel = new GradeHeaderModel();
 
   @State private loadState: LoadState = LoadState.LOADING;
+  /** 离线标注（有值=当前显示的是本机记录）。 */
+  @State private offlineNote: string = '';
   @State private errorMessage: string = '';
   /** 当前学期的成绩明细。 */
   @State private grades: Grade[] = [];
@@ -106,13 +115,36 @@ export struct GradePage {
     this.header.onNextTerm = () => {
       this.switchTerm(1);
     };
+    this.restoreOffline();
     this.load();
+  }
+
+  /** 读本机缓存：把上次的「当前学期成绩」先摆出来。 */
+  private restoreOffline(): void {
+    const account: string = TokenStore.getSession().schoolId;
+    const cached = OfflineCache.load(OfflineKey.GRADE, account);
+    if (cached === null) {
+      return;
+    }
+    const data = cached as GradeOffline;
+    const list = data.grades;
+    const termName = data.termName;
+    if (list === undefined || list === null || list.length === 0) {
+      return;
+    }
+    this.grades = list;
+    this.termName = termName === undefined ? '' : termName;
+    this.loadState = LoadState.SUCCESS;
+    this.offlineNote = offlineNote(OfflineCache.savedAt(OfflineKey.GRADE, account));
+    this.refreshSummaries();
   }
 
   /* ------------------------------ 数据 ------------------------------ */
 
   private async load(): Promise<void> {
-    this.loadState = LoadState.LOADING;
+    if (this.loadState !== LoadState.SUCCESS) {
+      this.loadState = LoadState.LOADING;
+    }
     try {
       const terms: Term[] = await ApiService.fetchTerms();
       if (terms.length === 0) {
@@ -133,9 +165,15 @@ export struct GradePage {
       this.applyTerm(terms[index]);
       await this.loadCurrentTerm(this.termSeq);
       this.loadState = LoadState.SUCCESS;
+      this.offlineNote = '';
       // 「全部成绩」要遍历所有学期 —— 放后台，不挡当前学期出内容
       this.loadAllTerms(terms);
     } catch (error) {
+      // 有本地记录就保留，只提示
+      if (this.grades.length > 0) {
+        Logger.warn('成绩刷新失败，保留本地记录：' + (error as Error).message);
+        return;
+      }
       this.errorMessage = error instanceof ApiError ?
         (error as ApiError).friendlyMessage() : '成绩加载失败';
       this.loadState = LoadState.ERROR;
@@ -194,6 +232,10 @@ export struct GradePage {
     }
     this.grades = data.grades;
     this.refreshSummaries();
+    // 写回本机缓存：下次离线打开先显示这一份
+    const box = { grades: data.grades, termName: this.termName } as GradeOffline;
+    OfflineCache.save(OfflineKey.GRADE, box, TokenStore.getSession().schoolId);
+    this.offlineNote = '';
   }
 
   /**
@@ -503,6 +545,12 @@ export struct GradePage {
   build() {
     Scroll() {
       Column({ space: AppSize.gap }) {
+        if (this.offlineNote.length > 0) {
+          Text(this.offlineNote)
+            .fontSize(AppFont.caption)
+            .fontColor(AppColor.textTertiary)
+            .width('100%')
+        }
         if (this.loadState === LoadState.LOADING) {
           LoadingView({ message: '正在获取成绩…' })
         } else if (this.loadState === LoadState.ERROR) {

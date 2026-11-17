@@ -9,7 +9,9 @@ import {
 } from '../../components/CommonViews';
 import { MaterialCardLayer } from '../../components/MaterialCardLayer';
 import { immersiveMaterialActive } from '../../common/SystemMaterial';
-import { FinanceIncome } from '../../model/ApiTypes';
+import { FinanceIncome, FinanceIncomes } from '../../model/ApiTypes';
+import { OfflineCache, OfflineKey, offlineNote } from '../../common/OfflineCache';
+import { TokenStore } from '../../network/TokenStore';
 
 /**
  * 财务收入查询（对齐上游 UBAA 2.0 的「财务查询」）。
@@ -24,6 +26,11 @@ import { FinanceIncome } from '../../model/ApiTypes';
  *
  * 金额一律以「分」存储、按人民币两位小数显示，避免浮点误差。
  */
+
+/** 离线缓存里的财务记录（不能用 Record 承载对象字面量，见 ArkTS 红线）。 */
+interface FinanceOffline {
+  entries: FinanceIncome[];
+}
 
 /** 某一个月的记录分组。 */
 interface MonthGroup {
@@ -228,21 +235,51 @@ export struct FinancePage {
   /** 选中的年份；空串 = 全部。 */
   @State private yearFilter: string = '';
   @State private refreshing: boolean = false;
+  /** 离线标注（有值=当前显示的是本机记录）。 */
+  @State private offlineNote: string = '';
   /** 详情弹窗（每次点击新建一个，关闭后置空）。 */
   @State private dialogCtrl: CustomDialogController | null = null;
 
   aboutToAppear(): void {
+    // 先渲染本地记录（离线优先），再后台刷新
+    this.restoreOffline();
     this.load();
   }
 
+  /** 读本机缓存；有就立刻显示并标注「离线记录」。 */
+  private restoreOffline(): void {
+    const account: string = TokenStore.getSession().schoolId;
+    const cached = OfflineCache.load(OfflineKey.FINANCE, account);
+    if (cached === null) {
+      return;
+    }
+    const data = cached as FinanceOffline;
+    if (data.entries === undefined || data.entries.length === 0) {
+      return;
+    }
+    this.entries = data.entries;
+    this.loadState = LoadState.SUCCESS;
+    this.offlineNote = offlineNote(OfflineCache.savedAt(OfflineKey.FINANCE, account));
+  }
+
   private async load(): Promise<void> {
-    this.loadState = LoadState.LOADING;
+    // 已经有本地内容时不再整页切 loading —— 那会让用户看到「内容→转圈→内容」的跳动
+    if (this.loadState !== LoadState.SUCCESS) {
+      this.loadState = LoadState.LOADING;
+    }
     try {
       const result = await LocalFinanceService.fetchIncomes();
       this.entries = result.entries;
       this.loadState = LoadState.SUCCESS;
+      this.offlineNote = '';
+      OfflineCache.save(OfflineKey.FINANCE, result, TokenStore.getSession().schoolId);
       Logger.info('财务收入加载完成：' + this.entries.length + ' 条');
     } catch (error) {
+      // 有本地记录就保留，只提示；没有才整页报错
+      if (this.entries.length > 0) {
+        Logger.warn('财务刷新失败，保留本地记录：' + (error as Error).message);
+        return;
+      }
       this.errorMessage = error instanceof ApiError ?
         (error as ApiError).friendlyMessage() : '财务数据加载失败，请稍后重试';
       this.loadState = LoadState.ERROR;
@@ -621,6 +658,12 @@ export struct FinancePage {
               }
             })
           } else {
+        if (this.offlineNote.length > 0) {
+          Text(this.offlineNote)
+            .fontSize(AppFont.caption)
+            .fontColor(AppColor.textTertiary)
+            .width('100%')
+        }
             this.filterBar()
 
             if (this.visible().length === 0) {

@@ -1,4 +1,6 @@
 import { LoadState } from '../../common/AppRouter';
+import { OfflineCache, OfflineKey, offlineNote } from '../../common/OfflineCache';
+import { TokenStore } from '../../network/TokenStore';
 import { CardCache, CardClassroom } from '../../common/CardCache';
 import { DateUtil } from '../../common/DateUtil';
 import { GlobalContext } from '../../common/GlobalContext';
@@ -11,6 +13,16 @@ import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { selectMenuMaterial } from '../../common/SystemMaterial';
 import { EmptyView, ErrorView, LoadingView, SectionCard } from '../../components/CommonViews';
 import { ClassroomInfo, ClassroomQueryResponse } from '../../model/ApiTypes';
+
+
+/** 离线缓存里的教室查询（含查询条件，失败时能退回上一次结果）。 */
+interface ClassroomOffline {
+  campusId: number;
+  selectedDate: string;
+  building: string;
+  roomMap: Record<string, ClassroomInfo[]>;
+  buildings: string[];
+}
 
 /** 校区选项：xqid 与 UBAA 上游保持一致。 */
 interface CampusOption {
@@ -77,6 +89,8 @@ export struct ClassroomPage {
    * 现在由用户选好条件、点「查询」才开始加载。
    */
   @State private hasQueried: boolean = false;
+  /** 离线标注（有值=当前显示的是本机记录）。 */
+  @State private offlineNote: string = '';
   @State private errorMessage: string = '';
   @State private dates: string[] = [];
   @State private selectedDate: string = '';
@@ -130,13 +144,67 @@ export struct ClassroomPage {
         this.pendingBuilding = '';
       }
       this.loadState = LoadState.SUCCESS;
+      this.offlineNote = '';
+      // 写回本机缓存（含查询条件）：下次查询失败时能退回上一次结果
+      const box = {
+        campusId: this.campusId,
+        selectedDate: this.selectedDate,
+        building: this.buildingFilter,
+        roomMap: this.roomMap,
+        buildings: this.buildings
+      } as ClassroomOffline;
+      OfflineCache.save(OfflineKey.CLASSROOM, box, TokenStore.getSession().schoolId);
     } catch (error) {
+      // 查询失败：若本机有上次结果就退回去，别让用户对着空页面
+      if (this.restoreOffline()) {
+        Logger.warn('教室查询失败，退回上次结果：' + (error as Error).message);
+        this.pushToCards();
+        return;
+      }
       this.errorMessage = error instanceof ApiError ?
         (error as ApiError).friendlyMessage() : '教室查询失败';
       this.loadState = LoadState.ERROR;
       Logger.error('教室查询失败：' + (error as Error).message);
     }
     this.pushToCards();
+  }
+
+  /**
+   * 退回本机缓存的上次查询结果。
+   *
+   * @returns 是否成功恢复
+   */
+  private restoreOffline(): boolean {
+    const account: string = TokenStore.getSession().schoolId;
+    const cached = OfflineCache.load(OfflineKey.CLASSROOM, account);
+    if (cached === null) {
+      return false;
+    }
+    const data = cached as ClassroomOffline;
+    const roomMap = data.roomMap;
+    if (roomMap === undefined || roomMap === null) {
+      return false;
+    }
+    this.roomMap = roomMap;
+    const buildings = data.buildings;
+    this.buildings = buildings === undefined || buildings === null ? [] : buildings;
+    const campusId = data.campusId;
+    if (typeof campusId === 'number') {
+      this.campusId = campusId;
+      this.pendingCampusId = campusId;
+    }
+    const selectedDate = data.selectedDate;
+    if (typeof selectedDate === 'string' && selectedDate.length > 0) {
+      this.selectedDate = selectedDate;
+      this.pendingDate = selectedDate;
+    }
+    const building = data.building;
+    this.buildingFilter = typeof building === 'string' ? building : '';
+    this.pendingBuilding = this.buildingFilter;
+    this.hasQueried = true;
+    this.loadState = LoadState.SUCCESS;
+    this.offlineNote = offlineNote(OfflineCache.savedAt(OfflineKey.CLASSROOM, account));
+    return true;
   }
 
   /**
@@ -557,6 +625,12 @@ export struct ClassroomPage {
         if (!this.hasQueried) {
           // 未查询态：进页面先给一句引导，不自动拉数据
           EmptyView({ message: '选好校区和日期后，点上方「查询」查看空闲教室' })
+          if (this.offlineNote.length > 0) {
+            Text(this.offlineNote)
+              .fontSize(AppFont.caption)
+              .fontColor(AppColor.textTertiary)
+              .width('100%')
+          }
         } else if (this.loadState === LoadState.LOADING) {
           LoadingView({ message: '正在查询空闲教室…' })
         } else if (this.loadState === LoadState.ERROR) {

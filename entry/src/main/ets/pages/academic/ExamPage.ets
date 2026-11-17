@@ -1,5 +1,6 @@
 import { BackGuard } from '../../common/BackGuard';
 import { LoadState } from '../../common/AppRouter';
+import { OfflineCache, OfflineKey, offlineNote } from '../../common/OfflineCache';
 import { CardCache, CardExam } from '../../common/CardCache';
 import { DateUtil } from '../../common/DateUtil';
 import { GlobalContext } from '../../common/GlobalContext';
@@ -12,6 +13,14 @@ import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { EmptyView, ErrorView, LoadingView, SectionCard } from '../../components/CommonViews';
 import { Exam, ExamArrangementData, Term } from '../../model/ApiTypes';
 
+
+/** 离线缓存里的考试安排（对象字面量不能赋给 Record）。 */
+interface ExamOffline {
+  arranged: Exam[];
+  notArranged: Exam[];
+  termName: string;
+}
+
 /**
  * 考试安排。
  *
@@ -20,6 +29,8 @@ import { Exam, ExamArrangementData, Term } from '../../model/ApiTypes';
 @Component
 export struct ExamPage {
   @State private loadState: LoadState = LoadState.LOADING;
+  /** 离线标注（有值=当前显示的是本机记录）。 */
+  @State private offlineNote: string = '';
   @State private errorMessage: string = '';
   @State private arranged: Exam[] = [];
   @State private notArranged: Exam[] = [];
@@ -32,11 +43,36 @@ export struct ExamPage {
   @State private showTermPicker: boolean = false;
 
   aboutToAppear(): void {
+    // 先渲染本地记录（离线优先），再后台刷新
+    this.restoreOffline();
     this.load();
   }
 
+  /** 读本机缓存：把上次的考试安排先摆出来。 */
+  private restoreOffline(): void {
+    const account: string = TokenStore.getSession().schoolId;
+    const cached = OfflineCache.load(OfflineKey.EXAM, account);
+    if (cached === null) {
+      return;
+    }
+    const data = cached as ExamOffline;
+    const arranged = data.arranged;
+    const notArranged = data.notArranged;
+    if (arranged === undefined || arranged === null) {
+      return;
+    }
+    this.arranged = arranged;
+    this.notArranged = notArranged === undefined || notArranged === null ? [] : notArranged;
+    const termName = data.termName;
+    this.termName = termName === undefined ? '' : termName;
+    this.loadState = LoadState.SUCCESS;
+    this.offlineNote = offlineNote(OfflineCache.savedAt(OfflineKey.EXAM, account));
+  }
+
   private async load(): Promise<void> {
-    this.loadState = LoadState.LOADING;
+    if (this.loadState !== LoadState.SUCCESS) {
+      this.loadState = LoadState.LOADING;
+    }
     try {
       // 学期列表始终拉一次，供右上角切换栏显示全部可选学期
       const terms: Term[] = await ApiService.fetchTerms();
@@ -70,7 +106,21 @@ export struct ExamPage {
         return this.dateOf(a).localeCompare(this.dateOf(b));
       });
       this.loadState = LoadState.SUCCESS;
+      this.offlineNote = '';
+      // 写回本机缓存：下次离线打开先显示这一份
+      const box = {
+        arranged: this.arranged,
+        notArranged: this.notArranged,
+        termName: this.termName
+      } as ExamOffline;
+      OfflineCache.save(OfflineKey.EXAM, box, TokenStore.getSession().schoolId);
     } catch (error) {
+      // 有本地记录就保留，只提示
+      if (this.arranged.length + this.notArranged.length > 0) {
+        Logger.warn('考试刷新失败，保留本地记录：' + (error as Error).message);
+        this.pushToCards();
+        return;
+      }
       this.errorMessage = error instanceof ApiError ?
         (error as ApiError).friendlyMessage() : '考试信息加载失败';
       this.loadState = LoadState.ERROR;
@@ -98,7 +148,21 @@ export struct ExamPage {
         return this.dateOf(a).localeCompare(this.dateOf(b));
       });
       this.loadState = LoadState.SUCCESS;
+      this.offlineNote = '';
+      // 写回本机缓存：下次离线打开先显示这一份
+      const box = {
+        arranged: this.arranged,
+        notArranged: this.notArranged,
+        termName: this.termName
+      } as ExamOffline;
+      OfflineCache.save(OfflineKey.EXAM, box, TokenStore.getSession().schoolId);
     } catch (error) {
+      // 有本地记录就保留，只提示
+      if (this.arranged.length + this.notArranged.length > 0) {
+        Logger.warn('考试刷新失败，保留本地记录：' + (error as Error).message);
+        this.pushToCards();
+        return;
+      }
       this.errorMessage = error instanceof ApiError ?
         (error as ApiError).friendlyMessage() : '考试信息加载失败';
       this.loadState = LoadState.ERROR;
@@ -335,6 +399,12 @@ export struct ExamPage {
           this.termPickerPanel()
         }
 
+        if (this.offlineNote.length > 0) {
+          Text(this.offlineNote)
+            .fontSize(AppFont.caption)
+            .fontColor(AppColor.textTertiary)
+            .width('100%')
+        }
         if (this.loadState === LoadState.LOADING) {
           LoadingView({ message: '正在获取考试安排…' })
         } else if (this.loadState === LoadState.ERROR) {
