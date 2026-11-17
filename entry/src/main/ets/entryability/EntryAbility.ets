@@ -207,10 +207,11 @@ export default class EntryAbility extends UIAbility {
     }
     try {
       const net = connection.createNetConnection();
-      net.register((err: BusinessError) => {
-        if (err.code !== 0) {
-          Logger.warn('网络变化监听注册失败：' + err.message);
-        }
+      // ⚠️ 回调里**不要碰 err**：`AsyncCallback` 成功时 err 是 undefined，
+      // 直接 `err.code` 会 TypeError（异步回调抛错 = 未捕获 = 整个进程被杀，启动即闪退）。
+      // 注册失败也只是少一个换网通知，不值得为它冒险读 err。
+      net.register(() => {
+        Logger.info('网络变化监听已注册');
       });
       // 三个事件连着来是常态（netLost → netCapabilitiesChange → netAvailable），
       // RouteEngine.notifyNetworkChanged 内部 1.5s 去抖，不必在这里再挡。
@@ -224,7 +225,6 @@ export default class EntryAbility extends UIAbility {
         RouteEngine.notifyNetworkChanged();
       });
       this.netConnection = net;
-      Logger.info('网络变化监听已注册');
     } catch (error) {
       Logger.warn('注册网络变化监听异常：' + (error as Error).message);
     }
@@ -235,10 +235,9 @@ export default class EntryAbility extends UIAbility {
       return;
     }
     try {
-      this.netConnection.unregister((err: BusinessError) => {
-        if (err.code !== 0) {
-          Logger.warn('网络变化监听注销失败：' + err.message);
-        }
+      // 同上：不要在回调里读 err（成功时是 undefined）
+      this.netConnection.unregister(() => {
+        Logger.info('网络变化监听已注销');
       });
     } catch (error) {
       Logger.warn('注销网络变化监听异常：' + (error as Error).message);
