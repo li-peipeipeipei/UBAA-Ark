@@ -28,6 +28,7 @@ export class RouteName {
   static readonly FINANCE: string = 'finance';
   /** 网费流量查询（上游 UBAA 2.0「校园服务」对齐）。 */
   static readonly NETWORK: string = 'network';
+  static readonly CLOUD_PRINT: string = 'cloudPrint';
   static readonly YGDK: string = 'ygdk';
   static readonly BYKC: string = 'bykc';
   /** 图书馆座位首页。 */

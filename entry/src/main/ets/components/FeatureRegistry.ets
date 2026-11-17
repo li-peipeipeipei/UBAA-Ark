@@ -158,6 +158,14 @@ const FEATURE_LIST: FeatureItem[] = [
       route: RouteName.FINANCE
     },
     {
+      title: '云打印',
+      icon: $r('app.media.ic_apps'),
+      color: AppColor.brand,
+      colorValue: '#00897B',
+      colorDark: '#26A69A',
+      route: RouteName.CLOUD_PRINT
+    },
+    {
       // 上游 UBAA 2.0「校园服务」里的网费流量：只读，走 zfw.buaa.edu.cn。
       title: '网费流量',
       icon: $r('app.media.ic_apps'),
