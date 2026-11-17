@@ -4,7 +4,9 @@ import { Logger } from '../../common/Logger';
 import { StartupPrefetch } from '../../common/StartupPrefetch';
 import { Toast } from '../../common/Toast';
 import { ApiService } from '../../network/ApiService';
+import { LocalPortalService } from '../../network/LocalPortalService';
 import { TokenStore } from '../../network/TokenStore';
+import { PortalMetric, PortalMetrics } from '../../model/ApiTypes';
 import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { SectionCard } from '../../components/CommonViews';
@@ -28,6 +30,10 @@ export struct MinePage {
   @State private pushVeil: boolean = false;
   /** 隐蓝卡的定时器（重复调用先清旧的，销毁时清掉，见 openRoute）。 */
   private pushVeilTimer: number = -1;
+  /** 校园账户五项指标（单项失败不影响其它项，见 `LocalPortalService.fetchMetrics`）。 */
+  @State private metrics: PortalMetrics | null = null;
+  @State private metricsLoading: boolean = false;
+  @State private metricsError: string = '';
 
   onLogout: () => void = () => {};
 
@@ -35,6 +41,130 @@ export struct MinePage {
     const session = TokenStore.getSession();
     this.userName = session.userName.length > 0 ? session.userName : '未设置姓名';
     this.schoolId = session.schoolId.length > 0 ? session.schoolId : session.username;
+    // 五项指标是异步拉的：不阻塞本页首帧，失败也不影响其它内容
+    this.loadMetrics();
+  }
+
+  private async loadMetrics(): Promise<void> {
+    if (this.metricsLoading) {
+      return;
+    }
+    this.metricsLoading = true;
+    this.metricsError = '';
+    try {
+      const data: PortalMetrics = await LocalPortalService.fetchMetrics();
+      this.metrics = data;
+      Logger.info('门户指标已加载');
+    } catch (error) {
+      const apiError = error as Error;
+      this.metricsError = apiError.message;
+      Logger.warn('门户指标加载失败：' + apiError.message);
+    } finally {
+      this.metricsLoading = false;
+    }
+  }
+
+  /** 当前已取到的指标（按固定展示顺序）。 */
+  private metricList(): PortalMetric[] {
+    const m = this.metrics;
+    if (m === null) {
+      return [];
+    }
+    const out: PortalMetric[] = [];
+    if (m.netFee !== null) {
+      out.push(m.netFee);
+    }
+    if (m.cardBalance !== null) {
+      out.push(m.cardBalance);
+    }
+    if (m.unreadMail !== null) {
+      out.push(m.unreadMail);
+    }
+    if (m.borrowedBooks !== null) {
+      out.push(m.borrowedBooks);
+    }
+    if (m.wangpan !== null) {
+      out.push(m.wangpan);
+    }
+    return out;
+  }
+
+  /** 单项指标格子。`ok=false` 时显示占位符，不打断整卡。 */
+  @Builder
+  metricCell(m: PortalMetric) {
+    Column({ space: 3 }) {
+      Text(m.label)
+        .fontSize(AppFont.caption)
+        .fontColor(AppColor.textSecondary)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+      Text(m.ok ? (m.value + (m.unit.length > 0 ? ' ' + m.unit : '')) : '—')
+        .fontSize(AppFont.subtitle)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(m.ok ? AppColor.textPrimary : AppColor.textTertiary)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+    }
+    .width('100%')
+    .padding({ top: 10, bottom: 10, left: 12, right: 12 })
+    .borderRadius(12)
+    .backgroundColor(AppColor.surfaceSubtle)
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  metricsCard() {
+    SectionCard({
+      title: '校园账户',
+      subtitle: this.metrics === null ?
+        (this.metricsLoading ? '正在读取…' : '余额与待办概览') :
+        '更新于 ' + new Date(this.metrics.fetchedAt).toTimeString().substring(0, 5),
+      showAction: false
+    }) {
+      Column({ space: 10 }) {
+        if (this.metrics === null && this.metricsError.length > 0) {
+          Text(this.metricsError)
+            .fontSize(AppFont.caption)
+            .fontColor(AppColor.textTertiary)
+            .width('100%')
+          Text('点此重试')
+            .fontSize(AppFont.caption)
+            .fontColor(AppColor.brand)
+            .width('100%')
+            .onClick(() => {
+              this.loadMetrics();
+            })
+        } else if (this.metricList().length === 0) {
+          Text(this.metricsLoading ? '正在读取…' : '暂无可展示的指标')
+            .fontSize(AppFont.caption)
+            .fontColor(AppColor.textTertiary)
+            .width('100%')
+        } else {
+          Grid() {
+            ForEach(this.metricList(), (m: PortalMetric) => {
+              GridItem() {
+                this.metricCell(m)
+              }
+            }, (m: PortalMetric) => 'metric-' + m.label)
+          }
+          .columnsTemplate('1fr 1fr')
+          .columnsGap(10)
+          .rowsGap(10)
+          .width('100%')
+
+          if (this.metricsError.length > 0) {
+            // 部分项失败时在底部提示，不打断已成功的项
+            Text('部分指标暂时不可用，重进本页可重试')
+              .fontSize(AppFont.caption)
+              .fontColor(AppColor.textTertiary)
+              .width('100%')
+          }
+        }
+      }
+      .width('100%')
+    }
   }
 
   @Builder
@@ -185,6 +315,7 @@ export struct MinePage {
     Scroll() {
       Column({ space: AppSize.gapLarge }) {
         this.profileCard()
+        this.metricsCard()
 
         SectionCard({ title: '账户', subtitle: '学籍与连接配置' }) {
           Column() {

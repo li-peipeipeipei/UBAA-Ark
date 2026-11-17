@@ -835,3 +835,50 @@ export interface NetworkUsage {
   products: NetworkProductUsage[];
   fetchedAt: number;
 }
+
+/* ==================== 门户账户指标（上游 campus/portal.rs） ==================== */
+
+/**
+ * 门户身份资料（`/personal/frontend/data/info` 的 `d.info`）。
+ *
+ * 与上游 `PortalProfile` 同形：只取两项非空字段。
+ */
+export interface PortalProfile {
+  /** 身份，如「本科生」。 */
+  identity: string;
+  /** 院系/单位。 */
+  department: string;
+  /** 取数时刻（epoch ms）。 */
+  fetchedAt: number;
+}
+
+/**
+ * 单项指标。**单项失败不影响其它项** —— 上游 `CampusMetric` 就是这么设计的
+ * （`Success { value }` / `Failure { error }`），一项挂了整卡仍显示其余项。
+ */
+export interface PortalMetric {
+  /** 展示名，如「网费余额」。 */
+  label: string;
+  /** 数值字符串（金额/计数的原始十进制文本）。 */
+  value: string;
+  /** 单位（金额为「元」，计数为空串）。 */
+  unit: string;
+  /** 是否取到。false 时 `value` 是错误说明。 */
+  ok: boolean;
+}
+
+/** 五项指标。任一项都可能为 null（该 key 在上游列表里不存在）。 */
+export interface PortalMetrics {
+  /** 网费余额（`net.netFee`）。 */
+  netFee: PortalMetric | null;
+  /** 一卡通余额（`card.balance`）。 */
+  cardBalance: PortalMetric | null;
+  /** 未读邮件数（`mail.unread`）。 */
+  unreadMail: PortalMetric | null;
+  /** 借阅图书数（`book.bookNum`）。 */
+  borrowedBooks: PortalMetric | null;
+  /** 云盘剩余空间（`wangPan.wangPan`）。 */
+  wangpan: PortalMetric | null;
+  /** 取数时刻（epoch ms）。 */
+  fetchedAt: number;
+}

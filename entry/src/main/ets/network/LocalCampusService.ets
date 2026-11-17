@@ -89,6 +89,221 @@ function invalid(): ApiError {
   return new ApiError(502, 'campus_error', '网费页面结构异常，请稍后重试');
 }
 
+/* ==================== 套餐合并（上游 `features/campus/packages.rs`） ==================== */
+
+/** 流量单位的档位（1024 进制）。上游 `packages::UNITS`。 */
+const UNIT_RANK: string[] = ['byte', 'K', 'M', 'G', 'T'];
+
+/** 套餐子表的列名。 */
+const LABEL_PKG_NAME: string = '套餐名称';
+const LABEL_PKG_STAT: string = '统计';
+/** 套餐按钮上的可读流量前缀。 */
+const PKG_FLOW_PREFIX: string = '可用流量：';
+
+/**
+ * 栈式切分一行里的 `<td>`，返回 `data-col-seq` → **原始 HTML**。
+ *
+ * ⚠️ 不能用正则：产品行里嵌套着套餐子表
+ * （`<td>…<table>…<td>…</td>…</table>…</td>`），
+ * 非贪婪正则会在内层 `</td>` 处提前收尾，把子表整段截断。
+ * 这里按标签配对做深度计数，能取到每个 `<td>` 的完整内容。
+ */
+function splitCells(row: string): Map<string, string> {
+  const cells: Map<string, string> = new Map<string, string>();
+  const n: number = row.length;
+  let i: number = 0;
+  while (i < n) {
+    const lt: number = row.indexOf('<td', i);
+    if (lt < 0) {
+      break;
+    }
+    // 排除 `<tdx` 之类：后面必须是空白或 `>`
+    const after: string = lt + 3 < n ? row.charAt(lt + 3) : ' ';
+    if (after !== '>' && after !== ' ') {
+      i = lt + 3;
+      continue;
+    }
+    const gt: number = row.indexOf('>', lt);
+    if (gt < 0) {
+      break;
+    }
+    const seq: string = colSeqOf(row.substring(lt + 3, gt));
+    let depth: number = 1;
+    let p: number = gt + 1;
+    let end: number = -1;
+    while (p < n) {
+      const nextLt: number = row.indexOf('<', p);
+      if (nextLt < 0) {
+        break;
+      }
+      if (row.indexOf('<td', nextLt) === nextLt) {
+        const c: string = nextLt + 3 < n ? row.charAt(nextLt + 3) : ' ';
+        if (c === '>' || c === ' ') {
+          depth++;
+          p = nextLt + 3;
+          continue;
+        }
+      }
+      if (row.indexOf('</td', nextLt) === nextLt) {
+        depth--;
+        if (depth === 0) {
+          end = nextLt;
+          break;
+        }
+        p = nextLt + 4;
+        continue;
+      }
+      p = nextLt + 1;
+    }
+    if (end < 0) {
+      break;
+    }
+    if (seq.length > 0 && !cells.has(seq)) {
+      cells.set(seq, row.substring(gt + 1, end));
+    }
+    i = end + 5;
+  }
+  return cells;
+}
+
+/** 取某段 HTML 里第一个 `<button>…</button>` 的纯文本。 */
+function buttonText(html: string): string {
+  const found: RegExpMatchArray | null = html.match(/<button[^>]*>([\s\S]*?)<\/button>/);
+  return found === null ? '' : cellText(found[1]);
+}
+
+/**
+ * 解析产品单元格里的嵌套套餐子表，取出各套餐的「可用流量」。
+ *
+ * 上游 `packages::free_remaining`：
+ * - 子表表头必须有「套餐名称」列，且「统计」列**恰好一个**；
+ * - 每行取「统计」列单元格里 `<button>` 文本，以「可用流量：」开头的**恰好一个**。
+ *
+ * ⚠️ 这里**放宽了失败处理**：任何一步不符就返回空数组（即不合并、显示页面原值）。
+ * 上游是直接报错终止，但那需要真实样本保证格式稳定；我们没有 fixture，
+ * 宁可「少合并」也绝不能「错算」—— 显示原值最多不准确，算错会误导用户。
+ */
+function packageFlows(cellHtml: string): CampusAmount[] {
+  const out: CampusAmount[] = [];
+  const tables: RegExpMatchArray | null = cellHtml.match(/<table[^>]*>[\s\S]*?<\/table>/g);
+  if (tables === null) {
+    return out;
+  }
+  for (let t = 0; t < tables.length; t++) {
+    const table: string = tables[t];
+    const thead: RegExpMatchArray | null = table.match(/<thead[^>]*>([\s\S]*?)<\/thead>/);
+    if (thead === null) {
+      continue;
+    }
+    const ths: RegExpMatchArray | null = thead[1].match(/<th([^>]*)>([\s\S]*?)<\/th>/g);
+    if (ths === null) {
+      continue;
+    }
+    let hasName: boolean = false;
+    let statSeq: string = '';
+    for (let i = 0; i < ths.length; i++) {
+      const open: RegExpMatchArray | null = ths[i].match(/^<th([^>]*)>/);
+      if (open === null) {
+        continue;
+      }
+      const label: string = cellText(ths[i]);
+      if (label === LABEL_PKG_NAME) {
+        hasName = true;
+      }
+      if (label === LABEL_PKG_STAT) {
+        const seq: string = colSeqOf(open[1]);
+        if (statSeq.length > 0 && statSeq !== seq) {
+          return out; // 「统计」列重复，放弃合并
+        }
+        statSeq = seq;
+      }
+    }
+    if (!hasName || statSeq.length === 0) {
+      continue;
+    }
+    const tbody: RegExpMatchArray | null = table.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/);
+    if (tbody === null) {
+      continue;
+    }
+    const trs: RegExpMatchArray | null = tbody[1].match(/<tr[^>]*>[\s\S]*?<\/tr>/g);
+    if (trs === null) {
+      continue;
+    }
+    for (let r = 0; r < trs.length; r++) {
+      const cells: Map<string, string> = splitCells(trs[r]);
+      const statCell: string | undefined = cells.get(statSeq);
+      if (statCell === undefined) {
+        continue;
+      }
+      // 该单元格里找「可用流量：xxx」的按钮（可能有多个，只认恰好一个）
+      const buttons: RegExpMatchArray | null = statCell.match(/<button[^>]*>[\s\S]*?<\/button>/g);
+      if (buttons === null) {
+        continue;
+      }
+      let matched: string = '';
+      let count: number = 0;
+      for (let b = 0; b < buttons.length; b++) {
+        const text: string = buttonText(buttons[b]);
+        if (text.indexOf(PKG_FLOW_PREFIX) === 0) {
+          matched = text.substring(PKG_FLOW_PREFIX.length);
+          count++;
+        }
+      }
+      if (count !== 1) {
+        continue; // 与上游一致：恰好一个才算数
+      }
+      const flow: CampusAmount | null = amountOf(matched.trim());
+      if (flow === null) {
+        continue;
+      }
+      out.push(flow);
+    }
+  }
+  return out;
+}
+
+/**
+ * 把多个流量值按 1024 进制折算到**最大单位**后相加（上游汇总逻辑）。
+ *
+ * 单位或数值不认识时放弃合并，返回第一个值 —— 不算错比算得全更重要。
+ */
+function sumAmounts(list: CampusAmount[]): CampusAmount {
+  if (list.length === 0) {
+    throw invalid();
+  }
+  if (list.length === 1) {
+    return list[0];
+  }
+  let maxRank: number = 0;
+  const ranks: number[] = [];
+  const values: number[] = [];
+  for (let i = 0; i < list.length; i++) {
+    const rank: number = UNIT_RANK.indexOf(list[i].unit);
+    const value: number = parseFloat(list[i].value);
+    if (rank < 0 || isNaN(value)) {
+      return list[0];
+    }
+    ranks.push(rank);
+    values.push(value);
+    if (rank > maxRank) {
+      maxRank = rank;
+    }
+  }
+  let sum: number = 0;
+  for (let i = 0; i < values.length; i++) {
+    sum += values[i] / Math.pow(1024, maxRank - ranks[i]);
+  }
+  // 最多六位小数，去掉末尾无意义的 0 与小数点
+  let text: string = sum.toFixed(6);
+  while (text.length > 1 && text.charAt(text.length - 1) === '0') {
+    text = text.substring(0, text.length - 1);
+  }
+  if (text.charAt(text.length - 1) === '.') {
+    text = text.substring(0, text.length - 1);
+  }
+  return { value: text, unit: UNIT_RANK[maxRank] } as CampusAmount;
+}
+
 export class LocalCampusService {
   private static activated: boolean = false;
 
@@ -165,10 +380,29 @@ export class LocalCampusService {
         if (used === null || free === null || billable === null) {
           throw invalid();
         }
+        /**
+         * 「免费流量剩余」要把产品内嵌的套餐可用流量加进去（上游注释：
+         * 「在线免费剩余包含套餐可用流量」）。计费剩余**保持原值不合并**。
+         *
+         * 合并失败就退回页面原值 —— 解析不出套餐子表只是少合并，绝不错算。
+         */
+        let freeMerged: CampusAmount = free;
+        const rawCells: Map<string, string> = splitCells(rows[r]);
+        const freeCellHtml: string = rawCells.get(columns.get(LABEL_FREE) as string) ?? '';
+        if (freeCellHtml.length > 0 && freeCellHtml.indexOf('<table') >= 0) {
+          const flows: CampusAmount[] = packageFlows(freeCellHtml);
+          if (flows.length > 0) {
+            const all: CampusAmount[] = [free];
+            for (let k = 0; k < flows.length; k++) {
+              all.push(flows[k]);
+            }
+            freeMerged = sumAmounts(all);
+          }
+        }
         products.push({
           productName: name,
           used: used,
-          freeRemaining: free,
+          freeRemaining: freeMerged,
           billableRemaining: billable
         });
       }

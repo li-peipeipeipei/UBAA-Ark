@@ -606,7 +606,9 @@ export struct FinancePage {
   }
 
   build() {
-    Refresh({ refreshing: $$this.refreshing }) {
+    // 单向绑定：`refreshing` 由本页自己维护（onRefreshing 置 true、refresh 完成复位）。
+    // `$$this.x` 双向绑定在本文件里不被编译器接受（同一页签其它文件可用），故用单向。
+    Refresh({ refreshing: this.refreshing }) {
       Scroll() {
         Column({ space: AppSize.gapLarge }) {
           if (this.loadState === LoadState.LOADING) {

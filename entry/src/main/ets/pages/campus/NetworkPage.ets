@@ -11,8 +11,11 @@ import { CampusAmount, NetworkProductUsage } from '../../model/ApiTypes';
  * 网费流量（上游 UBAA 2.0「校园服务 · 网费」）。
  *
  * 只读：列出每个网络产品的已用流量 / 免费剩余 / 计费剩余。
- * **不做套餐合并** —— 上游那张 `print_packages` 表还没接，界面明确写「不含套餐」，
- * 与页面列名语义一致，不给人一个算不准的数。
+ *
+ * **免费剩余已做套餐合并**（上游 `packages.rs`）：产品内嵌套餐子表里
+ * 「可用流量：xxx」的按钮会累加到页面上的「免费流量剩余(不含套餐)」里，
+ * 1024 进制折算到最大单位。**计费剩余保持页面原值**（上游也不合并）。
+ * 解析不出套餐子表时退回页面原值 —— 少合并可以，绝不错算。
  */
 @Component
 export struct NetworkPage {
@@ -136,7 +139,7 @@ export struct NetworkPage {
             .width('100%')
           }
 
-          Text('流量口径为自助服务页面原值，均不含套餐流量；套餐可用流量请以自助服务页面为准。')
+          Text('「免费剩余」已计入套餐可用流量；「计费剩余」为自助服务页面原值。如有出入以自助服务为准。')
             .fontSize(AppFont.caption)
             .fontColor(AppColor.textTertiary)
             .width('100%')

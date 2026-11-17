@@ -14,6 +14,7 @@ import { LocalJudgeService } from './LocalJudgeService';
 import { LocalIhomeService } from './LocalIhomeService';
 import { LocalLibBookService } from './LocalLibBookService';
 import { LocalCampusService } from './LocalCampusService';
+import { LocalPortalService } from './LocalPortalService';
 import { LocalFinanceService } from './LocalFinanceService';
 import { MockData } from './MockData';
 import { StoredSession, TokenStore } from './TokenStore';
@@ -181,6 +182,7 @@ export class ApiService {
     LocalJudgeService.reset();
     LocalEvaluationService.reset();
     LocalCampusService.reset();
+    LocalPortalService.reset();
     LocalFinanceService.reset();
   }
 
