@@ -729,21 +729,21 @@ export struct HomePage {
   }
 
 
-  /** 「最近使用」的功能入口（本地记录的真实使用轨迹，最多 4 个）。 */
+  /**
+   * 「最近使用」的功能入口（本地记录的真实使用轨迹，最多 4 个）。
+   *
+   * 容器与「今日课程」「待办」统一走 `SectionCard`（同一套标题排版 / 卡片底色 /
+   * 圆角 / 内边距），三块在页面上是同一个视觉层级，不再是「一张卡片 + 两段裸文字」。
+   */
   @Builder
   recentSection() {
-    Column({ space: AppSize.gap }) {
-      Text('最近使用')
-        .fontSize(AppFont.subtitle)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(AppColor.textPrimary)
-        .width('100%')
-
+    SectionCard({
+      title: '最近使用',
+      subtitle: '按最近打开排序',
+      showAction: false
+    }) {
       if (this.recentItems().length === 0) {
-        Text('用过「考试安排」「成绩查询」等，这里会留下快捷入口')
-          .fontSize(AppFont.caption)
-          .fontColor(AppColor.textTertiary)
-          .width('100%')
+        EmptyView({ message: '用过的功能会出现在这里' })
       } else {
         Row({ space: 10 }) {
           ForEach(this.recentItems(), (item: FeatureItem) => {
@@ -778,8 +778,6 @@ export struct HomePage {
         .width('100%')
       }
     }
-    .width('100%')
-    .alignItems(HorizontalAlign.Start)
   }
 
   /** 最近使用的功能项（按 route 反查注册表；查不到的跳过，不留空壳入口）。 */
@@ -836,21 +834,22 @@ export struct HomePage {
     }
   }
 
-  /** 待办区块：作业截止（考试倒计时在上方的 examBanner，不重复）。 */
+  /**
+   * 待办区块：作业截止（考试倒计时在上方的 examBanner，不重复）。
+   *
+   * 与「今日课程」「最近使用」共用 `SectionCard` 容器与「标题 + 副标题 + 列表 +
+   * 行间分隔线」的同一套结构，位置在「最近使用」下方。
+   */
   @Builder
   todoSection() {
-    Column({ space: AppSize.gap }) {
-      Text('待办')
-        .fontSize(AppFont.subtitle)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(AppColor.textPrimary)
-        .width('100%')
-
+    SectionCard({
+      title: '待办',
+      subtitle: this.todos.length > 0 ?
+        this.todos.length.toString() + ' 项待完成' : '暂无待办',
+      showAction: false
+    }) {
       if (this.todos.length === 0) {
-        Text('没有临近截止的作业')
-          .fontSize(AppFont.caption)
-          .fontColor(AppColor.textTertiary)
-          .width('100%')
+        EmptyView({ message: '没有临近截止的作业' })
       } else {
         Column({ space: 0 }) {
           ForEach(this.todos, (item: SpocAssignment, index: number) => {
@@ -890,8 +889,6 @@ export struct HomePage {
         .width('100%')
       }
     }
-    .width('100%')
-    .alignItems(HorizontalAlign.Start)
   }
 
   build() {
@@ -934,9 +931,6 @@ export struct HomePage {
               this.examBanner()
             }
 
-            // 待办（作业截止）
-            this.todoSection()
-
             // 今日课程（快捷入口已移除：功能集中在功能页，主页只留「今天要上什么课」）
             this.todaySection()
 
@@ -944,6 +938,9 @@ export struct HomePage {
             if (this.recentItems().length > 0) {
               this.recentSection()
             }
+
+            // 待办（作业截止）—— 放在「最近使用」下方
+            this.todoSection()
           }
 
           // 为悬浮底栏预留高度（barOverlap 模式下内容会被底栏覆盖）

@@ -48,6 +48,11 @@ const ERROR_RES: RegExp[] = [
 
 const TAG_RE = new RegExp('<[^>]+>', 'g');
 
+/** 表单里出现这些标签说明有本应用未实现的交互控件。 */
+const SELECT_RE: RegExp = new RegExp('<select\\b', 'i');
+const TEXTAREA_RE: RegExp = new RegExp('<textarea\\b', 'i');
+const BUTTON_RE: RegExp = new RegExp('<button\\b', 'i');
+
 function stripHtml(text: string): string {
   return text.replace(TAG_RE, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -116,6 +121,68 @@ export class CasParser {
       type: matched[1],
       imageUrl: captchaUrlBase + '?captchaId=' + id
     };
+  }
+
+  /** 登录页声明的验证码类型（`''` 表示不需要）；只认 `image` 是本应用支持的形态。 */
+  static captchaType(html: string): string {
+    const matched = CAPTCHA_RE.exec(html);
+    return matched === null ? '' : matched[1].trim();
+  }
+
+  /**
+   * 页面是否包含**本应用未实现**的交互式验证步骤。
+   *
+   * 对齐原版 2.0.2 `has_unsupported_login_step` 的封闭世界边界：只承认「隐藏域 /
+   * 用户名密码 / 复选框 / 提交类按钮 / 未声明 type 的协议字段 / image 验证码」，
+   * 其余可见控件（下拉、多行文本、OTP、MFA、滑块等）一律拒绝。
+   *
+   * 为什么必须拒绝而不是硬着头皮提交：未知验证步骤会让服务端按「凭据无效」返回，
+   * 用户看到的却是「密码错误」，怎么改密码都登不上，把问题指向了完全错误的方向。
+   *
+   * @returns 空串表示页面形态可用；否则返回被拒绝的原因（用于日志与提示）。
+   */
+  static unsupportedInteraction(html: string): string {
+    if (html.length === 0) {
+      return '';
+    }
+    const lower = html.toLowerCase();
+    const markers: string[] = ['mfa', 'otp', 'verification', 'verify', 'challenge'];
+    for (let i = 0; i < markers.length; i++) {
+      if (lower.indexOf('config.' + markers[i]) >= 0) {
+        return 'config.' + markers[i];
+      }
+    }
+    if (SELECT_RE.test(html) || TEXTAREA_RE.test(html) || BUTTON_RE.test(html)) {
+      return '额外的表单控件（select / textarea / button）';
+    }
+
+    INPUT_RE.lastIndex = 0;
+    let matched = INPUT_RE.exec(html);
+    while (matched !== null) {
+      const attrs = parseAttributes(matched[1]);
+      const name = attrs.has('name') ? attrs.get('name')!.trim().toLowerCase() : '';
+      const inputType = attrs.has('type') ? attrs.get('type')!.trim().toLowerCase() : '';
+      if (name.length === 0) {
+        const benign: boolean = inputType === 'hidden' || inputType === 'submit' ||
+          inputType === 'button' || inputType === 'image';
+        if (!benign) {
+          return '未命名的输入控件';
+        }
+      } else if (name === 'captcha' || name === 'captcharesponse') {
+        // image 验证码的答案字段，属于已支持形态
+      } else if (inputType === 'hidden' || inputType === 'submit' || inputType === 'button' ||
+        inputType === 'image' || inputType === 'checkbox') {
+        // 已证形态
+      } else if (inputType.length === 0 && attrs.has('value') && attrs.get('value')!.length > 0) {
+        // 未声明 type 的协议字段（execution / type / _eventId）按已证形态放行
+      } else if (name === 'username' || name === 'password') {
+        // 凭据字段
+      } else {
+        return '额外的输入控件 ' + name;
+      }
+      matched = INPUT_RE.exec(html);
+    }
+    return '';
   }
 
   /** 页面级提示（`tip-text` 容器）。 */

@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UBAA 主页排版 · 设计器</title>
+<style>
+  :root {
+    /* ===== 被调参数（与 AppTheme.ets 一一对应，JS 覆盖） ===== */
+    --pagePadding: 16px;
+    --cardPadding: 16px;
+    --cardRadius: 16px;
+    --gapSmall: 8px;
+    --gap: 12px;
+    --gapLarge: 16px;
+    --contentBottomInset: 104px;
+    --navTitleBarMiniHeight: 56px;
+    --greetingSize: 26px;
+    --subtitleSize: 16px;
+    --bodySize: 14px;
+    --captionSize: 12px;
+    --dividerWidth: 0.5px;
+    --todoRowPadV: 10px;
+    --greetingLift: -16px;
+    --dateDrop: 3px;
+    --examGradientAngle: 135deg;
+    --tileSize: 44px;
+    --tileRadius: 14px;
+    --tabBarHeight: 56px;
+
+    /* ===== 画板配色（= base/element/color.json）
+       ⚠️ 鸿蒙 color.json 的 8 位十六进制是 ARGB，CSS 是 RRGGBBAA，必须换算成 rgba() */
+    --cPageBg: #F1F3F5;
+    --cPageBgTop: #E8F0FA;
+    --cSurface: #FFFFFF;
+    --cBrand: #1976D2;
+    --cBrandDark: #1565C0;
+    --cText1: rgba(0, 0, 0, 0.90);
+    --cText2: rgba(0, 0, 0, 0.60);
+    --cText3: rgba(0, 0, 0, 0.40);
+    --cDivider: rgba(0, 0, 0, 0.10);
+
+    /* ===== 设计器外壳（Figma 深色） ===== */
+    --uiBg: #1E1E1E;
+    --uiPanel: #252525;
+    --uiRaised: #2C2C2C;
+    --uiHover: #303030;
+    --uiBorder: #383838;
+    --uiBorderSoft: #2F2F2F;
+    --uiText: #E9E9E9;
+    --uiText2: #A5A5A5;
+    --uiText3: #6E6E6E;
+    --uiAccent: #0D99FF;
+    --uiAccentDim: rgba(13, 153, 255, .14);
+    --uiWarn: #FFA657;
+    --uiCanvas: #1A1A1A;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    background: var(--uiBg);
+    color: var(--uiText);
+    font-size: 12px;
+    display: flex;
+    flex-direction: column;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font-family: inherit; }
+
+  /* ===================== 顶栏 ===================== */
+  .topbar {
+    height: 44px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 12px 0 14px;
+    background: var(--uiPanel);
+    border-bottom: 1px solid var(--uiBorder);
+    position: relative;
+    z-index: 30;
+  }
+  .traffic { display: flex; gap: 7px; margin-right: 4px; }
+  .traffic i { width: 11px; height: 11px; border-radius: 50%; display: block; }
+  .traffic i:nth-child(1) { background: #FF5F57; }
+  .traffic i:nth-child(2) { background: #FEBC2E; }
+  .traffic i:nth-child(3) { background: #28C840; }
+
+  .doc { display: flex; align-items: center; gap: 8px; }
+  .doc .mark {
+    width: 22px; height: 22px; border-radius: 6px;
+    background: linear-gradient(140deg, #1E88E5, #1565C0);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; color: #fff;
+  }
+  .doc .name { font-size: 12.5px; font-weight: 500; }
+  .doc .badge {
+    font-size: 10px; color: var(--uiText2);
+    background: var(--uiRaised); border: 1px solid var(--uiBorder);
+    padding: 1px 6px; border-radius: 4px;
+  }
+
+  .seg { display: flex; background: var(--uiRaised); border: 1px solid var(--uiBorder); border-radius: 7px; padding: 2px; gap: 2px; }
+  .seg button { border: 0; background: transparent; color: var(--uiText2); font-size: 11.5px; padding: 4px 11px; border-radius: 5px; cursor: pointer; }
+  .seg button:hover { color: var(--uiText); }
+  .seg button.on { background: #3A3A3A; color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); }
+
+  .grow { flex: 1; }
+
+  .zoom { display: flex; align-items: center; gap: 2px; background: var(--uiRaised); border: 1px solid var(--uiBorder); border-radius: 7px; padding: 2px; }
+  .zoom button { border: 0; background: transparent; color: var(--uiText2); width: 24px; height: 22px; border-radius: 5px; cursor: pointer; font-size: 13px; }
+  .zoom button:hover { background: var(--uiHover); color: #fff; }
+  .zoom .lvl { min-width: 42px; text-align: center; font-size: 11px; color: var(--uiText); font-variant-numeric: tabular-nums; }
+
+  .btn {
+    border: 1px solid var(--uiBorder); background: var(--uiRaised); color: var(--uiText);
+    font-size: 11.5px; padding: 5px 12px; border-radius: 7px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn:hover { background: var(--uiHover); }
+  .btn.primary { background: var(--uiAccent); border-color: var(--uiAccent); color: #fff; font-weight: 500; }
+  .btn.primary:hover { background: #2BA8FF; }
+  .btn.ghost { background: transparent; }
+
+  /* ===================== 工作区 ===================== */
+  .workspace { flex: 1; display: flex; min-height: 0; }
+
+  /* ---------- 左：图层 ---------- */
+  .leftbar { width: 214px; flex-shrink: 0; background: var(--uiPanel); border-right: 1px solid var(--uiBorder); display: flex; flex-direction: column; min-height: 0; }
+  .panel-tabs { display: flex; height: 34px; align-items: stretch; border-bottom: 1px solid var(--uiBorder); flex-shrink: 0; }
+  .panel-tabs .t { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 11.5px; color: var(--uiText3); cursor: pointer; border-bottom: 1.5px solid transparent; }
+  .panel-tabs .t.on { color: var(--uiText); border-bottom-color: var(--uiAccent); }
+
+  .layers { flex: 1; overflow-y: auto; padding: 6px 0 14px; }
+  .layer { display: flex; align-items: center; gap: 7px; height: 27px; padding: 0 8px 0 12px; cursor: pointer; position: relative; color: var(--uiText2); }
+  .layer:hover { background: var(--uiHover); }
+  .layer.on { background: var(--uiAccentDim); color: #fff; }
+  .layer.on::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--uiAccent); }
+  .layer .ic { width: 13px; text-align: center; font-size: 10px; color: var(--uiText3); flex-shrink: 0; }
+  .layer.on .ic { color: var(--uiAccent); }
+  .layer .nm { flex: 1; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .layer .tg { font-size: 11px; color: var(--uiText3); opacity: 0; padding: 0 2px; }
+  .layer:hover .tg, .layer.hidden .tg { opacity: 1; }
+  .layer.hidden .nm { color: var(--uiText3); text-decoration: line-through; }
+  .layer.depth1 { padding-left: 26px; }
+
+  .leftbar .foot { border-top: 1px solid var(--uiBorder); padding: 9px 12px; flex-shrink: 0; font-size: 10.5px; color: var(--uiText3); line-height: 1.7; }
+
+  /* ---------- 中：画布 ---------- */
+  .canvas {
+    flex: 1; min-width: 0; position: relative;
+    background-color: var(--uiCanvas);
+    background-image: radial-gradient(circle, #2A2A2A 1px, transparent 1px);
+    background-size: 16px 16px;
+    overflow: auto;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 54px 40px 70px;
+  }
+  .artboard-wrap { transform-origin: top center; transition: transform .12s ease; }
+  .artboard-label { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; padding-left: 2px; font-size: 11px; color: var(--uiText2); user-select: none; }
+  .artboard-label b { color: var(--uiText); font-weight: 500; }
+  .artboard-label span { color: var(--uiText3); font-variant-numeric: tabular-nums; }
+
+  .artboard {
+    width: 376px; height: 809px; border-radius: 6px;
+    background: var(--cPageBg); position: relative; overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.08), 0 22px 60px rgba(0,0,0,.55);
+  }
+
+  .sel-outline { position: absolute; pointer-events: none; outline: 1.5px solid var(--uiAccent); outline-offset: 1px; border-radius: 2px; z-index: 20; display: none; }
+  .sel-outline .tag { position: absolute; top: -19px; left: 0; background: var(--uiAccent); color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 3px; white-space: nowrap; }
+
+  /* ---- 画板内部（主页真实结构） ---- */
+  .statusbar { height: 39px; display: flex; align-items: center; justify-content: space-between; padding: 0 22px 0 26px; font-size: 12.5px; font-weight: 600; color: var(--cText1); position: relative; z-index: 8; }
+  .statusbar .right { display: flex; align-items: center; gap: 5px; }
+  .bat { width: 21px; height: 10.5px; border: 1.3px solid var(--cText1); border-radius: 3px; position: relative; opacity: .85; }
+  .bat::after { content: ""; position: absolute; right: -3px; top: 2.6px; width: 2px; height: 4px; background: var(--cText1); border-radius: 0 1px 1px 0; }
+  .bat i { position: absolute; inset: 1.4px; width: 62%; background: var(--cText1); border-radius: 1px; }
+
+  .titlebar {
+    position: absolute; left: 0; right: 0; top: 39px;
+    height: var(--navTitleBarMiniHeight); z-index: 4; pointer-events: none;
+    background: linear-gradient(180deg, rgba(241,243,245,.55) 0%, rgba(241,243,245,.32) 70%, rgba(241,243,245,0) 100%);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+
+  .content { position: absolute; left: 0; right: 0; top: 39px; bottom: 0; overflow-y: auto; overflow-x: hidden; background: linear-gradient(180deg, var(--cPageBgTop) 0%, var(--cPageBg) 130px); }
+  .content::-webkit-scrollbar { width: 0; }
+  .content-inner { padding-left: var(--pagePadding); padding-right: var(--pagePadding); padding-top: var(--navTitleBarMiniHeight); display: flex; flex-direction: column; gap: var(--gapLarge); min-height: 100%; }
+
+  .greet { display: flex; flex-direction: column; gap: 2px; transform: translateY(var(--greetingLift)); }
+  .greet h2 { font-size: var(--greetingSize); font-weight: 700; color: var(--cText1); line-height: 1.25; }
+  .greet .date { font-size: var(--bodySize); color: var(--cText3); transform: translateY(var(--dateDrop)); }
+
+  .exam { background: linear-gradient(var(--examGradientAngle), var(--cBrand), var(--cBrandDark)); border-radius: var(--cardRadius); padding: var(--cardPadding); display: flex; flex-direction: column; gap: 4px; color: #fff; }
+  .exam .r1 { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .exam .course { font-size: var(--subtitleSize); font-weight: 500; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .exam .count { font-size: var(--captionSize); color: #E8F1FF; }
+  .exam .r2 { display: flex; gap: 12px; font-size: var(--captionSize); color: #D6E6FF; }
+
+  .card { background: var(--cSurface); border-radius: var(--cardRadius); padding: var(--cardPadding); display: flex; flex-direction: column; gap: var(--gap); }
+  .card .head { display: flex; align-items: flex-start; justify-content: space-between; }
+  .card .head .titles { display: flex; flex-direction: column; gap: 2px; }
+  .card .head h3 { font-size: var(--subtitleSize); font-weight: 500; color: var(--cText1); }
+  .card .head .sub { font-size: var(--captionSize); color: var(--cText3); }
+
+  .section { display: flex; flex-direction: column; gap: var(--gap); }
+  .section > .sec-title { font-size: var(--subtitleSize); font-weight: 500; color: var(--cText1); }
+
+  .list-rows { display: flex; flex-direction: column; }
+  .row { display: flex; align-items: center; gap: var(--gap); padding: var(--todoRowPadV) 0; }
+  .row + .row { border-top: var(--dividerWidth) solid var(--cDivider); }
+  .row .col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .row .t { font-size: var(--bodySize); font-weight: 500; color: var(--cText1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .s { font-size: var(--captionSize); color: var(--cText3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .chev { color: var(--cText3); font-size: 14px; }
+
+  .crow { padding: 0; }
+  .crow .badge { width: 36px; height: 36px; border-radius: 10px; background: var(--cBrand); color: #fff; font-size: var(--captionSize); display: flex; align-items: center; justify-content: center; flex-shrink: 0; text-align: center; line-height: 1.1; }
+  .crow .badge.past { background: var(--cText3); }
+  .crow .meta { display: flex; gap: 8px; }
+  .hr { height: var(--dividerWidth); background: var(--cDivider); flex-shrink: 0; }
+  .list-rows.today { gap: var(--gap); }
+
+  .tiles { display: flex; gap: 10px; }
+  .tile { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .tile .ic { width: var(--tileSize); height: var(--tileSize); border-radius: var(--tileRadius); display: flex; align-items: center; justify-content: center; color: #fff; font-size: calc(var(--tileSize) * 0.42); }
+  .tile .lb { font-size: var(--captionSize); color: var(--cText2); max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
+
+  .tabbar { position: absolute; left: 12px; right: 12px; bottom: 12px; height: var(--tabBarHeight); background: rgba(255,255,255,.86); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border-radius: 22px; display: flex; align-items: center; box-shadow: 0 6px 22px rgba(20,30,50,.13); z-index: 6; }
+  .tabbar .tab { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--cText3); }
+  .tabbar .tab.on { color: var(--cBrand); }
+  .tabbar .tab .g { font-size: 17px; line-height: 1; }
+  .tabbar .tab .l { font-size: 10.5px; }
+
+  .bottom-pad { height: var(--contentBottomInset); flex-shrink: 0; }
+
+  /* ---------- 右：检查器 ---------- */
+  .rightbar { width: 268px; flex-shrink: 0; background: var(--uiPanel); border-left: 1px solid var(--uiBorder); display: flex; flex-direction: column; min-height: 0; }
+  .rightbar .body { flex: 1; overflow-y: auto; }
+
+  .inspector { display: none; flex-direction: column; flex: 1; min-height: 0; }
+  .inspector.on { display: flex; }
+
+  .insp-head { padding: 10px 12px; border-bottom: 1px solid var(--uiBorder); display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .insp-head .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--uiAccent); flex-shrink: 0; }
+  .insp-head .nm { font-size: 11.5px; font-weight: 500; }
+  .insp-head .code { margin-left: auto; font-family: ui-monospace, Consolas, monospace; font-size: 10px; color: var(--uiText3); }
+
+  .grp { border-bottom: 1px solid var(--uiBorderSoft); }
+  .grp > .gh { display: flex; align-items: center; gap: 6px; padding: 8px 12px; cursor: pointer; user-select: none; }
+  .grp > .gh:hover { background: var(--uiHover); }
+  .grp > .gh .caret { font-size: 8px; color: var(--uiText3); transition: transform .12s; }
+  .grp.closed > .gh .caret { transform: rotate(-90deg); }
+  .grp > .gh .gt { font-size: 10.5px; letter-spacing: .6px; color: var(--uiText2); text-transform: uppercase; }
+  .grp > .gc { padding: 2px 12px 10px; display: flex; flex-direction: column; }
+  .grp.closed > .gc { display: none; }
+
+  .prop { padding: 3px 0 4px; }
+  .prop .pl { display: flex; align-items: center; gap: 6px; height: 24px; }
+  .prop .pn { flex: 1; font-size: 11.5px; color: var(--uiText); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .prop .pn .cd { font-family: ui-monospace, Consolas, monospace; font-size: 9.5px; color: var(--uiText3); margin-left: 5px; }
+  .prop .field { display: flex; align-items: center; background: var(--uiRaised); border: 1px solid transparent; border-radius: 5px; height: 22px; padding: 0 5px 0 6px; width: 62px; flex-shrink: 0; }
+  .prop .field:hover { border-color: var(--uiBorder); }
+  .prop .field:focus-within { border-color: var(--uiAccent); }
+  .prop .field input { width: 100%; border: 0; background: transparent; color: var(--uiText); font-family: ui-monospace, Consolas, monospace; font-size: 11px; text-align: right; outline: none; padding: 0; -moz-appearance: textfield; appearance: textfield; }
+  .prop .field input::-webkit-outer-spin-button,
+  .prop .field input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .prop .field .u { font-size: 9.5px; color: var(--uiText3); margin-left: 2px; }
+  .prop .field.changed { border-color: rgba(255,166,87,.5); }
+  .prop .field.changed input { color: var(--uiWarn); }
+
+  .prop input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 14px; background: transparent; cursor: ew-resize; display: block; }
+  .prop input[type=range]::-webkit-slider-runnable-track { height: 2px; background: #3A3A3A; border-radius: 1px; }
+  .prop input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 9px; height: 9px; border-radius: 50%; background: var(--uiText2); margin-top: -3.5px; border: 0; }
+  .prop input[type=range]:hover::-webkit-slider-thumb { background: var(--uiAccent); }
+  .prop.changed input[type=range]::-webkit-slider-thumb { background: var(--uiWarn); }
+
+  /* 代码页 */
+  .codepane { display: none; flex: 1; min-height: 0; flex-direction: column; }
+  .codepane.on { display: flex; }
+  .codepane .bar { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--uiBorder); flex-shrink: 0; }
+  .codepane .bar .lbl { font-size: 10.5px; color: var(--uiText2); }
+  .codepane pre { flex: 1; overflow: auto; padding: 12px 14px; font-family: ui-monospace, Consolas, monospace; font-size: 10.5px; line-height: 1.8; white-space: pre; color: #C9D1D9; }
+  .codepane .cm { color: #6E7681; }
+  .codepane .nm { color: #79C0FF; }
+  .codepane .hot { color: var(--uiWarn); font-weight: 700; }
+
+  /* ===================== 状态栏 ===================== */
+  .statusbar-bar { height: 26px; flex-shrink: 0; background: var(--uiPanel); border-top: 1px solid var(--uiBorder); display: flex; align-items: center; gap: 16px; padding: 0 14px; font-size: 10.5px; color: var(--uiText3); font-variant-numeric: tabular-nums; }
+  .statusbar-bar .hit { color: var(--uiText2); }
+  .statusbar-bar .dotsep { width: 1px; height: 10px; background: var(--uiBorder); }
+  .statusbar-bar .count { margin-left: auto; }
+  .statusbar-bar .count b { color: var(--uiWarn); font-weight: 600; }
+
+  /* 滚动条 */
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #3C3C3C; border-radius: 5px; border: 2px solid var(--uiPanel); }
+  ::-webkit-scrollbar-thumb:hover { background: #4A4A4A; }
+
+  .toast { position: fixed; left: 50%; bottom: 48px; transform: translateX(-50%) translateY(8px); background: var(--uiAccent); color: #fff; font-size: 11.5px; padding: 7px 16px; border-radius: 7px; opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; z-index: 99; }
+  .toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<!-- ============ 顶栏 ============ -->
+<div class="topbar">
+  <div class="traffic"><i></i><i></i><i></i></div>
+  <div class="doc">
+    <div class="mark">U</div>
+    <div class="name">主页排版</div>
+    <div class="badge">376 × 809 vp</div>
+  </div>
+  <div class="grow"></div>
+
+  <div class="seg" id="segBp">
+    <button data-bp="sm" class="on">手机 sm</button>
+    <button data-bp="md">平板 md</button>
+    <button data-bp="lg">侧栏 lg</button>
+  </div>
+
+  <div class="zoom">
+    <button id="zoomOut">−</button>
+    <div class="lvl" id="zoomLvl">100%</div>
+    <button id="zoomIn">+</button>
+  </div>
+
+  <button class="btn ghost" id="btnReset">重置</button>
+  <button class="btn primary" id="btnExport">导出代码</button>
+</div>
+
+<!-- ============ 工作区 ============ -->
+<div class="workspace">
+
+  <!-- -------- 左：图层 -------- -->
+  <aside class="leftbar">
+    <div class="panel-tabs">
+      <div class="t on">图层</div>
+      <div class="t" style="cursor:default;color:#4A4A4A">素材</div>
+    </div>
+    <div class="layers" id="layers">
+      <div class="layer" data-layer="root" data-name="主页">
+        <span class="ic">▤</span><span class="nm">主页</span>
+      </div>
+      <div class="layer depth1" data-layer="greet" data-name="问候语 + 日期">
+        <span class="ic">T</span><span class="nm">问候语 + 日期</span>
+      </div>
+      <div class="layer depth1" data-layer="exam" data-name="考试横幅" data-tg="exam">
+        <span class="ic">▩</span><span class="nm">考试横幅</span><span class="tg" data-eye="exam">◉</span>
+      </div>
+      <div class="layer depth1" data-layer="todo" data-name="待办" data-tg="todo">
+        <span class="ic">☰</span><span class="nm">待办</span><span class="tg" data-eye="todo">◉</span>
+      </div>
+      <div class="layer depth1" data-layer="today" data-name="今日课程" data-tg="today">
+        <span class="ic">▦</span><span class="nm">今日课程</span><span class="tg" data-eye="today">◉</span>
+      </div>
+      <div class="layer depth1" data-layer="recent" data-name="最近使用" data-tg="recent">
+        <span class="ic">◫</span><span class="nm">最近使用</span><span class="tg" data-eye="recent">◉</span>
+      </div>
+      <div class="layer depth1" data-layer="tabbar" data-name="底部页签栏" data-tg="tabbar">
+        <span class="ic">▭</span><span class="nm">底部页签栏</span><span class="tg" data-eye="tabbar">◉</span>
+      </div>
+      <div class="layer depth1" data-layer="pad" data-name="底部留白">
+        <span class="ic">⇕</span><span class="nm">底部留白</span>
+      </div>
+    </div>
+    <div class="foot">
+      点图层 → 画布定位<br>
+      ◉ 点圆点显隐区块
+    </div>
+  </aside>
+
+  <!-- -------- 中：画布 -------- -->
+  <section class="canvas" id="canvas">
+    <div class="artboard-wrap" id="boardWrap">
+      <div class="artboard-label">
+        <b>主页</b><span id="abSize">376 × 809</span>
+      </div>
+      <div class="artboard" id="artboard">
+
+        <div class="statusbar">
+          <div id="pvClock">16:27</div>
+          <div class="right">
+            <span style="font-size:10px">◔</span>
+            <span style="font-size:10px">WiFi</span>
+            <div class="bat"><i></i></div>
+          </div>
+        </div>
+
+        <div class="titlebar"></div>
+
+        <div class="content" id="content">
+          <div class="content-inner">
+
+            <div class="greet" data-el="greet">
+              <h2>下午好，沛轩</h2>
+              <div class="date">2026-11-17 · 星期二</div>
+            </div>
+
+            <div class="exam" data-el="exam">
+              <div class="r1">
+                <div class="course">工程力学（A）</div>
+                <div class="count">还有 6 天</div>
+              </div>
+              <div class="r2">
+                <div>2026-11-23 08:00</div>
+                <div>主M101</div>
+              </div>
+            </div>
+
+            <div class="section" data-el="todo">
+              <div class="sec-title">待办</div>
+              <div class="list-rows">
+                <div class="row">
+                  <div class="col">
+                    <div class="t">第三次实验报告</div>
+                    <div class="s">材料力学实验 · 截止 2026-11-19 23:59</div>
+                  </div>
+                  <div class="chev">›</div>
+                </div>
+                <div class="row">
+                  <div class="col">
+                    <div class="t">第 7 章习题</div>
+                    <div class="s">理论力学 · 截止 2026-11-21 18:00</div>
+                  </div>
+                  <div class="chev">›</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card" data-el="today">
+              <div class="head">
+                <div class="titles">
+                  <h3>今日课程</h3>
+                  <div class="sub">3 节课</div>
+                </div>
+              </div>
+              <div class="list-rows today">
+                <div class="row crow">
+                  <div class="badge">理力</div>
+                  <div class="col">
+                    <div class="t">理论力学</div>
+                    <div class="meta"><span class="s">08:00-09:40</span><span class="s">主M201</span></div>
+                  </div>
+                </div>
+                <div class="hr"></div>
+                <div class="row crow">
+                  <div class="badge">材力</div>
+                  <div class="col">
+                    <div class="t">材料力学</div>
+                    <div class="meta"><span class="s">10:00-11:40</span><span class="s">主M305</span></div>
+                  </div>
+                </div>
+                <div class="hr"></div>
+                <div class="row crow">
+                  <div class="badge past">实验</div>
+                  <div class="col">
+                    <div class="t">工程力学实验</div>
+                    <div class="meta"><span class="s">14:00-17:00</span><span class="s">实验楼A203</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="section" data-el="recent">
+              <div class="sec-title">最近使用</div>
+              <div class="tiles">
+                <div class="tile">
+                  <div class="ic" style="background:#1976D2">📅</div>
+                  <div class="lb">考试安排</div>
+                </div>
+                <div class="tile">
+                  <div class="ic" style="background:#2E7D32">📊</div>
+                  <div class="lb">成绩查询</div>
+                </div>
+                <div class="tile">
+                  <div class="ic" style="background:#00897B">🖨</div>
+                  <div class="lb">云打印</div>
+                </div>
+                <div class="tile">
+                  <div class="ic" style="background:#F57C00">💰</div>
+                  <div class="lb">财务收入</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="bottom-pad" data-el="pad"></div>
+          </div>
+        </div>
+
+        <div class="tabbar" data-el="tabbar">
+          <div class="tab on"><div class="g">▤</div><div class="l">课表</div></div>
+          <div class="tab"><div class="g">▦</div><div class="l">功能</div></div>
+          <div class="tab"><div class="g">◉</div><div class="l">我的</div></div>
+        </div>
+
+        <div class="sel-outline" id="selOutline"><div class="tag" id="selTag"></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- -------- 右：检查器 / 代码 -------- -->
+  <aside class="rightbar">
+    <div class="panel-tabs">
+      <div class="t on" id="tabInsp">属性</div>
+      <div class="t" id="tabCode">代码</div>
+    </div>
+
+    <div class="inspector on" id="paneInsp">
+      <div class="insp-head">
+        <span class="dot"></span>
+        <span class="nm" id="selName">主页</span>
+        <span class="code" id="selCode">HomePage.build()</span>
+      </div>
+      <div class="body" id="inspBody"></div>
+    </div>
+
+    <div class="codepane" id="paneCode">
+      <div class="bar">
+        <span class="lbl">改动 → AppTheme.ets</span>
+        <div class="grow"></div>
+        <button class="btn" id="btnCopy">复制</button>
+      </div>
+      <pre id="codeOut"></pre>
+    </div>
+  </aside>
+</div>
+
+<!-- ============ 状态栏 ============ -->
+<div class="statusbar-bar">
+  <span>画板 <span class="hit" id="stSize">376 × 809 vp</span></span>
+  <div class="dotsep"></div>
+  <span>缩放 <span class="hit" id="stZoom">100%</span></span>
+  <div class="dotsep"></div>
+  <span>断点 <span class="hit" id="stBp">sm · 手机</span></span>
+  <div class="dotsep"></div>
+  <span>pagePadding <span class="hit" id="stPad">16</span> · 底部留白 <span class="hit" id="stInset">104</span></span>
+  <span class="count" id="stCount">无改动</span>
+</div>
+
+<div class="toast" id="toast">已复制到剪贴板</div>
+
+<script>
+"use strict";
+
+/* ================= 参数表 =================
+   [key, 中文名, 代码名, 单位, min, max, step, 分组] */
+const PARAMS = [
+  ["pagePadding",        "页面左右内边距",   "AppSize.pagePadding", "px", 8, 32, 1, "layout"],
+  ["gapLarge",           "区块间距",         "AppSize.gapLarge",    "px", 4, 36, 1, "layout"],
+  ["gap",                "区块内间距",       "AppSize.gap",         "px", 2, 28, 1, "layout"],
+  ["gapSmall",           "紧凑间距",         "AppSize.gapSmall",    "px", 2, 20, 1, "layout"],
+  ["contentBottomInset", "底部留白",         "AppSize.contentBottomInset", "px", 0, 140, 2, "layout"],
+
+  ["cardPadding",        "卡片内边距",       "AppSize.cardPadding", "px", 8, 32, 1, "size"],
+  ["cardRadius",         "卡片圆角",         "AppSize.cardRadius",  "px", 0, 36, 1, "size"],
+  ["navTitleBarMiniHeight", "标题栏高度",    "AppSize.navTitleBarMiniHeight", "px", 40, 88, 2, "size"],
+  ["tabBarHeight",       "底栏高度",         "AppSize.tabBarHeight", "px", 44, 76, 2, "size"],
+  ["tileSize",           "快捷图标边长",     "recentSection 44×44", "px", 32, 64, 1, "size"],
+  ["tileRadius",         "快捷图标圆角",     "recentSection 14",    "px", 0, 24, 1, "size"],
+
+  ["greetingSize",       "问候语",           "HomePage 26",         "px", 18, 36, 1, "type"],
+  ["subtitleSize",       "小标题",           "AppFont.subtitle",    "px", 11, 22, 1, "type"],
+  ["bodySize",           "正文",             "AppFont.body",        "px", 10, 20, 1, "type"],
+  ["captionSize",        "说明文字",         "AppFont.caption",     "px", 9, 16, 1, "type"],
+
+  ["dividerWidth",       "分隔线",           "Divider strokeWidth", "px", 0.5, 3, 0.5, "detail"],
+  ["todoRowPadV",        "列表行上下内边距", "row padding 10",      "px", 2, 24, 1, "detail"],
+  ["greetingLift",       "问候语上移",       "translate y: -16",    "px", -40, 16, 1, "detail"],
+  ["dateDrop",           "日期下移",         "translate y: 3",      "px", 0, 14, 1, "detail"],
+  ["examGradientAngle",  "横幅渐变角度",     "linearGradient 135",  "°", 0, 360, 5, "detail"]
+];
+
+const DEFAULTS = {
+  pagePadding: 16, gapLarge: 16, gap: 12, gapSmall: 8, contentBottomInset: 104,
+  cardPadding: 16, cardRadius: 16, navTitleBarMiniHeight: 56, tabBarHeight: 56,
+  tileSize: 44, tileRadius: 14,
+  greetingSize: 26, subtitleSize: 16, bodySize: 14, captionSize: 12,
+  dividerWidth: 0.5, todoRowPadV: 10, greetingLift: -16, dateDrop: 3, examGradientAngle: 135
+};
+
+const GROUPS = {
+  layout: ["布局 Layout", true],
+  size:   ["尺寸 Size", true],
+  type:   ["文字 Typography", true],
+  detail: ["细节 Details", false]
+};
+
+const BREAKPOINT = {
+  sm: { pagePadding: 16, contentBottomInset: 104, label: "sm · 手机" },
+  md: { pagePadding: 20, contentBottomInset: 104, label: "md · 平板竖屏" },
+  lg: { pagePadding: 24, contentBottomInset: 24,  label: "lg · 侧栏形态" }
+};
+
+/* 代码名里的常量标识（导出时用） */
+const CONST_NAME = {
+  pagePadding: "AppSize.pagePadding",
+  gapLarge: "AppSize.gapLarge",
+  gap: "AppSize.gap",
+  gapSmall: "AppSize.gapSmall",
+  contentBottomInset: "AppSize.contentBottomInset",
+  cardPadding: "AppSize.cardPadding",
+  cardRadius: "AppSize.cardRadius",
+  navTitleBarMiniHeight: "AppSize.navTitleBarMiniHeight",
+  tabBarHeight: "AppSize.tabBarHeight",
+  subtitleSize: "AppFont.subtitle",
+  bodySize: "AppFont.body",
+  captionSize: "AppFont.caption"
+};
+
+const state = Object.assign({}, DEFAULTS);
+const toggles = { exam: true, todo: true, today: true, recent: true, tabbar: true };
+let zoom = 0.92;
+let selected = "root";
+const root = document.documentElement;
+
+/* ================= 生成检查器 ================= */
+const inspBody = document.getElementById("inspBody");
+
+Object.keys(GROUPS).forEach(gk => {
+  const [gname, open] = GROUPS[gk];
+  const grp = document.createElement("div");
+  grp.className = "grp" + (open ? "" : " closed");
+  grp.dataset.group = gk;
+
+  const gh = document.createElement("div");
+  gh.className = "gh";
+  gh.innerHTML = '<span class="caret">▼</span><span class="gt">' + gname + '</span>';
+  gh.addEventListener("click", () => grp.classList.toggle("closed"));
+  grp.appendChild(gh);
+
+  const gc = document.createElement("div");
+  gc.className = "gc";
+
+  PARAMS.filter(p => p[7] === gk).forEach(p => {
+    const key = p[0], label = p[1], code = p[2], unit = p[3];
+    const min = p[4], max = p[5], step = p[6];
+
+    const wrap = document.createElement("div");
+    wrap.className = "prop";
+    wrap.dataset.key = key;
+
+    const pl = document.createElement("div");
+    pl.className = "pl";
+    pl.innerHTML = '<span class="pn" title="' + code + '">' + label +
+      '<span class="cd">' + code + '</span></span>' +
+      '<div class="field"><input type="number" id="n-' + key + '" min="' + min +
+      '" max="' + max + '" step="' + step + '" value="' + state[key] +
+      '"><span class="u">' + unit + '</span></div>';
+    wrap.appendChild(pl);
+
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = min; slider.max = max; slider.step = step;
+    slider.value = state[key];
+    slider.id = "s-" + key;
+    wrap.appendChild(slider);
+
+    const num = pl.querySelector("input");
+    const commit = v => {
+      let val = parseFloat(v);
+      if (isNaN(val)) val = DEFAULTS[key];
+      val = Math.min(max, Math.max(min, val));
+      state[key] = step < 1 ? Math.round(val * 10) / 10 : Math.round(val);
+      syncOne(key);
+      apply();
+    };
+    slider.addEventListener("input", () => commit(slider.value));
+    num.addEventListener("change", () => commit(num.value));
+    num.addEventListener("blur", () => { num.value = state[key]; });
+
+    gc.appendChild(wrap);
+  });
+
+  grp.appendChild(gc);
+  inspBody.appendChild(grp);
+});
+
+function syncOne(key) {
+  const s = document.getElementById("s-" + key);
+  const n = document.getElementById("n-" + key);
+  if (s) s.value = state[key];
+  if (n && document.activeElement !== n) n.value = state[key];
+}
+function syncAll() { PARAMS.forEach(p => syncOne(p[0])); }
+
+/* ================= 应用 ================= */
+function apply() {
+  const set = (k, v) => root.style.setProperty(k, v);
+  set("--pagePadding", state.pagePadding + "px");
+  set("--gapLarge", state.gapLarge + "px");
+  set("--gap", state.gap + "px");
+  set("--gapSmall", state.gapSmall + "px");
+  set("--contentBottomInset", state.contentBottomInset + "px");
+  set("--cardPadding", state.cardPadding + "px");
+  set("--cardRadius", state.cardRadius + "px");
+  set("--navTitleBarMiniHeight", state.navTitleBarMiniHeight + "px");
+  set("--tabBarHeight", state.tabBarHeight + "px");
+  set("--tileSize", state.tileSize + "px");
+  set("--tileRadius", state.tileRadius + "px");
+  set("--greetingSize", state.greetingSize + "px");
+  set("--subtitleSize", state.subtitleSize + "px");
+  set("--bodySize", state.bodySize + "px");
+  set("--captionSize", state.captionSize + "px");
+  set("--dividerWidth", state.dividerWidth + "px");
+  set("--todoRowPadV", state.todoRowPadV + "px");
+  set("--greetingLift", state.greetingLift + "px");
+  set("--dateDrop", state.dateDrop + "px");
+  set("--examGradientAngle", state.examGradientAngle + "deg");
+
+  let changed = 0;
+  PARAMS.forEach(p => {
+    const key = p[0];
+    const isCh = state[key] !== DEFAULTS[key];
+    if (isCh) changed++;
+    const wrap = document.querySelector('.prop[data-key="' + key + '"]');
+    if (wrap) {
+      wrap.classList.toggle("changed", isCh);
+      wrap.querySelector(".field").classList.toggle("changed", isCh);
+    }
+  });
+
+  document.querySelectorAll("[data-el]").forEach(el => {
+    const k = el.dataset.el;
+    if (k in toggles) el.style.display = toggles[k] ? "" : "none";
+  });
+  document.querySelectorAll("[data-eye]").forEach(e => {
+    const k = e.dataset.eye;
+    e.textContent = toggles[k] ? "◉" : "◌";
+    e.style.color = toggles[k] ? "" : "var(--uiAccent)";
+    const layer = document.querySelector('.layer[data-tg="' + k + '"]');
+    if (layer) layer.classList.toggle("hidden", !toggles[k]);
+  });
+
+  document.getElementById("stPad").textContent = state.pagePadding;
+  document.getElementById("stInset").textContent = state.contentBottomInset;
+  document.getElementById("stCount").innerHTML = changed === 0
+    ? "无改动" : "改动 <b>" + changed + "</b> 项";
+
+  renderCode();
+  showSelection(selected);
+}
+
+/* ================= 图层 ================= */
+const selOutline = document.getElementById("selOutline");
+const selTag = document.getElementById("selTag");
+const selName = document.getElementById("selName");
+const selCode = document.getElementById("selCode");
+
+const LAYER_CODE = {
+  root: "HomePage.build()",
+  greet: "Column translate y -16",
+  exam: "examBanner()",
+  todo: "todoSection()",
+  today: "SectionCard",
+  recent: "recentSection()",
+  tabbar: "HdsTabs",
+  pad: "Blank contentBottomInset"
+};
+
+document.querySelectorAll(".layer").forEach(layer => {
+  layer.addEventListener("click", ev => {
+    const eye = ev.target.closest("[data-eye]");
+    if (eye) {
+      const k = eye.dataset.eye;
+      toggles[k] = !toggles[k];
+      apply();
+      return;
+    }
+    selectLayer(layer.dataset.layer, layer.dataset.name);
+  });
+});
+
+function selectLayer(key, name) {
+  document.querySelectorAll(".layer").forEach(l => l.classList.toggle("on", l.dataset.layer === key));
+  selected = key;
+  selName.textContent = name || key;
+  selCode.textContent = LAYER_CODE[key] || "";
+  showSelection(key);
+}
+
+function showSelection(key) {
+  const artboard = document.getElementById("artboard");
+  const el = key === "root" ? artboard : document.querySelector('[data-el="' + key + '"]');
+  if (!el || el.offsetParent === null) { selOutline.style.display = "none"; return; }
+  const base = artboard.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  const s = zoom || 1;
+  selOutline.style.display = "block";
+  selOutline.style.left = ((r.left - base.left) / s) + "px";
+  selOutline.style.top = ((r.top - base.top) / s) + "px";
+  selOutline.style.width = (r.width / s) + "px";
+  selOutline.style.height = (r.height / s) + "px";
+  selTag.textContent = selName.textContent;
+}
+
+/* ================= 断点 / 缩放 ================= */
+document.querySelectorAll("#segBp button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#segBp button").forEach(b => b.classList.remove("on"));
+    btn.classList.add("on");
+    const bp = BREAKPOINT[btn.dataset.bp];
+    state.pagePadding = bp.pagePadding;
+    state.contentBottomInset = bp.contentBottomInset;
+    syncAll();
+    document.getElementById("stBp").textContent = bp.label;
+    apply();
+  });
+});
+
+function setZoom(z) {
+  zoom = Math.min(1.6, Math.max(0.4, Math.round(z * 10) / 10));
+  document.getElementById("boardWrap").style.transform = "scale(" + zoom + ")";
+  document.getElementById("zoomLvl").textContent = Math.round(zoom * 100) + "%";
+  document.getElementById("stZoom").textContent = Math.round(zoom * 100) + "%";
+  showSelection(selected);
+}
+document.getElementById("zoomIn").addEventListener("click", () => setZoom(zoom + 0.1));
+document.getElementById("zoomOut").addEventListener("click", () => setZoom(zoom - 0.1));
+
+document.getElementById("btnReset").addEventListener("click", () => {
+  Object.assign(state, DEFAULTS);
+  Object.keys(toggles).forEach(k => toggles[k] = true);
+  document.querySelectorAll("#segBp button").forEach(b => b.classList.toggle("on", b.dataset.bp === "sm"));
+  document.getElementById("stBp").textContent = BREAKPOINT.sm.label;
+  syncAll();
+  apply();
+  toast("已恢复默认值");
+});
+
+/* ================= 页签 ================= */
+const paneInsp = document.getElementById("paneInsp");
+const paneCode = document.getElementById("paneCode");
+const tabInsp = document.getElementById("tabInsp");
+const tabCode = document.getElementById("tabCode");
+
+tabInsp.addEventListener("click", () => {
+  tabInsp.classList.add("on"); tabCode.classList.remove("on");
+  paneInsp.classList.add("on"); paneCode.classList.remove("on");
+});
+tabCode.addEventListener("click", () => {
+  tabCode.classList.add("on"); tabInsp.classList.remove("on");
+  paneCode.classList.add("on"); paneInsp.classList.remove("on");
+});
+document.getElementById("btnExport").addEventListener("click", () => tabCode.click());
+
+/* ================= 代码 ================= */
+function renderCode() {
+  const changed = PARAMS.filter(p => state[p[0]] !== DEFAULTS[p[0]]);
+  const L = [];
+  L.push('<span class="cm">// 主页排版 · ' + changed.length + ' 项改动</span>');
+  L.push('<span class="cm">// ' + new Date().toLocaleString("zh-CN") + '</span>');
+  L.push("");
+
+  if (!changed.length) {
+    L.push('<span class="cm">// 全部为默认值，AppTheme.ets 无需修改</span>');
+    document.getElementById("codeOut").innerHTML = L.join("\n");
+    return;
+  }
+
+  const emit = (gk, title) => {
+    const items = changed.filter(p => p[7] === gk);
+    if (!items.length) return;
+    L.push('<span class="cm">// ── ' + title + ' ──</span>');
+    items.forEach(p => {
+      const key = p[0], label = p[1], unit = p[3];
+      L.push('<span class="cm">// ' + label + '  ' + DEFAULTS[key] + ' → ' + state[key] + unit + '</span>');
+      if (key === "greetingSize") {
+        L.push('  .fontSize(<span class="hot">' + state[key] + '</span>)   <span class="cm">// HomePage 问候语</span>');
+      } else if (key === "greetingLift" || key === "dateDrop") {
+        L.push('  .translate({ y: <span class="hot">' + state[key] + '</span> })');
+      } else if (key === "dividerWidth") {
+        L.push('  Divider().strokeWidth(<span class="hot">' + state[key] + '</span>)');
+      } else if (key === "examGradientAngle") {
+        L.push('  .linearGradient({ angle: <span class="hot">' + state[key] + '</span>, colors: [...] })');
+      } else if (key === "tileSize" || key === "tileRadius") {
+        L.push('  <span class="cm">// recentSection ' + (key === "tileSize" ? "44×44" : "borderRadius 14") + '</span>');
+        L.push('  <span class="hot">' + state[key] + '</span>');
+      } else if (CONST_NAME[key]) {
+        L.push('  <span class="nm">' + CONST_NAME[key] + '</span> = <span class="hot">' + state[key] + '</span>;');
+      } else {
+        L.push('  <span class="nm">' + key + '</span> = <span class="hot">' + state[key] + '</span>;');
+      }
+      L.push("");
+    });
+  };
+  emit("layout", "布局 Layout");
+  emit("size", "尺寸 Size");
+  emit("type", "文字 Typography");
+  emit("detail", "细节 Details");
+
+  document.getElementById("codeOut").innerHTML = L.join("\n");
+}
+
+/* ================= 复制 / Toast ================= */
+document.getElementById("btnCopy").addEventListener("click", () => {
+  const tmp = document.createElement("div");
+  tmp.innerHTML = document.getElementById("codeOut").innerHTML;
+  const text = tmp.textContent || "";
+  navigator.clipboard.writeText(text)
+    .then(() => toast("已复制到剪贴板"))
+    .catch(() => toast("复制失败，请手动选择"));
+});
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("on");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.remove("on"), 1500);
+}
+
+/* ================= 启动 ================= */
+apply();
+selectLayer("root", "主页");
+setZoom(0.92);
+
+function tick() {
+  const d = new Date();
+  document.getElementById("pvClock").textContent =
+    String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+tick(); setInterval(tick, 20000);
+
+document.getElementById("content").addEventListener("scroll", () => showSelection(selected));
+window.addEventListener("resize", () => showSelection(selected));
+</script>
+</body>
+</html>
