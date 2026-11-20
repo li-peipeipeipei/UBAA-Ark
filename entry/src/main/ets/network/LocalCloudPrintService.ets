@@ -1,8 +1,9 @@
 import { Logger } from '../common/Logger';
 import { ApiError } from './ApiError';
+import { CasParser } from './CasParser';
 import { LocalWebVpn } from './LocalWebVpn';
-import { resolveLocation, UpstreamClient, UpstreamResponse } from './UpstreamClient';
-import { TokenStore } from './TokenStore';
+import { UpstreamClient, UpstreamResponse } from './UpstreamClient';
+import { StoredCookie, TokenStore } from './TokenStore';
 
 /**
  * 图书馆云打印（上游 `features/cloud_print/`）—— **只读**部分。
@@ -37,9 +38,6 @@ import { TokenStore } from './TokenStore';
 const HOST: string = 'print.lib.buaa.edu.cn';
 const PAGE: string = 'https://print.lib.buaa.edu.cn/client/new/cprintPc/cprint.html';
 const API_BASE: string = 'https://print.lib.buaa.edu.cn/api/client/';
-
-/** 认证跳转最多跟几跳（上游写 8）。 */
-const MAX_HOPS: number = 8;
 
 /* ------------------------------ 数据结构 ------------------------------ */
 
@@ -347,6 +345,10 @@ export class LocalCloudPrintService {
    * 走不通就报错，不会误判成功。
    */
   private static async doLogin(): Promise<void> {
+    // 0. 清掉本站存量 cookie：旧版把「未声明 Path」的 cookie 钉在目录级，同名
+    //    `SESSIONID`/`OSESSIONID` 分裂成多条且值不同，会让 SSO 换取后的会话对不上。
+    //    只清 print 域，不动 CAS 登录态。
+    LocalCloudPrintService.dropStaleCookies();
     // 1. 先打开页面，建立站点会话
     const page: UpstreamResponse = await UpstreamClient.get(PAGE, true);
     if (!page.isOk()) {
@@ -368,38 +370,37 @@ export class LocalCloudPrintService {
     if (start.length === 0) {
       throw authRequired();
     }
-    // 4. 逐跳跟随，终点必须落回 PAGE
-    let current: string = start;
-    for (let hop = 0; hop < MAX_HOPS; hop++) {
-      const response: UpstreamResponse = await UpstreamClient.get(current, true);
-      if (response.isRedirect()) {
-        current = resolveLocation(response.url, response.location);
-        continue;
+    // 4. 逐跳跟随到终点（必须自己跟，不能用自动重定向）
+    //
+    // 🔴 踩过的坑：这里原先用 `get(start, true)` 让 RCP 自动跟随。RCP 跟随之后
+    // `response.url` 仍然是**请求时那个地址**，于是终点被读成链路中间的
+    // `authcenter/toLoginPage?...`，误报「终点异常」—— 其实票据链早就走完了。
+    // `UpstreamClient.follow` 每跳单独发、单独收 Cookie，`url` 就是当跳的真实地址。
+    const finalResp: UpstreamResponse = await UpstreamClient.follow(start);
+    const logical: string = await LocalWebVpn.fromWebVpnUrl(finalResp.url);
+
+    // 终点落在打印页 = 走通
+    if (logical.indexOf(PAGE) === 0) {
+      if (await LocalCloudPrintService.checkLogin()) {
+        LocalCloudPrintService.activated = true;
+        Logger.info('云打印会话就绪（终点 ' + logical + '）');
+        return;
       }
-      // 200：看是不是落在 PAGE
-      const logical: string = await LocalWebVpn.fromWebVpnUrl(response.url);
-      if (logical.indexOf(PAGE) === 0) {
-        if (await LocalCloudPrintService.checkLogin()) {
-          LocalCloudPrintService.activated = true;
-          Logger.info('云打印会话就绪（' + hop + ' 跳）');
-          return;
-        }
-        throw authRequired();
-      }
-      // 落在 sso 登录页 = 会话没了
-      if (logical.indexOf('sso.buaa.edu.cn') >= 0) {
-        throw authRequired();
-      }
-      throw new ApiError(401, 'cloudprint_auth',
-        '云打印登录未完成（终点异常：' + logical + '），请重新登录后再试');
+      throw authRequired();
     }
-    throw new ApiError(401, 'cloudprint_auth', '云打印登录跳转过多，请重新登录后再试');
+    // 停在**带 execution 的**登录页才算会话没了（CAS 中转本身会经过 sso，不能一见 sso 就判死）
+    if (logical.indexOf('sso.buaa.edu.cn') >= 0 &&
+      CasParser.extractExecution(finalResp.body).length > 0) {
+      throw authRequired();
+    }
+    throw new ApiError(401, 'cloudprint_auth',
+      '云打印登录未完成（终点异常：' + logical + '），请重新登录后再试');
   }
 
   /**
    * `POST Auth/Check`（带 `Content-Length: 0`，上游：空 POST 不带长度会被拒 411）。
    *
-   * @returns 是否已登录（`result.szLogonName` 非空）
+   * @returns 是否已登录（`code===0` 且 `result.szLogonName` 与本机账号一致）
    */
   private static async checkLogin(): Promise<boolean> {
     const headers: Record<string, string> = {};
@@ -408,31 +409,54 @@ export class LocalCloudPrintService {
     // 只读的登录态检查（空 POST）：允许自动换路重试
     const response: UpstreamResponse = await UpstreamClient.postForm(
       LocalCloudPrintService.endpoint('Auth/Check'), '', true, headers, true);
-    if (!response.isOk()) {
+    return LocalCloudPrintService.interpret(response, TokenStore.getSession().username);
+  }
+
+  /** 清掉云打印站的存量 cookie（不含其它站点）。 */
+  private static dropStaleCookies(): void {
+    const mode = TokenStore.getConnectionMode();
+    const jar: StoredCookie[] = TokenStore.loadCookies(mode);
+    const kept: StoredCookie[] = [];
+    for (let i = 0; i < jar.length; i++) {
+      if (jar[i].domain.toLowerCase().indexOf(HOST) < 0) {
+        kept.push(jar[i]);
+      }
+    }
+    if (kept.length !== jar.length) {
+      TokenStore.saveCookies(kept, mode);
+      Logger.info('云打印：清理存量 cookie ' + (jar.length - kept.length) + ' 条');
+    }
+  }
+
+  /**
+   * 把 `Auth/Check` 的响应解读成「是否已登录」。
+   *
+   * 判据对齐上游 `cloud_print/auth.rs` 的 `check()`：`code===0`、
+   * `result.szLogonName` 非空、且与本机登录账号一致。
+   */
+  private static interpret(response: UpstreamResponse, expected: string): boolean {
+    const trimmed: string = response.body.trimStart();
+    if (!response.isOk() || trimmed.length === 0 || trimmed.charAt(0) !== '{') {
+      // 被重定向到登录页 / 空体：都按未登录处理
+      Logger.warn('云打印会话探测未通过：HTTP ' + response.status + ' / ' +
+        response.body.length + 'B / 非 JSON');
       return false;
     }
     try {
       const payload = JSON.parse(response.body) as Object;
       const code: number = numOf(payload, 'code');
-      if (code !== 0) {
-        return false;
-      }
       const result = objOf(payload, 'result');
-      if (result === null) {
-        return false;
-      }
-      const logonName: string = strOf(result, 'szLogonName');
-      if (logonName.length === 0) {
-        return false;
-      }
+      const logonName: string = result === null ? '' : strOf(result, 'szLogonName');
+      let ok: boolean = code === 0 && logonName.length > 0;
       // 上游 auth.rs 的 check() 还要求**账号匹配**：登着别人的号不能当"已登录"。
-      // 我们用登录名（学号）比对；比不上就当未登录，走重新登录链。
-      const expected: string = TokenStore.getSession().username;
-      if (expected.length > 0 && expected !== logonName) {
-        Logger.warn('云打印会话属于其它账号（' + logonName + '），按未登录处理');
-        return false;
+      if (ok && expected.length > 0 && expected !== logonName) {
+        Logger.warn('云打印会话属于其它账号（' + Logger.mask(logonName) + '），按未登录处理');
+        ok = false;
       }
-      return true;
+      if (!ok) {
+        Logger.warn('云打印会话无效：code=' + code + ' / ' + strOf(payload, 'message'));
+      }
+      return ok;
     } catch (error) {
       return false;
     }

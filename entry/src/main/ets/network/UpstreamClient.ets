@@ -375,14 +375,13 @@ export class UpstreamClient {
       return;
     }
     const jar = TokenStore.loadCookies(mode);
-    const requestPath = pathOfUrl(url);
     let changed = false;
 
     // 首选 RCP 结构化解析好的 cookie（属性齐全，不用自己拆 Set-Cookie）
     const cookies = response.cookies;
     if (cookies !== undefined && cookies !== null && cookies.length > 0) {
       for (let i = 0; i < cookies.length; i++) {
-        if (UpstreamClient.putResponseCookie(jar, cookies[i], host, requestPath)) {
+        if (UpstreamClient.putResponseCookie(jar, cookies[i], host)) {
           changed = true;
         }
       }
@@ -396,7 +395,7 @@ export class UpstreamClient {
     for (let h = 0; h < rawSetCookie.length; h++) {
       const parts = splitSetCookie(rawSetCookie[h]);
       for (let i = 0; i < parts.length; i++) {
-        UpstreamClient.upsertCookie(jar, parts[i], host, requestPath);
+        UpstreamClient.upsertCookie(jar, parts[i], host);
         changed = true;
       }
     }
@@ -410,8 +409,7 @@ export class UpstreamClient {
   private static putResponseCookie(
     jar: StoredCookie[],
     cookie: rcp.ResponseCookie,
-    host: string,
-    requestPath: string
+    host: string
   ): boolean {
     const name = cookie.name === undefined ? '' : cookie.name;
     if (name.length === 0) {
@@ -425,8 +423,16 @@ export class UpstreamClient {
     }
     domain = domain.replace(/^\./, '').toLowerCase();
 
+    // 🔴 **未声明 `Path` 时一律存 `/`**（2026-11-20 对齐上游 2.0.3）。
+    //
+    // 上游 `session/cookies.rs` 用 `cookie::Cookie::parse(raw, url)`，其 `CookiePath`
+    // 未声明时默认就是 `/`。我们早先按 RFC 6265 的 default-path 截成目录级
+    // （`/api/client/Auth`、`/client/new/cprintPc`），结果同名 cookie 被拆成多条：
+    // 云打印的 `SESSIONID` 同时存在 `@/`、`@/api/client/Auth`、`@/client/new/cprintPc`
+    // 三份且值不同，`Auth/Check` 一次带上两个 `SESSIONID` → 服务端取到旧值 →
+    // 永远 `{"code":4,"message":"无效会话，未登录"}`（CAS 票据链其实早就走通了）。
     const cookiePath = cookie.path === undefined || cookie.path.length === 0
-      ? UpstreamClient.defaultPath(requestPath) : cookie.path;
+      ? '/' : cookie.path;
     const secure = cookie.isSecure === true;
 
     let expiresAt = 0;
@@ -454,7 +460,7 @@ export class UpstreamClient {
   }
 
   /** 解析一条 Set-Cookie 串并写入罐中（同名同域同路径覆盖）。 */
-  private static upsertCookie(jar: StoredCookie[], setCookie: string, host: string, requestPath: string): void {
+  private static upsertCookie(jar: StoredCookie[], setCookie: string, host: string): void {
     const segments = setCookie.split(';');
     if (segments.length === 0) {
       return;
@@ -471,7 +477,8 @@ export class UpstreamClient {
     }
 
     let domain = host;
-    let path = UpstreamClient.defaultPath(requestPath);
+    // 同上：未声明 `Path` 存 `/`，与上游 `cookie` crate 的默认值一致
+    let path = '/';
     let expiresAt = 0;
     let secure = false;
     let maxAge = -1;
