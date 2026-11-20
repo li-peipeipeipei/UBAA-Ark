@@ -655,17 +655,56 @@ export class LocalAcademicService {
 
   private static async doEnsureByxt(): Promise<void> {
     let response = await UpstreamClient.follow(BYXT_CURRENT_USER_URL);
-    if (!LocalAcademicService.isJson(response)) {
-      Logger.warn('教务会话未就绪，显式走一次统一认证换取');
+    if (!LocalAcademicService.isByxtLoggedIn(response)) {
+      Logger.warn('教务会话未就绪，显式走一次统一认证换取（探测：' +
+        LocalAcademicService.snippet(response) + '）');
       response = await UpstreamClient.follow(
         LocalAcademicService.casServiceUrl(BYXT_CURRENT_USER_URL));
     }
-    if (!LocalAcademicService.isJson(response)) {
+    if (!LocalAcademicService.isByxtLoggedIn(response)) {
+      Logger.error('教务会话换取失败：' + LocalAcademicService.snippet(response));
       throw new ApiError(401, 'upstream_session_expired',
         '教务系统会话未建立，请返回设置页重新登录后重试');
     }
     LocalAcademicService.byxtReady = true;
     Logger.info('教务系统会话就绪（' + BYXT_BASE + '）');
+  }
+
+  /**
+   * 强制重新换取 byxt 会话（跳过 `currentUser.do` 探测）。
+   *
+   * 为什么不能复用 `ensureByxt`：它在探测「看起来正常」时会立刻 return，
+   * 而探测本身恰恰是不可靠的一环（见 `isByxtLoggedIn`）。数据接口已经明确回了 401
+   * 的情况下，再去问同一个探测接口等于原地打转 —— 必须无条件重走一次 CAS 签发。
+   */
+  private static async forceReauthByxt(): Promise<void> {
+    LocalAcademicService.byxtReady = false;
+    if (LocalAcademicService.byxtTask !== null) {
+      // 已有一次换取在跑：等它，成了就不必再跑一遍
+      await LocalAcademicService.byxtTask;
+      if (LocalAcademicService.byxtReady) {
+        return;
+      }
+    }
+    const task: Promise<void> = LocalAcademicService.doForceReauthByxt();
+    LocalAcademicService.byxtTask = task;
+    try {
+      await task;
+    } finally {
+      LocalAcademicService.byxtTask = null;
+    }
+  }
+
+  private static async doForceReauthByxt(): Promise<void> {
+    const response = await UpstreamClient.follow(
+      LocalAcademicService.casServiceUrl(BYXT_CURRENT_USER_URL));
+    if (!LocalAcademicService.isByxtLoggedIn(response)) {
+      Logger.error('教务会话强制换取失败：' + LocalAcademicService.snippet(response));
+      throw new ApiError(401, 'upstream_session_expired',
+        '教务系统会话换取失败，请返回设置页重新登录后重试');
+    }
+    LocalAcademicService.byxtReady = true;
+    Logger.info('教务系统会话已重新换取（' + BYXT_BASE + '）');
   }
 
   /** 确保移动端应用门户（成绩）会话可用。 */
@@ -749,10 +788,19 @@ export class LocalAcademicService {
   ): Promise<UpstreamResponse> {
     let response = await LocalAcademicService.sendByxt(method, url, headers, body);
     if (LocalAcademicService.looksLoggedOut(response)) {
-      Logger.warn('byxt 会话已失效，重新换取后重试：' + url);
-      LocalAcademicService.byxtReady = false;
-      await LocalAcademicService.ensureByxt();
+      Logger.warn('byxt 会话疑似失效（' + LocalAcademicService.snippet(response) +
+        '），强制重新换取后重试：' + url);
+      try {
+        await LocalAcademicService.forceReauthByxt();
+      } catch (error) {
+        // 换不回来也要把原始 401 交回上层，让错误信息落在真正失败的接口上
+        Logger.error('byxt 强制换取失败：' + (error as Error).message);
+      }
       response = await LocalAcademicService.sendByxt(method, url, headers, body);
+      if (LocalAcademicService.looksLoggedOut(response)) {
+        Logger.error('byxt 重新换取后仍不可用（' + LocalAcademicService.snippet(response) +
+          '）← ' + url);
+      }
     }
     return response;
   }
@@ -915,6 +963,45 @@ export class LocalAcademicService {
     }
     const trimmed = response.body.trimStart();
     return trimmed.startsWith('{') || trimmed.startsWith('[');
+  }
+
+  /**
+   * 探测响应是否真的代表「byxt 域会话可用」。
+   *
+   * 🔴 只看「是不是 JSON」会被上游骗过去。byxt 的匿名会话同样回 **200 + JSON 信封**，
+   * 只是 `code` 不是 `'0'`（实测形如 `{"code":"1","msg":"…未登录…"}`）。
+   * 旧判据因此把「未登录」当成「已就绪」并盖上 `byxtReady`，于是：
+   * 1. 数据接口 401 → `byxtCall` 置 `byxtReady=false` → `ensureByxt()` 探测又「成功」；
+   * 2. 短路返回，CAS 重签根本没跑，重试必然再 401；
+   * 3. 页面收到 401 就把整页判成「登录状态已失效，请重新登录」——用户点一百次重载也不会好。
+   *
+   * 真机日志（2026-11-20 22:45）正是这个链条：`currentUser.do -> 200` 紧跟着
+   * `teachingSchedule/detail.do -> 401`，同一秒、同一个 Cookie 罐。
+   */
+  private static isByxtLoggedIn(response: UpstreamResponse): boolean {
+    if (!LocalAcademicService.isJson(response)) {
+      return false;
+    }
+    try {
+      const probe = JSON.parse(response.body) as ByxtEnvelope<Object>;
+      const code = probe.code === undefined ? '' : probe.code;
+      return code === '0';
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * 把响应压成一行可打印的摘要（状态 / 主机 / body 前 200 字）。
+   *
+   * 401 的 body 标题是排查「会话失效 vs 接口拒绝」的唯一线索：CAS 登录页标题是
+   * 「统一身份认证」，而 Servlet 直接 `sendError(401)` 出来的是标题为「401」的空白页 ——
+   * 两者含义完全相反，光看状态码分不出来。
+   */
+  private static snippet(response: UpstreamResponse): string {
+    const flat = response.body.replace(/\s+/g, ' ');
+    const head = flat.length > 200 ? flat.substring(0, 200) + '…' : flat;
+    return 'HTTP ' + response.status + ' @' + AppConfig.hostOf(response.url) + ' «' + head + '»';
   }
 
   /** 是否停在统一身份认证页（会话没换成）。 */

@@ -7,6 +7,78 @@
 
 > 目标：对齐上游 UBAA 2.0 的功能面。分支 `release/0.9.0`。
 
+### 修复（首页反复「登录状态已失效，请重新登录」）
+
+真因不在登录链路，也不在会话过期，而在 **Cookie 罐**：真正的会话凭证
+（byxt 的 `GS_SESSIONID`）从来没被存进去，于是每个取数接口都 401，
+页面把 401 一律翻译成「请重新登录」，用户点多少次重载都不会好。
+
+- **`Set-Cookie` 只取首个头**：`headerValue(…,'set-cookie')` 在响应头是
+  `string[]` 时只返回 `[0]`。上游「先删旧、再发新」成对下发时，罐子里只剩删除指令
+  （真机可见 `_WEU … Max-Age=0`，且没有 `GS_SESSIONID`）。改用新增的
+  `headerValues()` 全量遍历，每个头再过 `splitSetCookie`。
+- **未声明 `Path` 时拿整个请求路径当 cookie path**：cookie 被钉死在
+  `…/api/home/currentUser.do` 上，`getTermWeeks.do` / `schoolCalendars.do` 全都带不上。
+  改为 `defaultPath()`（RFC 6265 §5.1.4，截到目录级）；存量坏数据由
+  `normalizeLegacyPaths()` 自愈，**不需要重新登录**。
+- **会话判据误报**：`doEnsureByxt` 原本「是 JSON 就算就绪」，而 `currentUser.do`
+  对匿名请求也回 200 + JSON 信封。改为 `isByxtLoggedIn()` 校验 `code === '0'`；
+  数据接口已明确 401 时走新增的 `forceReauthByxt()` 无条件重签，不再被探测短路。
+- 401 时日志补 `上游带 Cookie <host>：<cookie 名列表>`（只打名字，值不落盘），
+  用于区分「没带凭证」与「带了被拒」。
+
+真机验证（PLR-AL50 / API26）：连续 4 次冷启动 + 1 次下拉刷新，
+`byxt` 全部接口 200，`401 / 登录状态已失效` 计数 0；今日课程 1 条、
+周课表 16 门 / 13 节、成绩与 SPOC 预取全部正常。
+详见 `docs/tech/troubleshooting.md`「刚登录就提示登录失效」一节。
+
+### 修复（功能块展开转场：云打印跳色 + 平板竖屏圆角跳变）
+
+两个都是「卡片」与「转场遮罩」数据不同源，与动画参数无关。
+
+- **云打印跳色**：`FeatureItem` 的 `color`（卡片渲染）写的是 `AppColor.brand`（蓝），
+  而 `colorValue`（遮罩基础色）是青色 `#00897B` —— 11 个功能块里唯一不匹配的一个。
+  新增 `accent_teal`（浅 `#00897B` / 深 `#26A69A`）+ `AppColor.accentTeal`，
+  云打印改用青色。
+- **平板竖屏圆角跳变**：`FeatureTile.radius` 缺 `@Prop`。普通成员只在初始化时赋值，
+  父级按实测块宽重算的 `tileRadius` 既不写入也不触发重绘 —— 卡片圆角永远停在兜底 28，
+  而遮罩用的是实测值。断点兜底列数与实测列数差得越远越明显：
+  平板横屏 6→5（圆角都是 28，无差）、手机 4→2~3（差 1~3vp）、
+  平板竖屏 **6→4**（差 5vp 以上）—— 这就是「只有平板竖屏看得出来」的原因。
+- 顺带加固：`onBounds` 增加 `radius` 参数，由卡片上报**自己正在渲染的**圆角，
+  遮罩优先用它。以后即使再出现父子不同步，转场也不会跳到另一个圆角上。
+
+详见 `docs/tech/feature-tile-transition.md` 末节。
+
+### 修复（课堂签到「永远失败」，同步上游 2.0.3）
+
+11-19 那轮把失败归因于参数载体，按冻结旧版 v1.7.2 实现 —— **归因错了**。
+上游 2.0.3（2026-11-19 抓包裁决）确认：`stu_scan_sign` 是**扫码签到**接口，
+拿它当自动签到提交，上游第一步就回 `ERRMSG=!appMsg.qxktSign!`。
+
+- 提交改用 `stu_auto_sign.action`：端口 **8181**（既非列表的 8347、也非二维码的 8081），
+  `POST` **无查询串**，表单恰好六字段 `id` / `courseSchedId` / `routerInfo` /
+  `longitude` / `latitude` / `machineInfo`，**不带时间戳**。
+- 提交不再先取时间戳：那条链路是扫码用的，混进来只会多一跳请求和一个假依赖。
+- `checkinUrl()` 降级为读接口基址，注释禁止与提交入口合并。
+
+详见 `docs/tech/upstream-2.0.3-sync.md`。
+
+### 新增（课堂签到二维码）
+
+对齐上游 2.0.3 的扫码签到：把 `stu_scan_sign` 的码显示出来供 iClass App / 微信扫。
+
+- `LocalSigninService.buildScanQrContent(courseId, offsetMs)`：服务端时间戳 + 偏移拼 URL。
+  时间戳必须是上游的，`Date.now()` 拼的码对方判为无效。
+- `components/SigninQrSheet.ets`：`@kit.ScanKit` 的 `generateBarcode` 渲染，
+  **无需三方库、无需权限**；每 2 秒刷新、每 3 秒轮询已签到。
+- 「保存到相册」走 `photoAccessHelper.showAssetsCreationDialog`（弹窗授权），
+  **不声明 `WRITE_IMAGEVIDEO`**；编码用 `packToData`（`packing` 已废弃）。
+- 入口是卡片底部的弱文字「出示签到码 ›」，不做成第二个主按钮 —— 点错的那个是
+  不可撤销的写请求。
+- 浮层用 `.overlay()` + `if (courseId)` 条件挂载，绕开 `@Builder` 普通参数
+  不参与刷新的坑。
+
 ### 新增（登录自动切换直连 / WebVPN，含可行性研究）
 
 对齐上游 `RoutePolicy::Auto`（`connection.rs` + `facade/routing.rs`，契约见

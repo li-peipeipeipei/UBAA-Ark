@@ -40,6 +40,31 @@
 - 切换连接模式后仍用旧会话：Cookie 按模式隔离，**必须重新登录**。
 - WebVPN 下接口 404：只填了网关根域不行，必须用完整资源地址（由 `LocalWebVpn` 改写）。
 
+### 「刚登录就提示登录失效」——先怀疑 Cookie 路径，不要怀疑密码
+
+真机现象（2026-11-20）：首页反复弹「登录状态已失效，请重新登录」，点重载立刻再弹；
+日志里 `currentUser.do -> 200` 紧跟着 `teachingSchedule/detail.do -> 401`，同一秒、同一个
+Cookie 罐；重走 CAS 换票后 `currentUser.do?ticket=…` 也是 200，但下一个接口仍然 401。
+
+判据：**能探查会话的接口 200、真正取数的接口 401 = 凭证没被带到后续请求**，
+不是会话过期。此时看日志摘要里那句 `上游带 Cookie <host>：…`（只在 4xx/5xx 时打印），
+若名单里缺少该站点的会话 cookie（byxt 是 `GS_SESSIONID`），就是路径/域匹配的问题。
+
+两个已修的根因，都在 `UpstreamClient`：
+
+| 缺陷 | 后果 | 修法 |
+| --- | --- | --- |
+| `Set-Cookie` 只取首个头（`value[0]`） | 上游「先删旧、再发新」成对下发时只剩删除指令，会话 cookie 从未入罐 | `headerValues()` 全量遍历 + 逐条 `splitSetCookie` |
+| 未声明 `Path` 时拿**整个请求路径**当 cookie path | cookie 被钉死在 `…/api/home/currentUser.do`，其它接口一律带不上 | `defaultPath()` 按 RFC 6265 §5.1.4 截到目录级 |
+
+存量坏数据由 `normalizeLegacyPaths()` 在下次请求时自愈（path 以 `.do`/`.action` 等资源名
+结尾的，截回目录级），用户不必重新登录 —— 日志会出现一行「修正历史 Cookie 路径」。
+
+> 另一条同等重要的教训：**别拿「返回是不是 JSON」当会话判据**。
+> byxt 的 `currentUser.do` 对匿名请求也回 200 + JSON 信封（`code` 不是 `'0'`），
+> 只看 JSON 就会盖上「会话就绪」，401 后的自动重试被短路，永远不会成功。
+> 见 `LocalAcademicService.isByxtLoggedIn`。
+
 ## 真机调试速查
 
 ```bash

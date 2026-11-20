@@ -300,6 +300,13 @@ export class UpstreamClient {
 
       UpstreamClient.absorbCookies(response, url, mode);
 
+      // 只在失败时留 Cookie 名单：401 到底是「没带凭证」还是「带了被拒」，靠这一行区分。
+      // 正常请求不打，否则每个请求一行会把 hilog 冲成毛玻璃。
+      if (result.status >= 400) {
+        Logger.warn('上游带 Cookie ' + hostOfUrl(url) + '：' +
+          (cookieHeader.length > 0 ? UpstreamClient.cookieNames(cookieHeader) : '（空）'));
+      }
+
       Logger.info('上游 ' + method + ' ' + url + ' -> ' + result.status +
         (result.location.length > 0 ? ' → ' + result.location : '') +
         ' (' + (Date.now() - startedAt) + 'ms)');
@@ -337,6 +344,30 @@ export class UpstreamClient {
     return '';
   }
 
+  /**
+   * 读取同名响应头的**全部**值。
+   *
+   * `Set-Cookie` 天然可重复，绝不能只取第一个（见 `absorbCookies` 的说明）。
+   */
+  private static headerValues(headers: rcp.ResponseHeaders, name: string): string[] {
+    const out: string[] = [];
+    const keys = Object.keys(headers);
+    for (let i = 0; i < keys.length; i++) {
+      if (keys[i].toLowerCase() !== name) {
+        continue;
+      }
+      const value: string | string[] | undefined = headers[keys[i]];
+      if (typeof value === 'string') {
+        out.push(value);
+      } else if (value !== undefined && value !== null) {
+        for (let j = 0; j < value.length; j++) {
+          out.push(value[j]);
+        }
+      }
+    }
+    return out;
+  }
+
   /** 把响应里的 Cookie 并入当前模式的 Cookie 罐。 */
   private static absorbCookies(response: rcp.Response, url: string, mode: ConnectionMode): void {
     const host = hostOfUrl(url);
@@ -357,10 +388,13 @@ export class UpstreamClient {
       }
     }
 
-    // 兜底：结构化字段缺失时，退回解析 Set-Cookie 头
-    const rawSetCookie = UpstreamClient.headerValue(response.headers, 'set-cookie');
-    if (rawSetCookie.length > 0) {
-      const parts = splitSetCookie(rawSetCookie);
+    // 兜底：结构化字段缺失时，退回解析 Set-Cookie 头。
+    // 🔴 **必须全量**：服务端一次下发多条 Set-Cookie 时，RCP 把它给成 string[]，
+    // 早先只取 `[0]`，于是「先删旧的、再发新的」这种成对写法只剩下删除指令，
+    // 罐子里永远没有会话 cookie（byxt 就是这么 401 的：只吸收到 `_WEU … Max-Age=0`）。
+    const rawSetCookie = UpstreamClient.headerValues(response.headers, 'set-cookie');
+    for (let h = 0; h < rawSetCookie.length; h++) {
+      const parts = splitSetCookie(rawSetCookie[h]);
       for (let i = 0; i < parts.length; i++) {
         UpstreamClient.upsertCookie(jar, parts[i], host, requestPath);
         changed = true;
@@ -391,7 +425,8 @@ export class UpstreamClient {
     }
     domain = domain.replace(/^\./, '').toLowerCase();
 
-    const cookiePath = cookie.path === undefined || cookie.path.length === 0 ? requestPath : cookie.path;
+    const cookiePath = cookie.path === undefined || cookie.path.length === 0
+      ? UpstreamClient.defaultPath(requestPath) : cookie.path;
     const secure = cookie.isSecure === true;
 
     let expiresAt = 0;
@@ -411,6 +446,10 @@ export class UpstreamClient {
     }
 
     UpstreamClient.putCookie(jar, name, value, domain, cookiePath, expiresAt, secure, remove);
+    if (remove) {
+      // 上游主动删 cookie 是会话被清的信号（byxt 会在 401 响应里删掉 _WEU），值得留痕
+      Logger.warn('上游要求删除 Cookie ' + name + '（' + host + ' path=' + cookiePath + '）');
+    }
     return true;
   }
 
@@ -432,7 +471,7 @@ export class UpstreamClient {
     }
 
     let domain = host;
-    let path = requestPath.length > 0 ? requestPath : '/';
+    let path = UpstreamClient.defaultPath(requestPath);
     let expiresAt = 0;
     let secure = false;
     let maxAge = -1;
@@ -527,6 +566,9 @@ export class UpstreamClient {
     const host = hostOfUrl(url);
     const path = pathOfUrl(url);
     const jar = UpstreamClient.prune(TokenStore.loadCookies(mode));
+    if (UpstreamClient.normalizeLegacyPaths(jar)) {
+      TokenStore.saveCookies(jar, mode);
+    }
     const parts: string[] = [];
     for (let i = 0; i < jar.length; i++) {
       const cookie = jar[i];
@@ -544,8 +586,18 @@ export class UpstreamClient {
     return parts.join('; ');
   }
 
-  private static domainMatches(host: string, domain: string): boolean {
-    const normalizedHost = host.toLowerCase();
+  /** 把 Cookie 头拆成「名字列表」用于日志（值属于凭据，绝不落盘）。 */
+  private static cookieNames(cookieHeader: string): string {
+    const items = cookieHeader.split('; ');
+    const names: string[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const eq = items[i].indexOf('=');
+      names.push(eq > 0 ? items[i].substring(0, eq) : items[i]);
+    }
+    return names.join(',');
+  }
+
+  private static domainMatches(host: string, domain: string): boolean {    const normalizedHost = host.toLowerCase();
     const normalizedDomain = domain.replace(/^\./, '').toLowerCase();
     if (normalizedDomain.length === 0) {
       return false;
@@ -557,6 +609,64 @@ export class UpstreamClient {
     const target = requestPath.length > 0 ? requestPath : '/';
     const prefix = cookiePath.length > 0 ? cookiePath : '/';
     return target === prefix || target.startsWith(prefix.endsWith('/') ? prefix : prefix + '/');
+  }
+
+  /**
+   * RFC 6265 §5.1.4 的 default-path。
+   *
+   * 🔴 上游没声明 `Path` 时**绝不能**拿完整请求路径当 cookie 路径 —— 那样这条 cookie
+   * 只对「发出它的那一个接口」有效。byxt 的会话 cookie 正是这种情况：
+   * 换取请求是 `…/api/home/currentUser.do`，cookie 被钉死在这个路径上，紧接着
+   * `…/api/home/getTermWeeks.do`、`…/api/home/student/schoolCalendars.do` 全都带不上
+   * cookie，一律 401。真机表现就是「刚换取会话成功，下一秒所有教务接口都说没登录」，
+   * 页面据此反复弹「登录状态已失效，请重新登录」—— 而 `currentUser.do` 自己永远是 200，
+   * 所以会话探测怎么探都「正常」。
+   */
+  private static defaultPath(requestPath: string): string {
+    if (requestPath.length === 0 || requestPath.charAt(0) !== '/') {
+      return '/';
+    }
+    const lastSlash = requestPath.lastIndexOf('/');
+    if (lastSlash <= 0) {
+      return '/';
+    }
+    return requestPath.substring(0, lastSlash);
+  }
+
+  /**
+   * 修正历史遗留的「cookie path 被写成完整资源路径」的条目（存量数据自愈）。
+   *
+   * 旧版 `absorbCookies` 在 Set-Cookie 没带 `Path` 时拿**整个请求路径**当 path，
+   * 于是 byxt 的 `GS_SESSIONID` 被钉死在 `…/api/home/currentUser.do` 上：
+   * 只有换取会话的那一次请求带得上它，紧接着 `getTermWeeks.do`、`schoolCalendars.do`
+   * 全都带不上，一律 401 —— 表现就是「刚换上会话，下一秒所有教务接口都说没登录」。
+   *
+   * 合法 cookie path 一定是**目录**，不会以具体资源名结尾。命中 `.do` / `.action` /
+   * `.jsp` 这类特征就按 RFC 6265 截回目录级，罐子里的存量数据随之下一次请求自愈，
+   * 用户不需要重新登录。
+   */
+  private static normalizeLegacyPaths(jar: StoredCookie[]): boolean {
+    let changed = false;
+    for (let i = 0; i < jar.length; i++) {
+      const cookie = jar[i];
+      if (!UpstreamClient.looksLikeResourcePath(cookie.path)) {
+        continue;
+      }
+      const fixed = UpstreamClient.defaultPath(cookie.path);
+      Logger.warn('修正历史 Cookie 路径 ' + cookie.name + '：' + cookie.path + ' → ' + fixed);
+      cookie.path = fixed;
+      changed = true;
+    }
+    return changed;
+  }
+
+  private static looksLikeResourcePath(path: string): boolean {
+    if (path.length <= 1) {
+      return false;
+    }
+    const lastSlash = path.lastIndexOf('/');
+    const leaf = path.substring(lastSlash + 1);
+    return leaf.indexOf('.') > 0;
   }
 
   /* ------------------------------ 对外接口 ------------------------------ */
