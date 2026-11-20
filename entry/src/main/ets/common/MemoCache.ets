@@ -111,6 +111,21 @@ export class MemoCache {
   }
 
   /**
+   * 同步取一份仍然新鲜的缓存，**不触发加载**。
+   *
+   * 用途只有一个：页面 `aboutToAppear` 里先把缓存填进 `@State`，首帧就是满内容。
+   * 走 `through()` 虽然也会命中缓存，但那是异步的 —— 首帧空、下一帧才填，
+   * 视觉上会闪一下「正在读取…」。缓存未命中（或已过期）返回 `null`。
+   */
+  static peek<T>(key: string): T | null {
+    const hit: MemoEntry | undefined = MemoCache.entries.get(key);
+    if (hit === undefined || hit.expireAt <= Date.now()) {
+      return null;
+    }
+    return hit.value as T;
+  }
+
+  /**
    * 全部清空。
    *
    * **登出 / 切换连接模式必须调用**：两种模式的 Cookie 完全不同，

@@ -116,7 +116,8 @@ TTL：学期 60s / 周次 120s / 周课表 30s / 今日课程 20s（key 含日�
 ### 4. `common/StartupPrefetch.ets`（新增）
 
 - 首帧后 **900ms** 启动，总预算 **9s**，**串行**执行（同一个 Cookie 罐不适合并发）；
-- 顺序：`terms`（顺带打通教务会话）→ `weeks` → 当前周 `weekly` → `exams` → `grades`（最重，最后）；
+- 顺序：`terms`（顺带打通教务会话）→ `weeks` → 当前周 `weekly` → `exams` →
+  **校园账户五项指标（`portal:metrics`）** → `grades`（最重，最后）；
 - 每步独立 try/catch；超预算 / 切后台 / 已登出 → 立即停手（`EntryAbility.onBackground` 调 `cancel()`）；
 - 全程只写 `MemoCache`，日志带每步耗时（`hilog` 关键字「启动预取」），便于真机核对收益。
 
@@ -147,3 +148,25 @@ TTL：学期 60s / 周次 120s / 周课表 30s / 今日课程 20s（key 含日�
 - **空闲教室 / 博雅 / 阳光打卡**：参数不确定或认证链过长，预取收益为负（见第二节）。
 - **AppStartup 启动框架**：见第三节的四条理由；留作 HSP/HAR 拆分后的演进项。
 - **组件预创建**：与「首帧稳定」目标冲突，且无设备无法验证内存与首帧影响。
+
+## 九、2026-11-20 追加：校园账户五项指标
+
+「我的」页的校园账户五项（网费余额 / 一卡通 / 未读邮件 / 待还图书 / 云盘剩余）改成
+**启动即预取、进页面直读缓存**：
+
+1. `LocalPortalService.fetchMetrics()` 走 `MemoCache`（key `portal:metrics`，TTL **120s**，
+   用户点「重试」传 `force`）；
+2. 新增 `MemoCache.peek()` —— **同步**读仍然新鲜的缓存。页面 `aboutToAppear` 先同步填
+   `@State`，首帧就是真实余额；用 `through()` 只能做到「下一帧才有」，会闪一下「正在读取…」；
+3. `StartupPrefetch` 第 ⑤ 步调它，排在 `exams` 之后、`grades` 之前，且**单步 try/catch**
+   —— 这一步失败不能连累成绩预取；前几步已过半预算则跳过（页面上有自己的加载与重试）；
+4. 预取与页面同时发起时由 `MemoCache` 单飞合并，不会跑两条 CAS 链。
+
+真机实测（23:37 冷启动）：`info` → `items` → 4×`detail` + `card/balance`，
+预取 **5/5 项 / 2312ms** 完成；9 秒后进「我的」页**没有任何新请求**（命中缓存），
+卡片副标题为预取时刻「更新于 23:37」。
+
+> 同一轮修掉的解析 bug：detail 接口的数值**多包一层 `d.data`**
+> （`{e:0,d:{data:{value,unit,account}}}`），旧实现直接读 `d.value` →
+> 未读邮件/待还图书被兜底成假的 `0`；网费/云盘因 `unit` 为空串被 `nonblank()` 判死显示「—」。
+> 详见 `network/LocalPortalService.ets` 里 `metricPayload()` / `unitOf()` 的注释。

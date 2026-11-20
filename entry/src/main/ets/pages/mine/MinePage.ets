@@ -41,18 +41,25 @@ export struct MinePage {
     const session = TokenStore.getSession();
     this.userName = session.userName.length > 0 ? session.userName : '未设置姓名';
     this.schoolId = session.schoolId.length > 0 ? session.schoolId : session.username;
+    // 启动预取（StartupPrefetch 第 ⑤ 步）已经把五项指标写进 MemoCache，
+    // 这里**同步**取出来当首帧内容 —— 进页面就是真实的余额，不会先闪一下
+    // 「正在读取…」再跳成数字。没预取到（未登录过 / 已过期）则为 null，照常走网络。
+    const cached: PortalMetrics | null = LocalPortalService.cachedMetrics();
+    if (cached !== null) {
+      this.metrics = cached;
+    }
     // 五项指标是异步拉的：不阻塞本页首帧，失败也不影响其它内容
     this.loadMetrics();
   }
 
-  private async loadMetrics(): Promise<void> {
+  private async loadMetrics(force: boolean = false): Promise<void> {
     if (this.metricsLoading) {
       return;
     }
     this.metricsLoading = true;
     this.metricsError = '';
     try {
-      const data: PortalMetrics = await LocalPortalService.fetchMetrics();
+      const data: PortalMetrics = await LocalPortalService.fetchMetrics(force);
       this.metrics = data;
       Logger.info('门户指标已加载');
     } catch (error) {
@@ -87,6 +94,18 @@ export struct MinePage {
       out.push(m.wangpan);
     }
     return out;
+  }
+
+  /** 取失败（ok=false）的项数。单项失败本身不算整卡错误，但要让用户能重试。 */
+  private failedCount(): number {
+    const list: PortalMetric[] = this.metricList();
+    let count: number = 0;
+    for (let i = 0; i < list.length; i++) {
+      if (!list[i].ok) {
+        count++;
+      }
+    }
+    return count;
   }
 
   /** 单项指标格子。`ok=false` 时显示占位符，不打断整卡。 */
@@ -134,7 +153,8 @@ export struct MinePage {
             .fontColor(AppColor.brand)
             .width('100%')
             .onClick(() => {
-              this.loadMetrics();
+              // force：绕过 2 分钟的指标缓存，用户点「重试」必须真的重取
+              this.loadMetrics(true);
             })
         } else if (this.metricList().length === 0) {
           Text(this.metricsLoading ? '正在读取…' : '暂无可展示的指标')
@@ -154,12 +174,21 @@ export struct MinePage {
           .rowsGap(10)
           .width('100%')
 
-          if (this.metricsError.length > 0) {
+          if (this.metricsError.length > 0 || this.failedCount() > 0) {
             // 部分项失败时在底部提示，不打断已成功的项
-            Text('部分指标暂时不可用，重进本页可重试')
-              .fontSize(AppFont.caption)
-              .fontColor(AppColor.textTertiary)
-              .width('100%')
+            Row({ space: 4 }) {
+              Text(this.failedCount() > 0 ? this.failedCount().toString() + ' 项暂时不可用' :
+                '部分指标暂时不可用')
+                .fontSize(AppFont.caption)
+                .fontColor(AppColor.textTertiary)
+              Text('点此重试')
+                .fontSize(AppFont.caption)
+                .fontColor(AppColor.brand)
+                .onClick(() => {
+                  this.loadMetrics(true);
+                })
+            }
+            .width('100%')
           }
         }
       }
@@ -264,6 +293,52 @@ export struct MinePage {
     })
   }
 
+  /**
+   * 菜单行（图标来自 `app.media` 的自绘 SVG 版本）。
+   *
+   * 和 `menuRow` 的差别只在图标节点：`SymbolGlyph` 只能吃系统符号，
+   * 自绘图标必须用 `Image` + `fillColor` 才能染成白色。
+   */
+  @Builder
+  menuRowImage(title: string, subtitle: string, icon: Resource, onClick: () => void) {
+    Row({ space: AppSize.gap }) {
+      Column() {
+        Image(icon)
+          .width(20)
+          .height(20)
+          .objectFit(ImageFit.Contain)
+          .fillColor(Color.White)
+      }
+      .width(34)
+      .height(34)
+      .borderRadius(10)
+      .backgroundColor(AppColor.brand)
+      .justifyContent(FlexAlign.Center)
+
+      Column({ space: 2 }) {
+        Text(title)
+          .fontSize(AppFont.body)
+          .fontColor(AppColor.textPrimary)
+        Text(subtitle)
+          .fontSize(AppFont.caption)
+          .fontColor(AppColor.textTertiary)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(14)
+        .fontColor([AppColor.textTertiary])
+    }
+    .width('100%')
+    .padding({ top: 10, bottom: 10 })
+    .onClick(() => {
+      onClick();
+    })
+  }
+
   private async doLogout(): Promise<void> {
     if (this.loggingOut) {
       return;
@@ -337,8 +412,8 @@ export struct MinePage {
               this.openRoute(RouteName.USER_INFO);
             })
             Divider().color(AppColor.divider).strokeWidth(0.5)
-            this.menuRow('连接设置', this.connectionSummary(),
-              $r('sys.symbol.wifi'), () => {
+            this.menuRowImage('连接设置', this.connectionSummary(),
+              $r('app.media.ic_connection'), () => {
                 this.openRoute(RouteName.SETTINGS);
               })
           }

@@ -1,6 +1,7 @@
 import { ApiService } from '../network/ApiService';
+import { LocalPortalService } from '../network/LocalPortalService';
 import { TokenStore } from '../network/TokenStore';
-import { ExamArrangementData, Term, Week } from '../model/ApiTypes';
+import { ExamArrangementData, PortalMetric, PortalMetrics, Term, Week } from '../model/ApiTypes';
 import { CardDataBuilder } from './CardDataBuilder';
 import { Logger } from './Logger';
 
@@ -133,7 +134,29 @@ export class StartupPrefetch {
         return;
       }
 
-      // ⑤ 本学期成绩：最重的一步（要额外换一次 app 门户会话），放最后。
+      // ⑤ 「我的」页的校园账户五项指标：进页面「即有数」的前提就是启动时先跑完。
+      //    它要单独打通 it.buaa.edu.cn 的业务登录（另一条 CAS 链，外加 info + items
+      //    + 5 次 detail 串行），是这几步里第二重的，所以排在课表/考试之后。
+      //    前几步已花掉一半预算（网络偏慢）就跳过：该项在页面上有自己的加载与重试，
+      //    缺预取只是慢一次，不会显示成错误。
+      if (Date.now() - startAt > StartupPrefetch.BUDGET_MS / 2) {
+        Logger.info('启动预取：前几步已用 ' + (Date.now() - startAt).toString() +
+          'ms（超过预算一半），跳过校园账户预取');
+      } else {
+        try {
+          const metrics: PortalMetrics = await LocalPortalService.fetchMetrics();
+          Logger.info('启动预取：校园账户 ' + StartupPrefetch.metricsSummary(metrics) + '（' +
+            (Date.now() - startAt).toString() + 'ms）');
+        } catch (error) {
+          // 这一步失败**不能**中断后面的成绩预取，故就地吞掉（页面会自己重试）
+          Logger.warn('启动预取：校园账户指标失败（忽略）：' + (error as Error).message);
+        }
+      }
+      if (StartupPrefetch.shouldStop(deadline)) {
+        return;
+      }
+
+      // ⑥ 本学期成绩：最重的一步（要额外换一次 app 门户会话），放最后。
       //    再加一道自适应闸门：前面几步已经花掉一半预算，说明网络/设备偏慢，
       //    这时再插一条 CAS 链只会把启动阶段的 IO 拖长 —— 直接放弃，成绩页自己会加载。
       if (Date.now() - startAt > StartupPrefetch.BUDGET_MS / 2) {
@@ -196,6 +219,24 @@ export class StartupPrefetch {
     }
     const remembered: number = TokenStore.getSelectedWeek();
     return remembered > 0 ? remembered : (weeks.length > 0 ? weeks[0].serialNumber : 0);
+  }
+
+  /** 日志用摘要：「已取到 N/M 项」。只数成功项，不打具体金额（日志会被导出来排查）。 */
+  private static metricsSummary(metrics: PortalMetrics): string {
+    const list: (PortalMetric | null)[] = [metrics.netFee, metrics.cardBalance,
+      metrics.unreadMail, metrics.borrowedBooks, metrics.wangpan];
+    let ok: number = 0;
+    let total: number = 0;
+    for (let i = 0; i < list.length; i++) {
+      const metric: PortalMetric | null = list[i];
+      if (metric !== null) {
+        total++;
+        if (metric.ok) {
+          ok++;
+        }
+      }
+    }
+    return '已取到 ' + ok.toString() + '/' + total.toString() + ' 项';
   }
 
   /** 供将来排查「预取到底有没有用」时重置（登出后调用）。 */
