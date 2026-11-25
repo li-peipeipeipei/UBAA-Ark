@@ -23,5 +23,5 @@
 
 ## 外部
 
-- [上游 UBAA（Kotlin Multiplatform）](https://github.com/BUAASubnet/UBAA)
+- [上游 UBAA（v2.x · Rust + Flutter/Dart）](https://github.com/BUAASubnet/UBAA)
 - [HarmonyOS 设计规范](https://developer.huawei.com/consumer/cn/design/)

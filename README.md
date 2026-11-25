@@ -1,11 +1,13 @@
-# UBAA-HarmonyOS
+# UBAA Ark
 
 ![HarmonyOS](https://img.shields.io/badge/HarmonyOS-6.1.0%2823%29%2B-green.svg?style=flat)
 ![ArkTS](https://img.shields.io/badge/ArkTS-ArkUI-blue.svg?style=flat)
 ![HDS](https://img.shields.io/badge/UI_Design_Kit-HDS-purple.svg?style=flat)
+![Version](https://img.shields.io/badge/version-0.9.0-orange.svg?style=flat)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat)
 
-**UBAA-HarmonyOS** 是 [UBAA](https://github.com/BUAASubnet/UBAA) 的 HarmonyOS 原生客户端。
+**UBAA Ark** 是开源项目 [UBAA](https://github.com/BUAASubnet/UBAA) v2.x 的 HarmonyOS 原生客户端，
+把课表、成绩、选课、预约、作业、打卡等校园服务放进一个应用。
 
 > **非官方声明**：本项目由个人开发者基于开源项目 UBAA 独立开发与维护，**不是**北京航空航天大学
 > 的官方应用，与学校及各校内系统的运营方无从属、代理或合作关系。应用内数据均由用户本人通过
@@ -13,54 +15,60 @@
 > 上游项目方已书面同意本版本发布，按 MIT 许可证要求保留原始版权声明（见 [LICENSE](LICENSE) 与
 > 应用内「关于 → 开源许可」）。
 
-它**不依赖自建服务端**：登录与取数全部由客户端直连校内上游系统（统一认证、教务、博雅、
-SPOC、图书馆等），ArkTS 侧完成请求编排与页面解析。UI 按鸿蒙设计规范重写，
-接入 HDS（UI Design Kit）的**悬浮底栏**与**沉浸光感**，手机与平板两套布局。
-
 ## 入口
 
-- 上游项目：[BUAASubnet/UBAA](https://github.com/BUAASubnet/UBAA)（Kotlin Multiplatform · Android / iOS / Desktop / Web）
+- 上游项目：[BUAASubnet/UBAA](https://github.com/BUAASubnet/UBAA)（v2.x · Rust 协议核心 + Flutter/Dart 界面，覆盖 Android / iOS / HarmonyOS / 桌面）
+- 上游官网：<https://www.ubaa.top>
 - 开发文档：[项目文档](docs/index.md)
-- 问题反馈：[Issues](https://github.com/li-peipeipeipei/UBAA-HarmonyOS/issues)
+- 问题反馈：[Issues](https://github.com/li-peipeipeipei/UBAA-Ark/issues)
 
 ## 已实现功能
 
 | 模块 | 能力 |
 | --- | --- |
-| 登录 / 会话 | 统一身份认证（CAS 四跳）+ 图形验证码，登录态加密持久化、启动自动恢复 |
-| 课表 | 周网格、跟手翻周、同时段多课合并、教学周胶囊 |
+| 登录 / 会话 | 统一身份认证（CAS）+ 图形验证码（本地 OCR 辅助识别）；校内直连 / WebVPN 双槽会话、按网络自动切换与静默重认证；「记住密码」加密落盘 |
+| 课表 | 周网格、跟手翻周、同时段多课合并、教学周胶囊、本地缓存离线可看 |
 | 考试 / 成绩 | 按学期查询，学分与绩点汇总 |
 | 空闲教室 | 按教学楼与日期查询占用 |
+| 云打印 | 待打印 / 扫描文档 / 打印点 / 使用记录 / 帮助五分区，拍照生成 PDF 上传 |
 | 博雅课程 | 列表 / 详情 / 已选 / 统计，选课与退课 |
-| SPOC | 作业列表与详情，站内网页提交 |
+| SPOC | 作业列表、状态筛选与详情，站内网页提交 |
 | 图书馆座位 | 楼馆 → 分区 → 座位 → 预约 / 取消 / 我的预约 |
-| 课堂签到 | 今日课堂列表与一键签到 |
-| 阳光打卡 | 学期打卡次数与历史记录 |
+| 课堂签到 | 今日课堂列表、一键签到与签到二维码（扫码签到） |
+| 阳光打卡 | 学期打卡次数、一键自动填写与历史记录 |
+| 财务 | 校园账户余额与收入明细 |
 | iHome | 诉求列表、详情与处理进度 |
-| 自动评教 | 一键完成待评课程 |
-| 个人资料 / 设置 | 学籍信息、连接模式（校内直连 / WebVPN）、演示模式、缓存清理 |
+| 自动评教 | 待评课程一键完成 |
+| 桌面卡片 | 下一节课 / 今日 / 本周课表、考试倒计时、成绩、空闲教室，按课表节次自动刷新 |
+| 个人资料 / 设置 | 学籍信息、连接模式、备用图标切换、深色模式、缓存清理 |
 
-**未接入**：希冀作业（上游已改版为 SPA，旧 HTML 解析失效，代码保留但不挂入口）、
-研讨室预约（需滑块验证码方案）。理由与现状见[功能总览](docs/features/index.md)。
+## 与上游 2.0.3 的差距
 
-## UI 设计
+上游 v2.x 在 Rust 协议核心之上由 Flutter/Dart 统一实现界面；本项目是 ArkTS 原生重写，
+功能按上游协议逐项移植。以下为当前尚未对齐的部分（对照上游 2.0.3 的功能面）：
 
-- **悬浮底栏**：`HdsTabs` + `barOverlap` / `barPosition(End)` / `barFloatingStyle`，
-  底栏距底 = 导航条高度 + 12vp，内容区预留 104vp。
-- **沉浸光感**：标题栏 `GRADIENT_BLUR` + `ADAPTIVE` 系统材质，底栏同档；
-  自绘卡片用 `MaterialCardLayer`（不可交互 `ToggleType.Button` 当画布）。
-- **沉浸式全屏**：内容延伸到状态栏与导航条之下，只靠安全区避让，跟随旋转与折叠屏刷新。
-- **一套令牌**：`AppColor` / `AppSize` / `AppFont` / `AppMaterial`，颜色走
-  `resources/*/element/color.json`，原生支持深色模式。
-- **平板分栏**：按**窗口宽度断点**适配（sm / md / lg / xxl），不对设备类型写分支。
-  手机与平板竖屏走底部页签（官方「大屏竖屏」规范），平板横屏与 2in1 走侧边导航（128/144vp）；
-  分栏**点击后才出现**（未点击时整页显示；主页 / 功能 / 我的三页都支持，课表不分栏），
-  页面内部栅格按自身宽度自适应。
-  方向策略：`auto_rotation_restricted`，手机端运行期锁竖屏。
+| 功能 | 状态 | 说明 |
+| --- | --- | --- |
+| 日程与待办 | 未实现 | 上游把课表、作业截止与自定义安排合在一条时间线，支持重复规则、完成标记与导出系统日历；本项目作业截止仍分散在各自模块 |
+| 北航云盘 | 未实现 | 上游支持文件浏览 / 上传 / 下载 / 分享 / 回收站及跨设备日程同步；本项目无云盘入口 |
+| 研讨室预约 | 未实现 | 上游已打通；本项目需先解决滑块验证码（图片解码 + 模板匹配 + AES-ECB） |
+| 希冀作业 | 未接入 | 上游 2.x 已改版为 SPA，旧 HTML 解析失效；代码与路由保留但不挂入口 |
+| 图书馆分区平面图 | 未实现 | 上游提供 29 张楼馆平面图；本项目为列表式选座 |
+| 签到时间窗 | 有意不同步 | 上游将扫码（课前 10 分钟→下课）与直接签到（课前 5 分钟→上课后 30 分钟）拆成两套窗口；本项目维持单一窗口 |
+| 产品改进统计 / 更新检查 / 公告 | 不接入 | 上游依赖自建应用服务；本项目服务端已下线，隐私政策明确不接入统计类 SDK |
+| 桌面命令模式（`ubaa-cli`） | 不适用 | 上游桌面端专属，HarmonyOS 客户端不提供 |
+| 业务会话旁车缓存、多进程会话仲裁 | 不适用 | 上游为 CLI + GUI 双进程架构；本项目单进程，无跨进程回填场景 |
 
-细节与踩坑（材质不渲染、半模态高度、跟手翻周阈值、动效回环）见
-[UI 设计](docs/tech/ui-design.md)；平板规范与真机验证见
-[平板 / 大屏适配](docs/tech/tablet-adaptation.md)。
+详细协议对照与取舍理由见[上游 2.0.3 同步排查](docs/tech/upstream-2.0.3-sync.md)。
+
+## UI 与体验
+
+- 手机底部悬浮导航、平板横屏侧边导航，按窗口宽度断点自适应；「我的」等页面在大屏上分栏显示。
+- 标题栏与底栏接入 HDS 沉浸光感，页面内容延伸到状态栏与导航条之下；原生支持深色模式。
+- 一套设计令牌统一颜色、间距与字号，跟随系统字体与深浅色切换。
+- 手机端锁竖屏、平板支持横竖屏；对接管式键盘、折叠屏与窗口尺寸变化做了避让。
+
+细节与踩坑见 [UI 设计](docs/tech/ui-design.md) 与[平板 / 大屏适配](docs/tech/tablet-adaptation.md)。
 
 ## 开发文档
 
@@ -74,14 +82,15 @@ SPOC、图书馆等），ArkTS 侧完成请求编排与页面解析。UI 按鸿�
 ## 仓库概览
 
 ```text
-UBAA-HarmonyOS/
+UBAA-Ark/
 ├── AppScope/                 应用级配置与图标
 ├── entry/src/main/ets/
-│   ├── common/               配置、路由、日期、日志、沉浸式、断点
+│   ├── common/               配置、路由、日期、缓存、沉浸式、断点
 │   ├── model/                数据契约（对齐上游 DTO）
-│   ├── network/              上游直连：CAS / 教务 / 博雅 / SPOC / 图书馆 / iHome …
+│   ├── network/              上游直连：CAS / 教务 / 博雅 / SPOC / 图书馆 / 云打印 …
 │   ├── components/           通用组件、设计令牌、材质层、功能注册表
 │   ├── entryability/         UIAbility 入口
+│   ├── widget/               桌面卡片页面
 │   └── pages/                页面，按业务域分组
 │       ├── Index / MainPage / RouteBuilder   入口、外壳与全局路由表
 │       ├── auth/             登录
@@ -89,12 +98,15 @@ UBAA-HarmonyOS/
 │       ├── mine/             我的、设置、个人资料、关于
 │       ├── academic/         课表、成绩、考试、空闲教室
 │       ├── bykc/             博雅课程（列表 / 详情 / 已选 / 统计）
-│       ├── spoc/             SPOC 作业
+│       ├── spoc/             SPOC 作业与站内提交
+│       ├── campus/           云打印、校园网
+│       ├── finance/          财务
 │       ├── library/          图书馆座位
 │       ├── activity/         课堂签到、阳光打卡
 │       ├── evaluation/       自动评教、希冀作业（未挂入口）
-│       └── ihome/            iHome 诉求
-├── docs/                     开发文档（features / tech）
+│       ├── ihome/            iHome 诉求
+│       └── scan/             扫码
+├── docs/                     开发文档（features / tech / deploy / legal）
 └── build-profile.example.json5
 ```
 
