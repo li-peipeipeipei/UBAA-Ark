@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/deploy/app-icon-512.png" width="112" alt="UBAA Ark 图标">
+<img src="AppScope/resources/base/media/app_icon.png" width="112" alt="UBAA Ark 图标">
 
 # UBAA Ark
 
