@@ -1,10 +1,28 @@
+<div align="center">
+
+<img src="docs/deploy/app-icon-512.png" width="112" alt="UBAA Ark 图标">
+
 # UBAA Ark
 
-![HarmonyOS](https://img.shields.io/badge/HarmonyOS-6.1.0%2823%29%2B-green.svg?style=flat)
-![ArkTS](https://img.shields.io/badge/ArkTS-ArkUI-blue.svg?style=flat)
-![HDS](https://img.shields.io/badge/UI_Design_Kit-HDS-purple.svg?style=flat)
-![Version](https://img.shields.io/badge/version-0.9.0-orange.svg?style=flat)
-![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat)
+**智慧北航 Remake 的 HarmonyOS 原生版：北航学生的一站式校园助手**
+
+课表、作业、成绩、选课、预约、打卡和云打印，一个应用全部搞定。
+
+[![最新版本](https://img.shields.io/github/v/release/li-peipeipeipei/UBAA-Ark?include_prereleases&label=%E7%89%88%E6%9C%AC&color=2f7cf6)](https://github.com/li-peipeipeipei/UBAA-Ark/releases)
+[![下载量](https://img.shields.io/github/downloads/li-peipeipeipei/UBAA-Ark/total?label=%E4%B8%8B%E8%BD%BD&color=2fb67c)](https://github.com/li-peipeipeipei/UBAA-Ark/releases)
+[![Stars](https://img.shields.io/github/stars/li-peipeipeipei/UBAA-Ark?style=flat&logo=github&label=Stars)](https://github.com/li-peipeipeipei/UBAA-Ark/stargazers)
+[![许可证](https://img.shields.io/github/license/li-peipeipeipei/UBAA-Ark?label=%E8%AE%B8%E5%8F%AF%E8%AF%81)](LICENSE)
+
+![ArkTS](https://img.shields.io/badge/ArkTS-6.1-blue.svg?style=flat&logo=typescript)
+![ArkUI](https://img.shields.io/badge/ArkUI-HDS-purple.svg?style=flat)
+![Platform](https://img.shields.io/badge/Platform-HarmonyOS%20NEXT-2fb67c.svg?style=flat)
+![上游](https://img.shields.io/badge/Upstream-v2.x%20Rust%20%2B%20Flutter-orange.svg?style=flat)
+
+[**下载安装与使用指南**](https://github.com/li-peipeipeipei/UBAA-Ark/releases) · [功能一览](#已实现功能) · [问题反馈](https://github.com/li-peipeipeipei/UBAA-Ark/issues)
+
+</div>
+
+---
 
 **UBAA Ark** 是开源项目 [UBAA](https://github.com/BUAASubnet/UBAA) v2.x 的 HarmonyOS 原生客户端，
 把课表、成绩、选课、预约、作业、打卡等校园服务放进一个应用。
