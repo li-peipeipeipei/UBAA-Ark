@@ -3,3 +3,6 @@
 *.jpg binary
 *.jpeg binary
 *.webp binary
+
+# GitHub Linguist：让 ArkTS 源码参与语言统计（否则只剩 HTML/少量 .ts）
+*.ets linguist-language=ArkTS
