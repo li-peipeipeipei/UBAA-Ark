@@ -4,5 +4,5 @@
 *.jpeg binary
 *.webp binary
 
-# GitHub Linguist：让 ArkTS 源码参与语言统计（否则只剩 HTML/少量 .ts）
-*.ets linguist-language=ArkTS
+# GitHub Linguist：GitHub 尚未识别 ArkTS，按 TypeScript 统计（ArkTS 是其超集）
+*.ets linguist-language=TypeScript
