@@ -33,14 +33,18 @@ interface SigninCache {
  */
 
 /**
- * 允许提前多久点签到。
+ * 页内直接签到的时间窗，与上游 2.0.3 对齐：**课前 5 分钟 → 上课后 30 分钟**。
  *
- * 签到窗口由**教师**开启，不是课表说了算，所以不能只按上课时间卡死；但完全放开
- * 就变成「点了必失败」。真机实测（2026-11-19 13:05 点 14:00 的课）上游回的是
- * `ERRCODE=101 / 签到失败！` —— 客户端的代价是一次白跑的写请求 + 一句看不懂的报错。
- * 留 10 分钟余量（产品口径）：盖住教师提前开窗的常见情况，又不至于提前太久空点。
+ * 之前鸿蒙版用「课前 10 分钟 → 下课」的单一窗口（产品口径），2026-11-25 真机
+ * 18:54 对一门 19:00 开始的课点击（课前 6 分钟），上游回 `ERRCODE=121 / 签到时间有误`：
+ * 旧窗口认为开放、上游直接签到窗口（课前 5 分钟起）还没到。白点一次写请求不划算。
+ * 二维码仍用独立的「课前 10 分钟 → 下课」窗口（见 `QR_EARLY_MS`），两套不混用。
  */
-const SIGNIN_EARLY_MS: number = 10 * 60 * 1000;
+const SIGNIN_EARLY_MS: number = 5 * 60 * 1000;
+/** 直接签到在上课后多久截止（上游口径；若该课更早下课，按下课时间截断）。 */
+const SIGNIN_LATE_MS: number = 30 * 60 * 1000;
+/** 扫码签到的提前量：上游窗口是课前 10 分钟 → 下课。 */
+const QR_EARLY_MS: number = 10 * 60 * 1000;
 
 /** 一门课「现在能不能点」的结论（只用于展示，不改变上游语义）。 */
 enum SigninPhase {
@@ -48,7 +52,7 @@ enum SigninPhase {
   OPEN,
   /** 还没到上课时间：灰态「未开始」。 */
   UPCOMING,
-  /** 已经下课：灰态「已结束」。 */
+  /** 直接签到窗口已过（上课后 30 分钟或已下课）：灰态「签到截止 / 已结束」。 */
   ENDED
 }
 
@@ -154,19 +158,49 @@ export struct SigninPage {
     if (this.pendingCourseId.length > 0) {
       return;
     }
+    // 写前再判一次（定时器 30 秒一刷，界面可能还停在上一帧）。
+    this.nowMs = Date.now();
+    if (this.phase(item) !== SigninPhase.OPEN) {
+      Toast.show('当前不在直接签到时段（课前 5 分钟至上课后 30 分钟），请在有效时段内签到');
+      return;
+    }
     this.pendingCourseId = item.courseId;
     try {
       const result = await ApiService.performSignin(item.courseId);
-      Toast.show(result.message);
-      // 成功要回读状态；「已经签到」「结果未知」这两种失败也可能意味着上游状态已经变了
-      // （同学代签、上次其实写进去了），刷新一次才能画出真实状态。
-      if (result.success || result.message.indexOf('已经签到') >= 0 ||
-        result.message.indexOf('结果未知') >= 0) {
-        await this.load();
+      /**
+       * 🔴 写后必须回读真实状态，不能只信回包（2026-11-25 真机教训）。
+       *
+       * 当天 18:54 对 19:00 的课点了几次，回包全是 `ERRCODE=121 / 签到时间有误`，
+       * 界面如实显示失败；19:04 刷新却发现这门课已经「已签到」。回包与最终落库状态
+       * 不一致 —— 无论中间是教师端放行、另一次提交补上，还是上游先拒后写，对客户端
+       * 来说唯一可信的判据只有课程列表的在线 signStatus。上游 Rust Core 的
+       * `outcome_unknown` 回读规则也是这个思路，这里对所有回包都执行（写是低频动作，
+       * 多一跳只读查询换来「不误报」是值得的）。
+       */
+      let onlineSigned = false;
+      try {
+        onlineSigned = await this.isSigned(item.courseId);
+      } catch (error) {
+        // 回读失败不推翻回包：网络问题时保留回包结论，别把成功说成失败
+        Logger.warn('写后回读签到状态失败：' + (error as Error).message);
       }
-      if (result.success) {
-        // 告诉首页：那边「今日课程」里的签到按钮该换成对勾了
+      if (onlineSigned) {
+        // 真实状态已签：以回读为准，覆盖掉任何「失败」回包文案
+        await this.load();
+        Toast.show('签到成功（已按课堂系统实际状态确认）');
         SigninEvents.notifyChanged();
+        Logger.info('写后回读确认已签到（回包：' + result.message + '），以回读为准');
+      } else {
+        Toast.show(result.message);
+        // 回包成功 /「已经签到」/「结果未知」也可能意味着状态变了，刷新一次再画
+        if (result.success || result.message.indexOf('已经签到') >= 0 ||
+          result.message.indexOf('结果未知') >= 0) {
+          await this.load();
+        }
+        if (result.success) {
+          // 告诉首页：那边「今日课程」里的签到按钮该换成对勾了
+          SigninEvents.notifyChanged();
+        }
       }
     } catch (error) {
       const message = error instanceof ApiError
@@ -214,16 +248,45 @@ export struct SigninPage {
   }
 
   /**
-   * 这门课现在处于什么阶段。
+   * 这门课「页内直接签到」现在处于什么阶段。
    *
-   * 上游只回 `STATUS=1 / ERRCODE=101 / 签到失败！`，看不出是「没开窗」还是「下课了」，
-   * 所以把课表时间当**展示**依据：时间外不给按钮，避免一次注定失败的写入。
-   * 时间解析不出来（上游没给时间）时一律放开 —— 宁可让用户点一次，也别凭空拦死。
+   * 用上游 2.0.3 的直接签到窗口：课前 5 分钟 → 上课后 30 分钟（更早下课则按下课截断）。
+   * 时间外不给按钮，避免一次注定被拒的写入；时间解析不出来（上游没给）时一律放开，
+   * 宁可让用户点一次，也别凭空拦死。二维码有独立窗口，见 `qrPhase()`。
    */
   private phase(item: SigninClass): SigninPhase {
     const begin: Date | null = DateUtil.parseDateTime(item.classBeginTime);
     const end: Date | null = DateUtil.parseDateTime(item.classEndTime);
-    if (begin !== null && this.nowMs < begin.getTime() - SIGNIN_EARLY_MS) {
+    if (begin !== null) {
+      const beginMs: number = begin.getTime();
+      if (this.nowMs < beginMs - SIGNIN_EARLY_MS) {
+        return SigninPhase.UPCOMING;
+      }
+      let deadlineMs: number = beginMs + SIGNIN_LATE_MS;
+      if (end !== null && end.getTime() < deadlineMs) {
+        deadlineMs = end.getTime();
+      }
+      if (this.nowMs > deadlineMs) {
+        return SigninPhase.ENDED;
+      }
+      return SigninPhase.OPEN;
+    }
+    if (end !== null && this.nowMs > end.getTime()) {
+      return SigninPhase.ENDED;
+    }
+    return SigninPhase.OPEN;
+  }
+
+  /**
+   * 二维码的窗口状态：课前 10 分钟 → 下课。
+   *
+   * 与 `phase()` 分开，是因为扫码比页内直接签到放得更宽；共用一套会把「还能扫码
+   * 但已不能直接签到」的那段时间误标成「课堂已结束，无法扫码签到」。
+   */
+  private qrPhase(item: SigninClass): SigninPhase {
+    const begin: Date | null = DateUtil.parseDateTime(item.classBeginTime);
+    const end: Date | null = DateUtil.parseDateTime(item.classEndTime);
+    if (begin !== null && this.nowMs < begin.getTime() - QR_EARLY_MS) {
       return SigninPhase.UPCOMING;
     }
     if (end !== null && this.nowMs > end.getTime()) {
@@ -326,7 +389,17 @@ export struct SigninPage {
     return SigninPhase.ENDED;
   }
 
-  /** 签到码弹窗的状态提示：与 `phase()` 同一套时间窗判据，避免按钮和文案打架。 */
+  /** 右栏当前目标课的二维码窗口状态。 */
+  private activeQrPhase(): SigninPhase {
+    for (let i = 0; i < this.classes.length; i++) {
+      if (this.classes[i].courseId === this.activeCourseId) {
+        return this.qrPhase(this.classes[i]);
+      }
+    }
+    return SigninPhase.ENDED;
+  }
+
+  /** 签到码的状态提示：用二维码窗口（`qrPhase()`），不用直接签到的窗口。 */
   private qrStatusHint(now: SigninPhase): string {
     if (now === SigninPhase.UPCOMING) {
       return '签到未开始，无法扫码签到';
@@ -439,7 +512,7 @@ export struct SigninPage {
         } else if (this.phase(item) === SigninPhase.UPCOMING) {
           this.phaseChip(item, '未开始')
         } else if (this.phase(item) === SigninPhase.ENDED) {
-          this.phaseChip(item, '已结束')
+          this.phaseChip(item, this.endedLabel(item))
         } else {
           Text('签到')
             .fontSize(AppFont.caption)
@@ -510,13 +583,19 @@ export struct SigninPage {
       .borderRadius(999)
   }
 
+  /** 直接签到已截止时区分「课还在上」与「课已下课」，免得用户以为看错了。 */
+  private endedLabel(item: SigninClass): string {
+    const end: Date | null = DateUtil.parseDateTime(item.classEndTime);
+    return end !== null && this.nowMs <= end.getTime() ? '签到截止' : '已结束';
+  }
+
   private phaseLabel(item: SigninClass): string {
     const now: SigninPhase = this.phase(item);
     if (now === SigninPhase.UPCOMING) {
       return '未开始';
     }
     if (now === SigninPhase.ENDED) {
-      return '已结束';
+      return this.endedLabel(item);
     }
     return '待签到';
   }
@@ -556,8 +635,13 @@ export struct SigninPage {
       this.doSignin(item);
       return;
     }
-    Toast.show(now === SigninPhase.UPCOMING
-      ? '这门课 ' + this.shortTime(item.classBeginTime) + ' 开始，教师开启签到后再点'
+    if (now === SigninPhase.UPCOMING) {
+      Toast.show('这门课 ' + this.shortTime(item.classBeginTime) + ' 开始，教师开启签到后再点');
+      return;
+    }
+    const end: Date | null = DateUtil.parseDateTime(item.classEndTime);
+    Toast.show(end !== null && this.nowMs <= end.getTime()
+      ? '直接签到已截止（上课后 30 分钟），可点「查看签到码」扫码签到'
       : '这门课已经下课，本次签到不再受理');
   }
 
@@ -585,12 +669,12 @@ export struct SigninPage {
       ForEach(this.classes, (item: SigninClass) => {
         this.classCard(item);
       }, (item: SigninClass) => item.courseId + '-' + item.signStatus + '-' + this.phase(item) +
-        '-' + (this.activeCourseId === item.courseId ? 'on' : 'off'))
+        '-' + this.qrPhase(item) + '-' + (this.activeCourseId === item.courseId ? 'on' : 'off'))
     }
 
     Text('签到由任课教师开启窗口后有效；点击「签到」即向课堂系统提交，无法撤销。' +
-      '课表时间之外（未开始 / 已结束）不再给按钮，避免一次注定被拒的提交；' +
-      '若时间窗内仍提示被拒，请确认已连接校园网或已切到 WebVPN 模式。')
+      '页内签到只在课前 5 分钟至上课后 30 分钟给按钮（扫码可到下课）；' +
+      '若窗口内仍提示被拒，请确认已连接校园网或已切到 WebVPN 模式。')
       .fontSize(AppFont.caption)
       .fontColor(AppColor.textTertiary)
       .width('100%')
@@ -691,8 +775,8 @@ export struct SigninPage {
         courseName: this.activeName(),
         embedded: true,
         initialSigned: this.activeSigned(),
-        statusHint: this.qrStatusHint(this.activePhase()),
-        statusPositive: this.qrStatusPositive(this.activePhase()),
+        statusHint: this.qrStatusHint(this.activeQrPhase()),
+        statusPositive: this.qrStatusPositive(this.activeQrPhase()),
         onCheckSigned: (): Promise<boolean> => this.isSigned(this.activeCourseId)
       })
     }
@@ -704,6 +788,11 @@ export struct SigninPage {
       return '未开始';
     }
     if (now === SigninPhase.ENDED) {
+      for (let i = 0; i < this.classes.length; i++) {
+        if (this.classes[i].courseId === this.activeCourseId) {
+          return this.endedLabel(this.classes[i]);
+        }
+      }
       return '已结束';
     }
     return '待签到';
@@ -721,7 +810,7 @@ export struct SigninPage {
 
   /** 手机单列：点「查看签到码」弹出与课程详情同款的弹窗。 */
   private openQrDialog(item: SigninClass): void {
-    const now: SigninPhase = this.phase(item);
+    const now: SigninPhase = this.qrPhase(item);
     this.qrController = new CustomDialogController({
       builder: SigninQrDialog({
         courseId: item.courseId,

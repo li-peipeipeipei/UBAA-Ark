@@ -281,7 +281,8 @@ export class LocalSigninService {
     const raw = textOf(envelope.ERRMSG);
     const errCode = textOf(envelope.ERRCODE);
     if (!success) {
-      Logger.warn('签到未成功：STATUS=' + textOf(envelope.STATUS) +
+      Logger.warn('签到未成功：courseSchedId=' + courseId +
+        ' STATUS=' + textOf(envelope.STATUS) +
         ' ERRCODE=' + (errCode.length > 0 ? errCode : '-') +
         ' ERRMSG=' + (raw.length > 0 ? raw : '-') +
         ' stuSignStatus=' + (signStatus.length > 0 ? signStatus : '-'));
@@ -700,6 +701,14 @@ export class LocalSigninService {
     // 结果不明」的中间态。不能让用户以为没签上而反复点（写操作无法撤销）。
     if (statusOk && signStatus.length === 0) {
       return '签到结果未知，请刷新确认状态后再决定是否重试';
+    }
+    // `ERRCODE=121 / 签到时间有误`：当前不在直接签到窗口（太早或太晚）。
+    // 2026-11-25 18:54 真机四次提交全中，是对 19:00 的课在 18:54（课前 6 分钟）点的，
+    // 旧版客户端窗口（课前 10 分钟）比上游（课前 5 分钟）宽，已同步收窄。
+    // 🔴 但同一门课后来回读显示「已签到」——回包失败≠最终没签上，所以这里只说窗口，
+    // 不断言「没签上 / 不支持补签」；真实结论由页面写后回读的 signStatus 给出。
+    if (errCode === '121' || rawMessage.indexOf('签到时间有误') >= 0) {
+      return '当前不在直接签到时段（课前 5 分钟至上课后 30 分钟）；实际签到结果以页面刷新后的状态为准';
     }
     // `ERRCODE=101` + 「签到失败！」：真机实测（2026-11-19 13:05 点 14:00 的课）——
     // 参数与用户都已被上游接受，是**业务层拒绝**：教师还没开窗，或本课走扫码签到。
