@@ -43,7 +43,7 @@ export struct BykcHomePage {
         .width('100%')
 
         Row({ space: AppSize.gap }) {
-          this.entryCard('课程统计', '查看学时统计', 'chart', 0)
+          this.entryCard('课程统计', '查看学时统计', 'chart', 0, 32)
           // 占位格，保持 2×2 布局（与原版一致）
           Blank()
             .layoutWeight(1)
@@ -83,49 +83,15 @@ export struct BykcHomePage {
    * 而这几个符号用 `Text` 就能画出来，无需额外资源。
    */
   @Builder
-  entryCard(title: string, subtitle: string, icon: string, key: number) {
+  entryCard(title: string, subtitle: string, icon: string, key: number, iconSize: number = 26) {
     Column({ space: 8 }) {
-      // 图标：菜单（默认）用三条实心圆角横杠手绘，几何居中；其余仍是符号字形
+      // 图标：三张入口卡片统一用自绘 SVG（实心路径，运行时按品牌色着色）
       Stack() {
-        if (icon === 'list' || icon === 'menu') {
-          Column({ space: 3 }) {
-            Row()
-              .width(16)
-              .height(2.5)
-              .borderRadius(1.25)
-              .backgroundColor(AppColor.brand)
-            Row()
-              .width(16)
-              .height(2.5)
-              .borderRadius(1.25)
-              .backgroundColor(AppColor.brand)
-            Row()
-              .width(16)
-              .height(2.5)
-              .borderRadius(1.25)
-              .backgroundColor(AppColor.brand)
-          }
-        } else if (icon === 'bookmark') {
-          // 手绘旗子：旗杆必须是竖直的（系统 flag 符号是斜杆/飘动状）
-          Row() {
-            Row()
-              .width(2)
-              .height(20)
-              .borderRadius(1)
-              .backgroundColor(AppColor.brand)
-
-            Polygon({ width: 14, height: 10 })
-              .points([[0, 0], [14, 5], [0, 10]])
-              .fill(AppColor.brand)
-              .margin({ left: 1 })
-          }
-          .height(20)
-          .alignItems(VerticalAlign.Top)
-        } else {
-          Text(this.iconText(icon))
-            .fontSize(26)
-            .fontColor(AppColor.brand)
-        }
+        Image(this.entryIcon(icon))
+          .width(iconSize)
+          .height(iconSize)
+          .objectFit(ImageFit.Contain)
+          .fillColor(AppColor.brand)
       }
       .width(48)
       .height(48)
@@ -153,6 +119,17 @@ export struct BykcHomePage {
   }
 
   /** 图标符号（无资源依赖）。 */
+  /** 入口卡片图标：三张卡片各一套自绘 SVG。 */
+  private entryIcon(icon: string): Resource {
+    if (icon === 'list' || icon === 'menu') {
+      return $r('app.media.ic_bykc_select');
+    }
+    if (icon === 'bookmark') {
+      return $r('app.media.ic_bykc_mine');
+    }
+    return $r('app.media.ic_bykc_stats');
+  }
+
   private iconText(icon: string): string {
     if (icon === 'bookmark') {
       return '⚑';

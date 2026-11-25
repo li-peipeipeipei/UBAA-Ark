@@ -6,6 +6,14 @@ import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { ErrorView, InfoRow, LoadingView, SectionCard } from '../../components/CommonViews';
 import { CampusAmount, NetworkProductUsage } from '../../model/ApiTypes';
+import { PageCache } from '../../common/PageCache';
+import { OfflineKey } from '../../common/OfflineCache';
+import { PullToRefresh } from '../../components/PullToRefresh';
+
+/** 网费流量首帧缓存内容。 */
+interface NetworkCache {
+  products: NetworkProductUsage[];
+}
 
 /**
  * 网费流量（上游 UBAA 2.0「校园服务 · 网费」）。
@@ -28,16 +36,29 @@ export struct NetworkPage {
   }
 
   private async load(): Promise<void> {
-    this.loadState = LoadState.LOADING;
+    // 冷启动首帧：先同步读上次缓存，命中就直接进 SUCCESS（后台继续拉新覆盖）
+    const cached: NetworkCache | null = PageCache.load<NetworkCache>(
+      OfflineKey.NETWORK, PageCache.TTL_HALF_DAY);
+    if (cached !== null && cached.products.length > 0) {
+      this.products = cached.products;
+      this.loadState = LoadState.SUCCESS;
+    }
+    if (this.loadState !== LoadState.SUCCESS) {
+      this.loadState = LoadState.LOADING;
+    }
     try {
       const usage = await LocalCampusService.fetchNetworkUsage();
       this.products = usage.products;
       this.loadState = LoadState.SUCCESS;
+      PageCache.save(OfflineKey.NETWORK, { products: this.products } as NetworkCache);
       Logger.info('网费页面加载完成：' + this.products.length + ' 个产品');
     } catch (error) {
       this.errorMessage = error instanceof ApiError ?
         (error as ApiError).friendlyMessage() : '网费数据加载失败，请稍后重试';
-      this.loadState = LoadState.ERROR;
+      // 缓存命中过时失败不切 ERROR，保留已渲染的本地内容
+      if (this.loadState !== LoadState.SUCCESS) {
+        this.loadState = LoadState.ERROR;
+      }
       Logger.error('网费数据加载失败：' + (error as Error).message);
     }
   }
@@ -103,7 +124,9 @@ export struct NetworkPage {
     .padding({ top: 10, bottom: 10 })
   }
 
-  build() {
+  /** 原页面内容。下拉刷新由外层 `build()` 的 PullToRefresh 提供。 */
+  @Builder
+  pageContent() {
     Scroll() {
       Column({ space: AppSize.gapLarge }) {
         if (this.loadState === LoadState.LOADING) {
@@ -164,5 +187,14 @@ export struct NetworkPage {
     .width('100%')
     .height('100%')
     .backgroundColor(AppColor.pageBackground)
+  }
+
+  build() {
+    PullToRefresh({
+      onRefresh: () => this.load(),
+      contentBuilder: () => {
+        this.pageContent();
+      }
+    })
   }
 }

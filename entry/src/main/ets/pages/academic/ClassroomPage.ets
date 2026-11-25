@@ -13,6 +13,7 @@ import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { selectMenuMaterial } from '../../common/SystemMaterial';
 import { EmptyView, ErrorView, LoadingView, SectionCard } from '../../components/CommonViews';
 import { ClassroomInfo, ClassroomQueryResponse } from '../../model/ApiTypes';
+import { PullToRefresh } from '../../components/PullToRefresh';
 
 
 /** 离线缓存里的教室查询（含查询条件，失败时能退回上一次结果）。 */
@@ -615,7 +616,9 @@ export struct ClassroomPage {
     }
   }
 
-  build() {
+  /** 原页面内容。下拉刷新由外层 `build()` 的 PullToRefresh 提供。 */
+  @Builder
+  pageContent() {
     Scroll() {
       Column({ space: AppSize.gap }) {
         this.campusRow()
@@ -676,5 +679,15 @@ export struct ClassroomPage {
     .width('100%')
     .height('100%')
     .backgroundColor(AppColor.pageBackground)
+  }
+
+  build() {
+    PullToRefresh({
+      // 本页默认不自动查询；下拉即按当前校区 / 日期 / 节次条件重查。
+      onRefresh: () => this.query(),
+      contentBuilder: () => {
+        this.pageContent();
+      }
+    })
   }
 }

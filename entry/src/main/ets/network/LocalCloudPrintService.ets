@@ -1,6 +1,18 @@
+import { image } from '@kit.ImageKit';
+import { util } from '@kit.ArkTS';
 import { Logger } from '../common/Logger';
 import { ApiError } from './ApiError';
 import { CasParser } from './CasParser';
+import {
+  buildImagePdf,
+  buildUploadMultipart,
+  isPrintableImage,
+  isPrintableName,
+  MultipartField,
+  PRINT_MAX_BYTES,
+  printMimeOf,
+  randomBoundary
+} from './CloudPrintUpload';
 import { LocalWebVpn } from './LocalWebVpn';
 import { UpstreamClient, UpstreamResponse } from './UpstreamClient';
 import { StoredCookie, TokenStore } from './TokenStore';
@@ -8,7 +20,7 @@ import { StoredCookie, TokenStore } from './TokenStore';
 /**
  * 图书馆云打印（上游 `features/cloud_print/`）—— **只读**部分。
  *
- * 本轮只做**文档列表 + 打印站状态**（上游 `read.rs` 的 `documents` / `stations`）。
+ * 做的是：文档列表（待打印 / 扫描文档，分开取）、打印站状态、使用记录。
  * PDF 生成、分片上传（`pdf.rs` / `upload.rs`）与预览、下载、删除都**不做** ——
  * 那些需要文件选择器、大文件分片与写操作，风险与工作量都高一档。
  *
@@ -17,13 +29,16 @@ import { StoredCookie, TokenStore } from './TokenStore';
  * | 用途 | 地址 | 判据 |
  * |---|---|---|
  * | 会话检查 | `POST /api/client/Auth/Check`（`Content-Length: 0`） | `code===0` 且 `result.szLogonName` 非空 |
- * | 文档列表 | `GET /api/client/PrintJob/Get`（打印）/ `Scan/Get`（扫描） | `code===0` → `result: [...]` |
+ * | 待打印 | `GET /api/client/PrintJob/Get` | `code===0` → `result: [...]` |
+ * | 扫描文档 | `GET /api/client/Scan/Get` | 同上 |
  * | 打印站 | `GET /api/client/Station/GetSrvList` + `Station/GetList` | 同上 |
+ * | 使用记录 | `POST /api/client/Report/DetailPageEx`（JSON 体 5 字段，每页 20 条） | 同上 |
  *
  * - `code===0` 成功；`code===4` **需认证**；其它 = 服务器拒绝。
  * - API 基址 `https://print.lib.buaa.edu.cn/api/client/<path>`；
  *   页面 `https://print.lib.buaa.edu.cn/client/new/cprintPc/cprint.html`。
- * - `PrintJob/Get` 要带一个随机 `timestamp` 查询参（上游 `timestamped()`）。
+ * - `PrintJob/Get`、`Scan/Get`、`Station/GetList`、`Report/DetailPageEx` 都要带随机
+ *   `timestamp` 查询参（上游 `timestamped()`）。
  *
  * ## 认证（上游 `auth.rs`）
  *
@@ -38,6 +53,18 @@ import { StoredCookie, TokenStore } from './TokenStore';
 const HOST: string = 'print.lib.buaa.edu.cn';
 const PAGE: string = 'https://print.lib.buaa.edu.cn/client/new/cprintPc/cprint.html';
 const API_BASE: string = 'https://print.lib.buaa.edu.cn/api/client/';
+
+/**
+ * 使用记录每页条数。
+ *
+ * 上游（`read.rs` 与官网脚本）写死 5 条/页；这里按用户要求改成 20 条/页
+ * ——手机上 5 条一页要翻十几次，20 条一屏多一点，翻页成本明显更低。
+ * 服务端接受任意 `dwRowCount`，并按它重算 `dwTotalPage`。
+ */
+const RECORD_PAGE_SIZE: number = 20;
+
+/** 上传的传输超时（毫秒）：默认 30s 传大 PDF 会超时（错误码 1007900028）。 */
+const UPLOAD_TIMEOUT_MS: number = 180000;
 
 /* ------------------------------ 数据结构 ------------------------------ */
 
@@ -72,6 +99,49 @@ export interface PrintStation {
   papers: string[];
   /** 能力（打印 / 复印 / 扫描 / 彩色）。 */
   capabilities: string[];
+}
+
+/** 一条使用记录（上游 `PrintRecord`）。 */
+export interface PrintRecord {
+  /** 形如 `20261117`。 */
+  date: string;
+  /** 形如 `143005`。 */
+  time: string;
+  pages: string;
+  /** A4 / A3；未知为空串。 */
+  paper: string;
+  /** 免费额度（分）。 */
+  freeCents: number;
+  /** 校园卡（分）。 */
+  cardCents: number;
+  /** 其他（分）。 */
+  otherCents: number;
+}
+
+/** 使用记录的一页。 */
+export interface PrintRecords {
+  items: PrintRecord[];
+  totalPages: number;
+}
+
+/** 上传时的打印参数（对应上游 `PrintOptions`）。 */
+export interface PrintOptionSet {
+  /** `true` 彩色（`dwColor=2`）；`false` 黑白（`dwColor=1`）。 */
+  color: boolean;
+  /** `-1` 原稿 / `8` A3 / `9` A4。 */
+  paper: number;
+  /** `1` 单面 / `2` 长边翻转 / `3` 短边翻转。 */
+  duplex: number;
+  copies: number;
+  /** 页码范围；`0,0` = 全部。 */
+  from: number;
+  to: number;
+}
+
+/** 待上传的一份文件。 */
+export interface LocalPrintFile {
+  name: string;
+  bytes: Uint8Array;
 }
 
 function invalid(): ApiError {
@@ -145,21 +215,57 @@ export class LocalCloudPrintService {
   /* ------------------------------ 对外 ------------------------------ */
 
   /**
-   * 文档列表（打印 + 扫描，合并返回）。
+   * 文档列表。
    *
-   * 两个接口都打一次，扫描件标 `scan: true`（字段语义不同）。
+   * @param scans `false` = 待打印（`PrintJob/Get`）；`true` = 扫描文档（`Scan/Get`）。
+   *              两套接口字段语义不同（`szJobName` vs `szDisplayName`、`dwCreateDate` vs
+   *              `dwSubmitDate`），必须分开取，不能合并——否则「待打印」里会混进扫描件。
    */
-  static async fetchDocuments(): Promise<PrintDocument[]> {
+  static async fetchDocuments(scans: boolean): Promise<PrintDocument[]> {
+    const path: string = scans ? 'Scan/Get' : 'PrintJob/Get';
+    const rows = arrOf(envelope(await LocalCloudPrintService.json(path)), 'result');
     const out: PrintDocument[] = [];
-    const jobs = arrOf(envelope(await LocalCloudPrintService.json('PrintJob/Get')), 'result');
-    for (let i = 0; i < jobs.length; i++) {
-      out.push(LocalCloudPrintService.jobDocument(jobs[i], false));
-    }
-    const scans = arrOf(envelope(await LocalCloudPrintService.json('Scan/Get')), 'result');
-    for (let i = 0; i < scans.length; i++) {
-      out.push(LocalCloudPrintService.jobDocument(scans[i], true));
+    for (let i = 0; i < rows.length; i++) {
+      out.push(LocalCloudPrintService.jobDocument(rows[i], scans));
     }
     return out;
+  }
+
+  /**
+   * 使用记录（上游 `read.rs` 的 `records`）。
+   *
+   * `POST Report/DetailPageEx?timestamp=…`，JSON 体五个字段。
+   *
+   * ⚠️ 每页条数用 **20**（`RECORD_PAGE_SIZE`），**刻意偏离上游的 5** —— 上游那个值
+   * 来自官网脚本，一页 5 条在手机上要翻十几次页，用户要求改成一页 20 条。
+   * 服务端认可任意 `dwRowCount`，`dwTotalPage` 会按新页长重算（实测 51 条记录：
+   * 5/页 → 11 页，20/页 → 3 页）。
+   *
+   * @param begin `yyyyMMdd`
+   * @param end   `yyyyMMdd`（含当天）
+   * @param kind  `1` 打印 / `2` 复印 / `4` 扫描（位标志，不是序号）
+   * @param page  从 1 开始
+   */
+  static async fetchRecords(begin: string, end: string, kind: number, page: number): Promise<PrintRecords> {
+    if (!LocalCloudPrintService.isYmd(begin) || !LocalCloudPrintService.isYmd(end) ||
+      begin > end || page < 1 || (kind !== 1 && kind !== 2 && kind !== 4)) {
+      throw new ApiError(400, 'cloudprint_records', '使用记录查询条件无效');
+    }
+    const bodyText: string = '{"dwBeginDate":"' + begin + '","dwEndDate":"' + end +
+      '","dwType":' + kind.toString() + ',"dwPageNo":' + page.toString() +
+      ',"dwRowCount":' + RECORD_PAGE_SIZE.toString() + '}';
+    const payload: Object = envelope(await LocalCloudPrintService.postJson('Report/DetailPageEx', bodyText));
+    const rows = arrOf(payload, 'result');
+    const items: PrintRecord[] = [];
+    for (let i = 0; i < rows.length; i++) {
+      items.push(LocalCloudPrintService.recordOf(rows[i]));
+    }
+    // 上游：第一页就没有记录时总页数记 0（服务端此时可能回 null/空）
+    const total: number = (items.length === 0 && page === 1) ? 0 : numOf(payload, 'dwTotalPage');
+    return {
+      items: items,
+      totalPages: total
+    } as PrintRecords;
   }
 
   /** 打印站状态（设备列表 + 分组）。 */
@@ -180,6 +286,264 @@ export class LocalCloudPrintService {
     LocalCloudPrintService.activated = false;
     LocalCloudPrintService.activateTask = null;
   }
+
+  /**
+   * 上传一份文档（上游 `upload.rs` 的 `send_upload`）。
+   *
+   * `POST /api/client/CloudPrint/Upload`，multipart 体：文件段 `szPath` 在最前，
+   * 随后 `dwColor` / `dwPaperId` / `dwDuplex` / `dwFrom` / `dwTo` / `dwCopies` / `BackURL`。
+   *
+   * 成功判据是**重定向**：302 到 `printDoc.html?code=0`。`code` 非 0 = 服务端拒绝，
+   * HTTP 413 = 超出大小限制。
+   *
+   * 图片（jpg/png）先在本机转成单页 PDF 再传 —— 与上游一致（服务端只吃 PDF 预览）。
+   *
+   * ⚠️ 这是**写**请求，失败绝不重发（`postRaw` 的 `isRead` 恒为 false）。
+   */
+  static async upload(file: LocalPrintFile, options: PrintOptionSet): Promise<void> {
+    if (!isPrintableName(file.name)) {
+      throw new ApiError(400, 'cloudprint_upload', '文件名无效：不能包含 / \\ " 等字符');
+    }
+    const mime: string = printMimeOf(file.name);
+    if (mime.length === 0) {
+      throw new ApiError(400, 'cloudprint_upload',
+        '官网未列出此文件格式，请选择 PDF、图片或常见 Office 文件');
+    }
+    if (file.bytes.length === 0 || file.bytes.length > PRINT_MAX_BYTES) {
+      throw new ApiError(400, 'cloudprint_upload', '打印文件需大于 0 字节且不超过 32 MiB');
+    }
+    let name: string = file.name;
+    let mimeType: string = mime;
+    let bytes: Uint8Array = file.bytes;
+    const converting: boolean = isPrintableImage(name);
+    if (converting) {
+      bytes = await LocalCloudPrintService.imagePdfBytes(file.bytes, options.paper);
+      name = name + '.pdf';
+      mimeType = 'application/pdf';
+      if (bytes.length > PRINT_MAX_BYTES) {
+        throw new ApiError(400, 'cloudprint_upload', '图片转为 PDF 后超过 32 MiB');
+      }
+    }
+    // 图片一律按 A4/A3 出图（原稿尺寸对图片没意义），与上游同一规则
+    const paper: number = (converting && options.paper === -1) ? 9 : options.paper;
+    const from: number = converting ? 0 : options.from;
+    const to: number = converting ? 0 : options.to;
+    const queuedUrl: string = 'https://print.lib.buaa.edu.cn/client/new/cprintPc/printDoc.html?t=' +
+      Date.now().toString();
+
+    const boundary: string = randomBoundary();
+    const fields: MultipartField[] = [
+      { key: 'dwColor', value: options.color ? '2' : '1' },
+      { key: 'dwPaperId', value: paper.toString() },
+      { key: 'dwDuplex', value: options.duplex.toString() },
+      { key: 'dwFrom', value: from.toString() },
+      { key: 'dwTo', value: to.toString() },
+      { key: 'dwCopies', value: options.copies.toString() },
+      { key: 'BackURL', value: queuedUrl }
+    ];
+    const body: ArrayBuffer = buildUploadMultipart(boundary, 'szPath', name, mimeType, bytes, fields);
+
+    await LocalCloudPrintService.ensureSession();
+    const headers: Record<string, string> = {};
+    headers['origin'] = 'https://print.lib.buaa.edu.cn';
+    headers['referer'] = PAGE;
+    let response: UpstreamResponse;
+    try {
+      response = await UpstreamClient.postRaw(
+        LocalCloudPrintService.endpoint('CloudPrint/Upload'), body,
+        'multipart/form-data; boundary=' + boundary, false, headers,
+        // 上传放宽到 3 分钟：默认 30s 传大 PDF 会报 `Timeout was reached`（错误码 1007900028），
+        // 服务端还要落盘 + 转码，叠加校内网关后更慢
+        UPLOAD_TIMEOUT_MS);
+    } catch (error) {
+      // 传输层失败（含超时 1007900028）：给一句人话，别把 RCP 的原始英文抛给用户
+      if (error instanceof ApiError && (error as ApiError).networkFailure) {
+        throw new ApiError(0, 'cloudprint_upload',
+          '上传超时或网络中断：大文件请连校内网络重试（单份上限 32 MiB）', true);
+      }
+      throw error as Error;
+    }
+    LocalCloudPrintService.checkUploadReply(response);
+  }
+
+  /**
+   * 删除一份文档（上游 `read.rs` 的 `delete`）。
+   *
+   * 打印：`PrintJob/Del` + `{dwJobId, dwOldJobId}`；扫描：`Scan/Del` + `{dwJobId}`。
+   * 写请求，不重发；上游在「结果未知」时要求先刷新列表核对，这里直接抛错让用户重试。
+   */
+  static async deleteDocument(item: PrintDocument, scan: boolean): Promise<void> {
+    if (item.expired) {
+      throw new ApiError(400, 'cloudprint_delete', '扫描文档已过期，无法删除');
+    }
+    await LocalCloudPrintService.ensureSession();
+    const path: string = scan ? 'Scan/Del' : 'PrintJob/Del';
+    const bodyText: string = scan ?
+      '{"dwJobId":"' + item.id + '"}' :
+      '{"dwJobId":"' + item.id + '","dwOldJobId":"' + item.id + '"}';
+    const headers: Record<string, string> = {};
+    headers['referer'] = PAGE;
+    const response: UpstreamResponse = await UpstreamClient.postJson(
+      LocalCloudPrintService.endpoint(path), bodyText, false, headers, false);
+    const payload: Object = LocalCloudPrintService.readJson(response);
+    envelope(payload);
+  }
+
+  /**
+   * 打印文档某页的预览图（上游 `read.rs` 的 `preview`）。
+   *
+   * `GET PrintJob/PreviewPage?dwJobId&dwCreateTime&pageNo`，`result` 是 **PNG 的 base64**。
+   *
+   * @param pageNo 从 1 开始；超过总页数会抛「预览页码不可用」
+   */
+  static async fetchPreviewPage(job: PrintDocument, pageNo: number): Promise<Uint8Array> {
+    if (pageNo < 1 || (job.pages.length > 0 && pageNo > Number(job.pages))) {
+      throw new ApiError(400, 'cloudprint_preview', '预览页码不可用');
+    }
+    await LocalCloudPrintService.ensureSession();
+    const url: string = LocalCloudPrintService.endpoint('PrintJob/PreviewPage') +
+      '?timestamp=' + Math.random().toString() +
+      '&dwJobId=' + encodeURIComponent(job.id) +
+      '&dwCreateTime=' + encodeURIComponent(job.time) +
+      '&pageNo=' + pageNo.toString();
+    const headers: Record<string, string> = {};
+    headers['accept'] = 'application/json, text/plain, */*';
+    const payload: Object = LocalCloudPrintService.readJson(
+      await UpstreamClient.get(url, true, headers));
+    envelope(payload);
+    const encoded: string = strOf(payload, 'result');
+    if (encoded.length === 0) {
+      throw new ApiError(502, 'cloudprint_preview', '预览图返回为空，请稍后重试');
+    }
+    try {
+      const bytes: Uint8Array = new util.Base64Helper().decodeSync(encoded);
+      // 上游要求严格是 PNG 头，否则判「无法识别」
+      if (bytes.length < 8 || bytes[0] !== 0x89 || bytes[1] !== 0x50) {
+        throw new ApiError(502, 'cloudprint_preview', '打印站返回的预览图格式异常');
+      }
+      return bytes;
+    } catch (error) {
+      if (error instanceof ApiError) {
+        throw error;
+      }
+      throw new ApiError(502, 'cloudprint_preview', '预览图解码失败');
+    }
+  }
+
+  /** 下载扫描原件（上游 `read.rs` 的 `scan_download`），返回 PDF/图片字节。 */
+  static async downloadScan(job: PrintDocument): Promise<Uint8Array> {
+    if (job.expired) {
+      throw new ApiError(400, 'cloudprint_download', '扫描文档已过期，无法下载');
+    }
+    await LocalCloudPrintService.ensureSession();
+    const url: string = LocalCloudPrintService.endpoint('Scan/Download') +
+      '?dwJobId=' + encodeURIComponent(job.id);
+    const response: UpstreamResponse = await UpstreamClient.getBinary(url, true);
+    if (!response.isOk()) {
+      throw new ApiError(response.status, 'cloudprint_download',
+        '扫描件下载失败（HTTP ' + response.status + '）');
+    }
+    const bytes: Uint8Array = response.bytes === null ? new Uint8Array(0) : response.bytes;
+    if (bytes.length === 0) {
+      throw new ApiError(502, 'cloudprint_download', '打印站没有返回扫描文件，请稍后重试');
+    }
+    // 上游会拦「返回 HTML/JSON」这种被跳登录页的情况
+    if (bytes.length > 1 && bytes[0] === 0x3c) {
+      LocalCloudPrintService.activated = false;
+      throw new ApiError(401, 'cloudprint_auth', '云打印会话已失效，请重新登录后再试');
+    }
+    return bytes;
+  }
+
+  /* ------------------------------ 上传辅助 ------------------------------ */
+
+  /**
+   * 图片 → 单页 PDF。
+   *
+   * 先让 ImageKit 统一解码并重新编码成 JPEG（PNG 的透明通道也一并合成掉），
+   * 再套上 `CloudPrintUpload.buildImagePdf` 的最小 PDF 结构。
+   *
+   * ⚠️ 编码完成前**不能**释放 pixelMap（会拿到 401 参数异常，官方列为常见错误）。
+   */
+  private static async imagePdfBytes(source: Uint8Array, paper: number): Promise<Uint8Array> {
+    let imageSource: image.ImageSource | null = null;
+    let pixelMap: image.PixelMap | null = null;
+    const packer: image.ImagePacker = image.createImagePacker();
+    try {
+      // 复制一份独立的内存：底层共享内存直接交给 createImageSource 会崩（见 CaptchaRecognizer）
+      const copy = new Uint8Array(source.length);
+      copy.set(source);
+      imageSource = image.createImageSource(copy.buffer as ArrayBuffer);
+      if (imageSource === null) {
+        throw new ApiError(400, 'cloudprint_upload', '无法解析这张图片');
+      }
+      pixelMap = await imageSource.createPixelMap();
+      if (pixelMap === null) {
+        throw new ApiError(400, 'cloudprint_upload', '无法解析这张图片');
+      }
+      const info: image.ImageInfo = await pixelMap.getImageInfo();
+      const width: number = info.size.width;
+      const height: number = info.size.height;
+      if (width <= 0 || height <= 0) {
+        throw new ApiError(400, 'cloudprint_upload', '图片尺寸异常');
+      }
+      if (width * height > 24000000) {
+        throw new ApiError(400, 'cloudprint_upload', '图片像素过大（超过 2400 万），请先压缩');
+      }
+      const option: image.PackingOption = { format: 'image/jpeg', quality: 94 };
+      const jpeg: ArrayBuffer = await packer.packToData(pixelMap, option);
+      return new Uint8Array(buildImagePdf(jpeg, width, height, paper));
+    } catch (error) {
+      if (error instanceof ApiError) {
+        throw error;
+      }
+      throw new ApiError(400, 'cloudprint_upload', '无法将该图片转为可打印的 PDF');
+    } finally {
+      await packer.release();
+      if (pixelMap !== null) {
+        await pixelMap.release();
+      }
+      if (imageSource !== null) {
+        await imageSource.release();
+      }
+    }
+  }
+
+  /** 上传响应判据：302/303 + `printDoc.html?code=0`。 */
+  private static checkUploadReply(response: UpstreamResponse): void {
+    if (response.status === 413) {
+      throw new ApiError(413, 'cloudprint_upload', '文件超过云打印服务器的大小限制');
+    }
+    if (response.status !== 302 && response.status !== 303) {
+      if (response.status === 401) {
+        LocalCloudPrintService.activated = false;
+        throw authRequired();
+      }
+      throw new ApiError(response.status, 'cloudprint_upload',
+        '上传未完成（HTTP ' + response.status + '），请稍后重试');
+    }
+    const location: string = response.location;
+    if (location.indexOf('/printDoc.html') < 0) {
+      throw new ApiError(502, 'cloudprint_upload', '上传结果无法识别，请刷新待打印列表核对');
+    }
+    const marker: number = location.indexOf('code=');
+    if (marker < 0) {
+      throw new ApiError(502, 'cloudprint_upload', '上传结果无法识别，请刷新待打印列表核对');
+    }
+    const rest: string = location.substring(marker + 5);
+    const amp: number = rest.indexOf('&');
+    const codeText: string = amp < 0 ? rest : rest.substring(0, amp);
+    const code: number = Number(codeText);
+    if (!Number.isFinite(code)) {
+      throw new ApiError(502, 'cloudprint_upload', '上传结果无法识别，请刷新待打印列表核对');
+    }
+    if (code !== 0) {
+      throw new ApiError(403, 'cloudprint_upload',
+        '云打印服务器拒绝了这份文件（code ' + code.toString() + '）');
+    }
+  }
+
+
 
   /* ------------------------------ 解析 ------------------------------ */
 
@@ -224,6 +588,33 @@ export class LocalCloudPrintService {
       expired: expired,
       scan: scan
     } as PrintDocument;
+  }
+
+  private static recordOf(row: Object): PrintRecord {
+    const paperId: number = numOf(row, 'dwPaperID');
+    return {
+      date: idLike(row, 'dwDate'),
+      time: idLike(row, 'dwTime'),
+      pages: idLike(row, 'dwPages'),
+      paper: paperId === 9 ? 'A4' : (paperId === 8 ? 'A3' : ''),
+      freeCents: numOf(row, 'dwUsedFreeMoney'),
+      cardCents: numOf(row, 'dwUsedCardMoney'),
+      otherCents: numOf(row, 'dwUsedMoney')
+    } as PrintRecord;
+  }
+
+  /** `yyyyMMdd` 且逐位是数字（上游 `records` 的入参校验）。 */
+  private static isYmd(text: string): boolean {
+    if (text.length !== 8) {
+      return false;
+    }
+    for (let i = 0; i < text.length; i++) {
+      const code: number = text.charCodeAt(i);
+      if (code < 48 || code > 57) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private static stationOf(row: Object, groups: Object[]): PrintStation {
@@ -299,6 +690,32 @@ export class LocalCloudPrintService {
     const url: string = needStamp ?
       LocalCloudPrintService.timestamped(path) : LocalCloudPrintService.endpoint(path);
     const response: UpstreamResponse = await UpstreamClient.get(url, true, headers);
+    return LocalCloudPrintService.readJson(response);
+  }
+
+  /**
+   * JSON 体 POST（使用记录）。
+   *
+   * ⚠️ 这是**只读查询**（`isRead = true`）：允许网络层失败时换路重试一次。
+   * 云打印的写入（删除 / 上传）不在这里，它们绝不能重发。
+   */
+  private static async postJson(path: string, bodyText: string): Promise<Object> {
+    await LocalCloudPrintService.ensureSession();
+    const headers: Record<string, string> = {};
+    headers['accept'] = 'application/json, text/plain, */*';
+    const url: string = LocalCloudPrintService.timestamped(path);
+    const response: UpstreamResponse =
+      await UpstreamClient.postJson(url, bodyText, true, headers, true);
+    return LocalCloudPrintService.readJson(response);
+  }
+
+  /**
+   * 统一解读响应：401 / 非 JSON（被跳登录页）= 会话失效；HTTP 非 2xx = 服务不可用。
+   *
+   * 两种失效都**必须把 `activated` 置回 false**：否则下次请求仍以为会话有效，
+   * 一直拿着过期 cookie 打到底（云打印的登录链只在 `activated === false` 时才会重走）。
+   */
+  private static readJson(response: UpstreamResponse): Object {
     if (response.status === 401) {
       LocalCloudPrintService.activated = false;
       throw authRequired();

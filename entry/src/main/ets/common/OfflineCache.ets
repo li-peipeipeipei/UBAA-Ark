@@ -30,6 +30,15 @@ const STORE_NAME: string = 'ubaa_offline_cache';
 /** 账号不匹配时整体作废（换账号不能看到别人的记录）。 */
 const KEY_ACCOUNT: string = 'account';
 
+/**
+ * 动态 key 登记表的持久化键（值是 JSON 字符串数组）。
+ *
+ * Preferences 无法枚举 key，带 id 的详情页 key 只能靠登记。登记表若只在内存里，
+ * 进程重启后就清空 —— 换账号时会漏掉上次进程写过的详情缓存。落到磁盘后，
+ * 冷启动也能恢复完整表，换账号清理才彻底。
+ */
+const KEY_PREFIXED_REGISTRY: string = 'off_pref_registry';
+
 interface CacheBox {
   /** 值（JSON 字符串）。 */
   v: string;
@@ -181,6 +190,9 @@ export class OfflineCache {
       for (let i = 0; i < keys.length; i++) {
         store.deleteSync(keys[i]);
       }
+      // 这批动态 key 已经删掉，登记表也一并清空；否则下次 clearAll 会白删一遍。
+      store.deleteSync(KEY_PREFIXED_REGISTRY);
+      OfflineCache.prefixedKeys = [];
       store.putSync(KEY_ACCOUNT, account);
       store.flush();
     } catch (error) {
@@ -190,15 +202,67 @@ export class OfflineCache {
 
   /** 列出全部 key（用于换账号时整体作废）。 */
   private static allKeys(store: preferences.Preferences): string[] {
-    // Preferences 没有「列所有 key」的同步 API，这里只清已知前缀。
-    // 各页面的 key 都以 `off_` 开头（见下面的常量），换账号时按前缀扫掉。
-    const known: string[] = [
-      OfflineKey.FINANCE,
-      OfflineKey.GRADE,
-      OfflineKey.EXAM,
-      OfflineKey.CLASSROOM
-    ];
-    return known;
+    // Preferences 没有「列所有 key」的同步 API，这里只清已知 key。
+    // 固定 key 全列；带 id 的详情页 key 在写入时顺手登记到 REGISTRY（见 registerPrefixed）。
+    const result: string[] = OfflineKey.ALL_FIXED.slice();
+    const registered: string[] = OfflineCache.registry();
+    for (let i = 0; i < registered.length; i++) {
+      result.push(registered[i]);
+    }
+    return result;
+  }
+
+  /**
+   * 带 id 的详情页 key 登记表（持久化到 Preferences）。
+   *
+   * Preferences 无法枚举 key，详情页又按 `前缀 + id` 动态生成 key，换账号时若不登记
+   * 就会残留上一个账号的详情缓存。写入这类 key 时调 {@link registerPrefixed} 登记一次，
+   * `clearAll` 即可一并清掉（重复登记由 indexOf 去重）。
+   *
+   * `null` 表示尚未从磁盘恢复 —— 首次使用时懒加载，避免每次读写都反序列化整张表。
+   */
+  private static prefixedKeys: string[] | null = null;
+
+  /** 取登记表：内存没有就从磁盘恢复（冷启动后的第一次登记/清理会走到这里）。 */
+  private static registry(): string[] {
+    let list: string[] | null = OfflineCache.prefixedKeys;
+    if (list === null) {
+      let restored: string[] = [];
+      const store = OfflineCache.store();
+      if (store !== null) {
+        try {
+          const raw = store.getSync(KEY_PREFIXED_REGISTRY, '') as string;
+          if (raw.length > 0) {
+            const parsed = JSON.parse(raw) as string[];
+            restored = Array.isArray(parsed) ? parsed : [];
+          }
+        } catch (error) {
+          restored = [];
+        }
+      }
+      list = restored;
+      OfflineCache.prefixedKeys = list;
+    }
+    return list ?? [];
+  }
+
+  /** 登记一个动态 key（带 id 的详情页写入时调用），并立即落盘。 */
+  static registerPrefixed(key: string): void {
+    const list: string[] = OfflineCache.registry();
+    if (list.indexOf(key) >= 0) {
+      return;
+    }
+    list.push(key);
+    const store = OfflineCache.store();
+    if (store === null) {
+      return;
+    }
+    try {
+      store.putSync(KEY_PREFIXED_REGISTRY, JSON.stringify(list));
+      store.flush();
+    } catch (error) {
+      // 落盘失败不影响本次读取；下次登记会重试写入整张表
+    }
   }
 }
 
@@ -208,6 +272,64 @@ export class OfflineKey {
   static readonly GRADE: string = 'off_grade';
   static readonly EXAM: string = 'off_exam';
   static readonly CLASSROOM: string = 'off_classroom';
+
+  // ---- 冷启动首帧缓存（PageCache 使用，统一 off_ 前缀） ----
+  static readonly HOME: string = 'off_home';
+  static readonly MINE_METRICS: string = 'off_mine_metrics';
+  static readonly SPOC: string = 'off_spoc';
+  static readonly BYKC_COURSES: string = 'off_bykc_courses';
+  static readonly BYKC_CHOSEN: string = 'off_bykc_chosen';
+  static readonly BYKC_STATISTICS: string = 'off_bykc_statistics';
+  static readonly BYKC_DETAIL_PREFIX: string = 'off_bykc_detail_';
+  static readonly IHOME_PREFIX: string = 'off_ihome_';
+  static readonly IHOME_DETAIL_PREFIX: string = 'off_ihome_detail_';
+  static readonly LIB_BOOKINGS: string = 'off_lib_bookings';
+  static readonly LIB_RESERVE: string = 'off_lib_reserve';
+  static readonly SIGNIN: string = 'off_signin';
+  static readonly YGDK: string = 'off_ygdk';
+  static readonly EVALUATION: string = 'off_evaluation';
+  static readonly JUDGE_PREFIX: string = 'off_judge_';
+  static readonly JUDGE_DETAIL_PREFIX: string = 'off_judge_detail_';
+  static readonly NETWORK: string = 'off_network';
+  static readonly CPRINT_QUEUE: string = 'off_cprint_queue';
+  static readonly CPRINT_SCANS: string = 'off_cprint_scans';
+  static readonly CPRINT_STATIONS: string = 'off_cprint_stations';
+  static readonly CPRINT_RECORDS: string = 'off_cprint_records';
+  static readonly USERINFO: string = 'off_userinfo';
+
+  /** 固定 key 的汇总（换账号时整体作废；带 id 的详情页 key 用前缀，见 allKeys）。 */
+  static readonly ALL_FIXED: string[] = [
+    OfflineKey.FINANCE,
+    OfflineKey.GRADE,
+    OfflineKey.EXAM,
+    OfflineKey.CLASSROOM,
+    OfflineKey.HOME,
+    OfflineKey.MINE_METRICS,
+    OfflineKey.SPOC,
+    OfflineKey.BYKC_COURSES,
+    OfflineKey.BYKC_CHOSEN,
+    OfflineKey.BYKC_STATISTICS,
+    OfflineKey.LIB_BOOKINGS,
+    OfflineKey.LIB_RESERVE,
+    OfflineKey.SIGNIN,
+    OfflineKey.YGDK,
+    OfflineKey.EVALUATION,
+    OfflineKey.NETWORK,
+    OfflineKey.CPRINT_QUEUE,
+    OfflineKey.CPRINT_SCANS,
+    OfflineKey.CPRINT_STATIONS,
+    OfflineKey.CPRINT_RECORDS,
+    OfflineKey.USERINFO
+  ];
+
+  /** 带 id 的详情页 key 前缀（换账号时按前缀清，避免残留别人的详情）。 */
+  static readonly PREFIXED: string[] = [
+    OfflineKey.BYKC_DETAIL_PREFIX,
+    OfflineKey.IHOME_PREFIX,
+    OfflineKey.IHOME_DETAIL_PREFIX,
+    OfflineKey.JUDGE_PREFIX,
+    OfflineKey.JUDGE_DETAIL_PREFIX
+  ];
 }
 
 /**

@@ -6,6 +6,7 @@ import { ApiError } from './ApiError';
 import { HttpEngine } from './HttpEngine';
 import { LocalWebVpn } from './LocalWebVpn';
 import { RouteAdapt, RouteEngine } from './RouteEngine';
+import { RouteScope } from './RouteScope';
 import { StoredCookie, TokenStore } from './TokenStore';
 
 /** 上游响应。 */
@@ -45,6 +46,15 @@ class SendOptions {
    * 见 `postRaw()` 的说明。
    */
   rawBody: ArrayBuffer | null = null;
+
+  /**
+   * 本次请求的**传输超时**（毫秒），默认 `AppConfig.READ_TIMEOUT`。
+   *
+   * 上传大文件（云打印的 PDF、拍照附件）常常超过 30s：服务端要落盘 + 转码，
+   * 叠加校内网关后更慢。这类请求单独放宽，别去改全局默认值 ——
+   * 全局调大会让所有请求都变「卡死不报错」。
+   */
+  transferTimeoutMs: number = AppConfig.READ_TIMEOUT;
 
   /**
    * 是否是「读」请求（幂等、可安全重放）。
@@ -215,6 +225,11 @@ export class UpstreamClient {
       if (!options.isRead || !networkFailure) {
         throw error as Error;
       }
+      // 登录/静默重认证期间已经显式钉在路上：换路会与正在进行的 CAS 流程抢路线
+      if (RouteScope.isScoped()) {
+        Logger.warn('路线作用域内（登录/重认证）不自动换路，保留原错误');
+        throw error as Error;
+      }
       const adapt: RouteAdapt = await RouteEngine.adaptToNetwork();
       if (adapt === RouteAdapt.SWITCHED) {
         Logger.warn('自动切换路线后重试读请求：' + method + ' ' + logicalUrl);
@@ -239,7 +254,14 @@ export class UpstreamClient {
     logicalUrl: string,
     options: SendOptions
   ): Promise<UpstreamResponse> {
-    const mode = TokenStore.getConnectionMode();
+    // 🔴 全局兜底：所有 Local*Service 的请求都要经过这里。
+    // 换网后如果全局钉住的路线没有会话、另一条有，先同步借回那条活会话，
+    // 否则这一请求会带着空 Cookie 罐打上游，表现为「全部服务加载不出来」。
+    // 登录/静默补登的 CAS 流程处于路线作用域内，必须保持显式指定的那条路。
+    if (!RouteScope.isScoped()) {
+      RouteEngine.ensureSessionRoute();
+    }
+    const mode = RouteScope.mode();
     const url = await LocalWebVpn.rewrite(logicalUrl, mode);
 
     const headers: rcp.RequestHeaders = {};
@@ -263,7 +285,7 @@ export class UpstreamClient {
       autoRedirect: options.followRedirects,
       timeout: {
         connectMs: AppConfig.CONNECT_TIMEOUT,
-        transferMs: AppConfig.READ_TIMEOUT
+        transferMs: options.transferTimeoutMs
       }
     };
     const sessionConfig: rcp.SessionConfiguration = {
@@ -741,12 +763,14 @@ export class UpstreamClient {
     body: ArrayBuffer,
     contentType: string,
     followRedirects: boolean = true,
-    extraHeaders?: Record<string, string>
+    extraHeaders?: Record<string, string>,
+    transferTimeoutMs: number = AppConfig.READ_TIMEOUT
   ): Promise<UpstreamResponse> {
     const options = new SendOptions();
     options.followRedirects = followRedirects;
     options.rawBody = body;
     options.contentType = contentType;
+    options.transferTimeoutMs = transferTimeoutMs;
     if (extraHeaders !== undefined) {
       options.extraHeaders = extraHeaders;
     }

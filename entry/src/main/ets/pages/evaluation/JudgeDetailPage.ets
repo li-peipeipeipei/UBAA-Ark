@@ -7,6 +7,13 @@ import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { ErrorView, LoadingView } from '../../components/CommonViews';
 import { JudgeAssignmentDetail, JudgeProblem, JudgeStatus } from '../../model/ApiTypes';
+import { PageCache } from '../../common/PageCache';
+import { OfflineKey } from '../../common/OfflineCache';
+
+/** 希冀作业详情首帧缓存内容。 */
+interface JudgeDetailCache {
+  detail: JudgeAssignmentDetail | null;
+}
 
 /**
  * 希冀作业详情。
@@ -25,14 +32,29 @@ export struct JudgeDetailPage {
   }
 
   private async load(): Promise<void> {
-    this.loadState = LoadState.LOADING;
+    // 冷启动首帧：按当前作业 id 同步读上次详情缓存，命中就直接进 SUCCESS
+    const key: string = OfflineKey.JUDGE_DETAIL_PREFIX + JudgeNav.courseId + '_' +
+      JudgeNav.assignmentId;
+    const cached: JudgeDetailCache | null = PageCache.load<JudgeDetailCache>(key, PageCache.TTL_DAY);
+    if (cached !== null && cached.detail !== null) {
+      this.detail = cached.detail;
+      this.loadState = LoadState.SUCCESS;
+    }
+    if (this.loadState !== LoadState.SUCCESS) {
+      this.loadState = LoadState.LOADING;
+    }
     try {
       this.detail = await ApiService.fetchJudgeDetail(JudgeNav.courseId, JudgeNav.assignmentId);
       this.loadState = LoadState.SUCCESS;
+      // 拉新成功写回缓存（动态 key，登记以便换账号清理）
+      PageCache.save(key, { detail: this.detail } as JudgeDetailCache, true);
     } catch (error) {
       this.errorMessage = error instanceof ApiError
         ? (error as ApiError).friendlyMessage() : '希冀作业详情加载失败';
-      this.loadState = LoadState.ERROR;
+      // 缓存命中过时失败不切 ERROR，保留已渲染的本地内容
+      if (this.loadState !== LoadState.SUCCESS) {
+        this.loadState = LoadState.ERROR;
+      }
       Logger.error('希冀作业详情加载失败：' + (error as Error).message);
     }
   }

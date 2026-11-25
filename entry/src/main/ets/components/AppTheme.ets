@@ -23,6 +23,24 @@ export class AppColor {
    * 的底色叠在材质之上。用不透明的 `brand_container` 会把材质整个盖死，故单列一个半透明版。
    */
   static readonly brandContainerGlass: Resource = $r('app.color.brand_container_glass');
+  /**
+   * 宽屏侧栏「选中项」的沾色底：浅色下比通用 `brandContainerGlass` 更深。
+   *
+   * 侧栏整条是接近白的半透明材质（`glassSurface`），通用的 `brandContainerGlass`
+   * 只有约 60% 的极浅蓝（#E3F0FC），叠上去和白色栏几乎融在一起，看不出选中态。
+   * 这里单独加深（浅色 #85B9E8 系），深色模式沿用原值无需加深。
+   * 只给侧栏用，避免把筛选胶囊 / 学期选择等共用 `brandContainerGlass` 的地方一起改深。
+   */
+  static readonly sideNavSelected: Resource = $r('app.color.side_nav_selected_glass');
+  /**
+   * 课表「同时段 N 节课」块的底色：与侧栏选中块**观感相同但完全不透明**。
+   *
+   * 侧栏选中块是半透明沾色（`sideNavSelected`），叠在近白/深灰栏底上得到最终的蓝。
+   * 课表块若直接用那半透明色，底下的网格横线会透出来。这里把最终结果**预混成实色**
+   * （浅 #A7CCED = #85B9E8@70% 叠 #F7F8FA；深 #223750 = #2B4E78@60% 叠 #141414），
+   * 观感与侧栏一致、又不透线。同课程的普通块也是这套"预混实色"思路。
+   */
+  static readonly multiCourseBlock: Resource = $r('app.color.multi_course_block');
   static readonly pageBackground: Resource = $r('app.color.page_background');
   static readonly pageBackgroundTop: Resource = $r('app.color.page_background_top');
   static readonly surface: Resource = $r('app.color.surface');
@@ -63,6 +81,13 @@ export class AppColor {
   static readonly divider: Resource = $r('app.color.divider');
   static readonly warning: Resource = $r('app.color.warning');
   static readonly danger: Resource = $r('app.color.danger');
+  /**
+   * 「未签」徽标用的红。
+   *
+   * 不复用 `danger`：那支 `#FF6B52` 偏珊瑚，压在 40% 白的灰底上会发闷，
+   * 用户反馈「红得不够鲜明」。这一支是纯正的高饱和红，只给签到槽位用。
+   */
+  static readonly signinMissed: Resource = $r('app.color.signin_missed');
   static readonly success: Resource = $r('app.color.success');
   /**
    * 空闲教室表格里的「空闲」格底色（柔和薄荷绿，与 UBAA 网页版表格一致）。
@@ -96,6 +121,13 @@ export class AppColor {
   static readonly accentGreen: Resource = $r('app.color.accent_green');
   static readonly accentPurple: Resource = $r('app.color.accent_purple');
   static readonly accentPink: Resource = $r('app.color.accent_pink');
+  /**
+   * 青色强调色。
+   *
+   * 2026-11-24 起功能页磁贴底色与转场色改由 `ScheduleColors` 按 slot 派生（课表同款色板），
+   * 不再依赖这里的强调色；本令牌仅用于主页「最近使用」小图标底色等非磁贴场景。
+   */
+  static readonly accentTeal: Resource = $r('app.color.accent_teal');
   /**
    * 悬浮底栏上方的渐隐遮罩色。
    *
@@ -140,6 +172,27 @@ export class AppSize {
   static readonly gapSmall: number = 8;
   static readonly gap: number = 12;
   static readonly gapLarge: number = 16;
+
+  /**
+   * 卡片标题「固定占两行」的最小高度（vp）。
+   *
+   * **为什么需要**：并排卡片（`GridRow` 多列 / 两栏 Row）里，标题占 2 行的卡会比占 1 行
+   * 的高出约一个字行高，同一行的卡片就高低错落（平板实机截图确认：博雅选择课程、
+   * 我的课程、成绩查询三页都能看到）。
+   *
+   * **做法**：给标题设一个正好等于「两行文字」的最小高度 —— 标题只有 1 行时在标题区
+   * 留白，2 行时正好铺满，同一行卡片因此等高；超过 2 行由 `maxLines(2)` 截断，
+   * 不会把卡继续撑高。
+   *
+   * 系数取 1.4（ArkUI 默认行高约等于字号的 1.4 倍）。**不要改成显式 `lineHeight`**：
+   * `lineHeight` 是 vp 定值，系统字体放大时文字会挤在一起；这里只约束最小高度，
+   * 大字号下标题仍可自然增高（只是那张卡会比其他卡略高，属于可接受的退化）。
+   *
+   * @param fontSize 标题字号：`AppFont.body`(14) / `AppFont.subtitle`(16)
+   */
+  static cardTitleTwoLines(fontSize: number): number {
+    return Math.ceil(fontSize * 1.4) * 2;
+  }
   /** 悬浮底栏高度（与 HdsTabs 迷你栏 / 页签栏高度保持一致）。 */
   static readonly tabBarHeight: number = 56;
   /**

@@ -6,6 +6,8 @@ import { ApiError } from '../../network/ApiError';
 import { ApiService } from '../../network/ApiService';
 import { AppColor, AppFont, AppMaterial, AppSize } from '../../components/AppTheme';
 import { MaterialCardLayer } from '../../components/MaterialCardLayer';
+import { ChipsEdgeFade } from '../../components/ChipsEdgeFade';
+import { FilterChip } from '../../components/FilterChip';
 import { immersiveMaterialActive } from '../../common/SystemMaterial';
 import curves from '@ohos.curves';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
@@ -26,6 +28,14 @@ import {
   toggleBykcCategory,
   toggleBykcStatus
 } from '../../common/BykcFilters';
+import { PageCache } from '../../common/PageCache';
+import { OfflineKey } from '../../common/OfflineCache';
+
+/** 课程列表首帧缓存内容。filters / loadingMore 等 UI 交互态不缓存。 */
+interface BykcCoursesCache {
+  allCourses: BykcCourse[];
+  totalPages: number;
+}
 
 const PAGE_SIZE: number = 20;
 
@@ -40,58 +50,10 @@ const PAGE_SIZE: number = 20;
  * - 逐行「教师: / 地点: / 时间: / 开始选课:」；
  * - 分类胶囊（+ 有签到点时加「自主签到」）；
  * - 报名进度条 + 「已报名 N / M」。
- */
-/**
- * 单个筛选胶囊（独立组件）。
  *
- * ⚠️ 不能用带参 `@Builder` 渲染：`@Builder` 的参数是「值传递 + 不参与刷新」，
- * 选中态变化后胶囊不会重绘（列表内容却会变，看起来就是「点了没反馈」）。
- * 用 `@Component` + `@Prop selected` 才能跟着 `filters` 一起更新。
+ * 筛选胶囊的样式与动画是全应用基准（`components/FilterChip`），
+ * 两侧渐隐遮罩见 `components/ChipsEdgeFade`。
  */
-@Component
-struct BykcFilterChip {
-  label: string = '';
-  /** 打开面板时的初始选中态。 */
-  initialSelected: boolean = false;
-  /** 组件内部状态：点击后自己重绘，不依赖父级重建（父级被 bindSheet 缓存）。 */
-  @State selected: boolean = false;
-  onTap: () => void = () => {
-  };
-
-  aboutToAppear(): void {
-    this.selected = this.initialSelected;
-  }
-
-  build() {
-    Row() {
-      // ✓ 常驻，只动画宽度 / 间距 / 透明度 —— 这样胶囊自身的宽度变化是连续的
-      SymbolGlyph($r('sys.symbol.checkmark'))
-        .fontSize(12)
-        .fontColor([AppColor.brand])
-        .width(this.selected ? 12 : 0)
-        .height(12)
-        .margin({ right: this.selected ? 4 : 0 })
-        .opacity(this.selected ? 1 : 0)
-      Text(this.label)
-        .fontSize(AppFont.caption)
-        .fontColor(this.selected ? AppColor.brand : AppColor.textSecondary)
-    }
-    .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-    .margin({ right: 8, bottom: 4 })
-    .borderRadius(16)
-    .backgroundColor(this.selected ? AppColor.brandContainerGlass : Color.Transparent)
-    .border({
-      width: 1,
-      color: this.selected ? Color.Transparent : AppColor.divider
-    })
-    .onClick(() => {
-      animateTo({ curve: curves.responsiveSpringMotion(0.25, 0.7) }, () => {
-        this.selected = !this.selected;
-      });
-      this.onTap();
-    })
-  }
-}
 
 /**
  * 筛选面板内容（状态 / 类别 / 校区）。
@@ -245,7 +207,7 @@ export struct BykcFilterPanel {
 
         Flex({ wrap: FlexWrap.Wrap }) {
           ForEach(options, (option: string) => {
-            BykcFilterChip({
+            FilterChip({
               label: labelOf(option),
               initialSelected: selected.indexOf(option) >= 0,
               onTap: () => {
@@ -282,6 +244,8 @@ export struct BykcCoursesPage {
 
   /** 系统沉浸材质是否可用（不可用时退回玻璃底，保证观感不塌）。 */
   private readonly materialActive: boolean = immersiveMaterialActive();
+  /** 胶囊行高度（由 Scroll 的 onAreaChange 上报，遮罩据此定高）。 */
+  @State private chipsRowH: number = 32;
 
   /**
    * 已经拉到第几页。
@@ -296,7 +260,17 @@ export struct BykcCoursesPage {
   }
 
   private async load(): Promise<void> {
-    this.loadState = LoadState.LOADING;
+    // 冷启动首帧：先同步读上次缓存，命中就直接进 SUCCESS
+    const cached: BykcCoursesCache | null =
+      PageCache.load<BykcCoursesCache>(OfflineKey.BYKC_COURSES, PageCache.TTL_HALF_DAY);
+    if (cached !== null && cached.allCourses.length > 0) {
+      this.allCourses = cached.allCourses;
+      this.totalPages = cached.totalPages;
+      this.loadState = LoadState.SUCCESS;
+    }
+    if (this.loadState !== LoadState.SUCCESS) {
+      this.loadState = LoadState.LOADING;
+    }
     try {
       // 需要「已结束 / 已过期」时才把 includeExpired 打开（原版 requiresAllCourses）
       const all: boolean = bykcRequiresAllCourses(this.filters);
@@ -305,10 +279,15 @@ export struct BykcCoursesPage {
       this.totalPages = page.totalPages;
       this.loadedPage = 1;
       this.loadState = LoadState.SUCCESS;
+      PageCache.save(OfflineKey.BYKC_COURSES,
+        { allCourses: this.allCourses, totalPages: this.totalPages } as BykcCoursesCache);
     } catch (error) {
       this.errorMessage = error instanceof ApiError ?
         (error as ApiError).friendlyMessage() : '博雅课程加载失败';
-      this.loadState = LoadState.ERROR;
+      // 缓存命中过时失败不切 ERROR，保留已渲染的本地内容
+      if (this.loadState !== LoadState.SUCCESS) {
+        this.loadState = LoadState.ERROR;
+      }
       Logger.error('博雅课程加载失败：' + (error as Error).message);
     }
   }
@@ -331,6 +310,9 @@ export struct BykcCoursesPage {
       this.allCourses = merged;
       this.totalPages = page.totalPages;
       this.loadedPage = nextPage;
+      // 分页成功后也写回：缓存里始终是「已合并的全部页」
+      PageCache.save(OfflineKey.BYKC_COURSES,
+        { allCourses: merged, totalPages: page.totalPages } as BykcCoursesCache);
     } catch (error) {
       Toast.show(error instanceof ApiError ?
         (error as ApiError).friendlyMessage() : '加载更多失败');
@@ -389,22 +371,39 @@ export struct BykcCoursesPage {
    * 会先关面板，第二次返回才退页面。
    */
   private openFilterPanel(): void {
-    this.filterPanelOpen = true;
+    // 显隐变化包进 animateTo：transition 的进出场由它驱动，关闭时才不会瞬间消失
+    animateTo({ curve: curves.responsiveSpringMotion(0.32, 0.88) }, () => {
+      this.filterPanelOpen = true;
+    });
     // 返回键触发的关闭：`BackGuard.consume()` 已经出栈了，这里只改状态，
     // 不能再 unregister（会把下一层误删）
     BackGuard.register(() => {
-      this.filterPanelOpen = false;
+      animateTo({ curve: curves.responsiveSpringMotion(0.32, 0.88) }, () => {
+        this.filterPanelOpen = false;
+      });
       return true;
     });
   }
 
   /** 关闭筛选面板（用户点关闭 / 点遮罩）：与 openFilterPanel 成对注销。 */
   private closeFilterPanel(): void {
-    this.filterPanelOpen = false;
+    animateTo({ curve: curves.responsiveSpringMotion(0.32, 0.88) }, () => {
+      this.filterPanelOpen = false;
+    });
     BackGuard.unregister();
   }
 
   /** 筛选浮层：遮罩 + 底部固定面板（不走 bindSheet，避免上拖露底）。 */
+  /**
+   * 已选条件行的两侧渐隐遮罩（恒定显示，见 `components/ChipsEdgeFade`）。
+   *
+   * 高度取 `Scroll` 的 `onAreaChange` 实测值 —— 遮罩高度给错会压暗下方卡片。
+   */
+  @Builder
+  chipsEdgeFade() {
+    ChipsEdgeFade({ fadeHeight: this.chipsRowH })
+  }
+
   @Builder
   filterOverlay() {
     if (this.filterPanelOpen) {
@@ -430,10 +429,19 @@ export struct BykcCoursesPage {
       }
       .width('100%')
       .height('100%')
-      // 整屏遮罩 + 吞掉空白区的点击（不关闭面板，避免打开时的抬手误触）
+      // 整屏遮罩：点击面板外的空白区关闭（与右上角 × 等价）
       .backgroundColor('#66000000')
       .onClick(() => {
+        this.closeFilterPanel();
       })
+      // ⚠️ 退场动画必须挂在 `if` 分支的直属节点（这个 Stack）上。
+      // 原来只挂在子节点 BykcFilterPanel：关闭时整棵 Stack 被移除，
+      // 子节点的 transition 不会触发，表现为「打开有动画、关闭瞬间消失」。
+      // 遮罩本身只做淡入淡出，不跟着缩放 —— 否则缩放时四角会露出未遮暗的页面。
+      .transition(
+        TransitionEffect.OPACITY
+          .animation({ curve: curves.responsiveSpringMotion(0.32, 0.88) })
+      )
     }
   }
 
@@ -446,7 +454,7 @@ export struct BykcCoursesPage {
         this.filters = next;
       },
       onClose: () => {
-        this.filterPanelOpen = false;
+        this.closeFilterPanel();
       }
     })
   }
@@ -479,6 +487,8 @@ export struct BykcCoursesPage {
           .layoutWeight(1)
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
+          // 标题固定占两行：多列并排时，一行标题的卡不会比两行标题的卡矮一截
+          .constraintSize({ minHeight: AppSize.cardTitleTwoLines(AppFont.body) })
         Text(item.selected ? '✓ 已选' : BYKC_STATUS_LABEL[item.status])
           .fontSize(AppFont.caption)
           .fontColor(AppColor.textOnBrand)
@@ -602,17 +612,23 @@ export struct BykcCoursesPage {
           })
         } else {
           // 筛选入口（原版顶部那张「筛选课程」卡）
+          Column() {
           Row({ space: 12 }) {
-            Text('☰')
-              .fontSize(20)
-              .fontColor(AppColor.brand)
-              .width(40)
-              .height(40)
-              .textAlign(TextAlign.Center)
-              .borderRadius(12)
-              .backgroundColor(AppColor.brandContainer)
+            // 漏斗图标（实心路径，运行时按品牌色着色，深浅主题自动跟随）
+            Column() {
+              Image($r('app.media.ic_filter_funnel'))
+                .width(22)
+                .height(22)
+                .objectFit(ImageFit.Contain)
+                .fillColor(AppColor.brand)
+            }
+            .width(40)
+            .height(40)
+            .justifyContent(FlexAlign.Center)
+            .borderRadius(12)
+            .backgroundColor(AppColor.brandContainer)
             Column({ space: 2 }) {
-              Text('筛选课程')
+              Text('点击筛选课程')
                 .fontSize(AppFont.body)
                 .fontWeight(FontWeight.Medium)
                 .fontColor(AppColor.textPrimary)
@@ -630,6 +646,9 @@ export struct BykcCoursesPage {
           .onClick(() => {
             this.openFilterPanel();
           })
+          }
+          .width('100%')
+          .padding({ left: AppSize.pagePadding, right: AppSize.pagePadding })
 
           // 已选条件摘要：与筛选弹窗里的胶囊同款（同尺寸、同交互，点一下即取消该条件）
           if (this.filters.statuses.length > 0 || this.filters.categories.length > 0 || this.filters.campuses.length > 0) {
@@ -637,7 +656,7 @@ export struct BykcCoursesPage {
             Scroll() {
               Row() {
               ForEach(this.filters.statuses, (status: string) => {
-                BykcFilterChip({
+                FilterChip({
                   label: BYKC_STATUS_LABEL[status],
                   initialSelected: true,
                   onTap: () => {
@@ -648,7 +667,7 @@ export struct BykcCoursesPage {
                 })
               }, (status: string) => 's-' + status)
               ForEach(this.filters.categories, (category: string) => {
-                BykcFilterChip({
+                FilterChip({
                   label: category,
                   initialSelected: true,
                   onTap: () => {
@@ -664,7 +683,7 @@ export struct BykcCoursesPage {
                 )
               }, (category: string) => 'c-' + category)
               ForEach(this.filters.campuses, (campus: string) => {
-                BykcFilterChip({
+                FilterChip({
                   label: campus,
                   initialSelected: true,
                   onTap: () => {
@@ -680,25 +699,48 @@ export struct BykcCoursesPage {
                 )
               }, (campus: string) => 'p-' + campus)
               }
+              // 内边距留在**滚动内容**里：静止时首尾胶囊与卡片对齐（16vp），
+              // 一旦滑动，这段留白会跟着滚走，胶囊就能贴到屏幕边缘。
               .padding({ left: AppSize.pagePadding, right: AppSize.pagePadding })
               // 宽度随内容（不写 100%），超出视口才能横向滚动
             }
             .width('100%')
-            // 抵消页面左右内边距：胶囊可以直接滑到屏幕边缘
-            .margin({ left: -AppSize.pagePadding, right: -AppSize.pagePadding })
             .scrollable(ScrollDirection.Horizontal)
             .scrollBar(BarState.Off)
             .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
-            .align(Alignment.Start)
+            .align(Alignment.Center)
             .clip(false)
+            .onAreaChange((_old: Area, now: Area) => {
+              const height: number = Number(now.height);
+              if (height > 0 && Math.abs(height - this.chipsRowH) > 0.5) {
+                this.chipsRowH = height;
+              }
+            })
+            .overlay(this.chipsEdgeFade(), { align: Alignment.Center })
           }
 
+          /**
+           * 必须带 `space`：`GridRow` 的 `gutter` 只作用于**行与行之间**，
+           * 最后一行与下方「加载更多」按钮之间是 0 间距 —— 按钮会直接贴住卡片底边
+           * （2026-11-22 用户反馈「加载更多和课程块冲突」）。原来这里是 `Column({space})`
+           * 套 ForEach，`space` 值恰好盖住了这段；换成 GridRow 后必须由外层容器补。
+           */
+          Column({ space: AppSize.gap }) {
           if (this.visibleCourses().length === 0) {
             EmptyView({ message: '没有符合条件的课程' })
           } else {
-            Column({ space: AppSize.gap }) {
+            /**
+             * 课程卡按 12 栅格排：手机整行一门，平板竖屏（md）两门，横向（lg / xxl）三门。
+             *
+             * 用 `GridRow` 而不是 `Grid`：后者放进 `Scroll` 需要显式高度，否则只排首行；
+             * 前者高度随内容撑开，且卡片数量变化时无需重算行数。
+             * 筛选胶囊行仍是横向滚动条，不受这里影响。
+             */
+            GridRow({ columns: 12, gutter: { x: AppSize.gap, y: AppSize.gap } }) {
               ForEach(this.visibleCourses(), (item: BykcCourse) => {
-                this.courseCard(item)
+                GridCol({ span: { xs: 12, sm: 12, md: 6, lg: 4, xl: 4, xxl: 4 } }) {
+                  this.courseCard(item)
+                }
               }, (item: BykcCourse) => item.id.toString())
             }
             .width('100%')
@@ -716,15 +758,19 @@ export struct BykcCoursesPage {
                 })
             }
           }
+          }
+          .width('100%')
+          .padding({ left: AppSize.pagePadding, right: AppSize.pagePadding })
         }
 
         Blank()
           .height(AppSize.gapLarge)
       }
       .width('100%')
+      // 🔴 左右内边距不能加在这一层：一加，子元素就再没法拉到屏幕边缘
+      // （`margin(-pagePadding)`、`calc` 加宽在本容器里实测都无效）。
+      // 留白改由各子块自己加，胶囊行保持全出血。
       .padding({
-        left: AppSize.pagePadding,
-        right: AppSize.pagePadding,
         // 顶部让开「状态栏 + 悬浮标题栏（MINI，56vp）」。留白必须写在滚动内容里、
         // 而不是外壳上：视口仍从屏幕顶开始，内容才能滑进标题栏那一段毛玻璃底板。
         top: AppSize.destTopInset(topSafeInsetVp()),
@@ -745,9 +791,9 @@ export struct BykcCoursesPage {
     .height('100%')
     .backgroundColor(AppColor.pageBackground)
 
-      if (this.filterPanelOpen) {
-        this.filterOverlay()
-      }
+      // 显隐由 filterOverlay 内部的 if 控制：builder 常驻、内部节点增删，
+      // transition 才能播放退场动画（外层再包一层 if 会把 builder 整体跳过）
+      this.filterOverlay()
     }
     .width('100%')
     .height('100%')

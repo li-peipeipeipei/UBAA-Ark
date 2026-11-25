@@ -6,6 +6,14 @@ import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { ErrorView, LoadingView } from '../../components/CommonViews';
 import { BykcCategoryStat } from '../../model/ApiTypes';
+import { PageCache } from '../../common/PageCache';
+import { OfflineKey } from '../../common/OfflineCache';
+
+/** 课程统计首帧缓存内容。 */
+interface BykcStatisticsCache {
+  validCount: number;
+  categories: BykcCategoryStat[];
+}
 
 /**
  * 博雅课程 · 课程统计（对齐原版 `BykcStatisticsScreen.kt`）。
@@ -27,16 +35,31 @@ export struct BykcStatisticsPage {
   }
 
   private async load(): Promise<void> {
-    this.loadState = LoadState.LOADING;
+    // 冷启动首帧：先同步读上次缓存，命中就直接进 SUCCESS
+    const cached: BykcStatisticsCache | null =
+      PageCache.load<BykcStatisticsCache>(OfflineKey.BYKC_STATISTICS, PageCache.TTL_HALF_DAY);
+    if (cached !== null && cached.categories.length > 0) {
+      this.validCount = cached.validCount;
+      this.categories = cached.categories;
+      this.loadState = LoadState.SUCCESS;
+    }
+    if (this.loadState !== LoadState.SUCCESS) {
+      this.loadState = LoadState.LOADING;
+    }
     try {
       const stats = await ApiService.fetchBykcStatistics();
       this.validCount = stats.validCount;
       this.categories = stats.categories;
       this.loadState = LoadState.SUCCESS;
+      PageCache.save(OfflineKey.BYKC_STATISTICS,
+        { validCount: this.validCount, categories: this.categories } as BykcStatisticsCache);
     } catch (error) {
       this.errorMessage = error instanceof ApiError ?
         (error as ApiError).friendlyMessage() : '课程统计加载失败';
-      this.loadState = LoadState.ERROR;
+      // 缓存命中过时失败不切 ERROR，保留已渲染的本地内容
+      if (this.loadState !== LoadState.SUCCESS) {
+        this.loadState = LoadState.ERROR;
+      }
       Logger.error('博雅统计加载失败：' + (error as Error).message);
     }
   }

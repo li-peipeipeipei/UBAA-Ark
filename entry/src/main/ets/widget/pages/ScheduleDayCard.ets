@@ -15,7 +15,8 @@
  * └───────────────────────────────────────┘
  * ```
  *
- * 实测规格（官方截图 1249×552px）：卡片底色 `#2F3034`、课程块 `#602030`、标题橙 `#F76045`。
+ * 实测规格（官方截图 1249×552px）：卡片底色 `#2F3034`、标题橙 `#F76045`；
+ * 课程块 2026-11-24 起改用产品给的 16 色色表（原参考色 `#602030` 已弃用）。
  *
  * ## 为什么「今天没课时把明天的课顶上来」
  *
@@ -57,34 +58,40 @@ const KEY_UPDATED_D: string = 'updatedAt';
  * 卡片也不能 import 项目文件，所以两处各存一份 —— **改色时两边要同步**。
  */
 const MONET_DARK_D: string[] = [
-  '#602030',  // 酒红
-  '#284848',  // 墨绿青
-  '#583830',  // 暗棕
-  '#304058',  // 靛蓝
-  '#304830',  // 橄榄绿
-  '#504828',  // 土黄
-  '#383840',  // 灰紫
-  '#582030'   // 暗玫
+  '#944438', '#965B36', '#8E7714', '#54794E',
+  '#427071', '#21629A', '#524D8F', '#6C4A8F',
+  '#95182F', '#8B4E2A', '#816F26', '#3A6333',
+  '#216666', '#3A5985', '#5C4D71', '#4A4E76'
 ];
-const MONET_TEXT_D: string = '#EDE8E0';
+/**
+ * 深色块上文字的「块色混白」比例：块色占 35%，白占 65%。
+ * 与 `ScheduleColors.DARK_TEXT_TINT_RATIO`、周卡 `DARK_TEXT_TINT_W` 三处同步。
+ */
+const DARK_TEXT_TINT_D: number = 0.35;
 
+/**
+ * 浅色课程块底色：2026-11-22 第三轮——按反馈「对齐文字颜色和块颜色」，
+ * 每格底色 = 同索引 LIGHT_TEXT_D 文字色叠白派生（14%），
+ * 16 槽一一对应、同色系（2026-11-24 换产品线给的 16 色色表）。
+ * 必须与 ScheduleColors.LIGHT / ScheduleWeekCard.LIGHT_PALETTE_W 三处同步。
+ * 仍是预混实色，不加真 alpha —— 真透明会露出网格横线。
+ */
 const LIGHT_PALETTE_D: string[] = [
-  '#FCF0F0',  // 淡粉（理论力学）
-  '#F0F8F8',  // 淡青（基础物理）
-  '#FCF4F0',  // 淡桃（常微分/毛概）
-  '#F4F4F8',  // 淡蓝紫（概率统计）
-  '#F8F4F0',  // 淡米
-  '#FCF0F4',  // 淡玫
-  '#F4F8F0',  // 淡黄绿（体育）
-  '#F4F4F4'   // 淡灰
+  '#F9E7E4', '#F9ECE3', '#F7F2DB', '#EAF3E8',
+  '#E6F0F0', '#DFEDFA', '#EAE8F7', '#F0E8F7',
+  '#F9DDE1', '#F7E9E0', '#F4F0E0', '#E4EEE2',
+  '#DFEEEE', '#E4EBF5', '#ECE9F0', '#E8E9F2'
 ];
 /**
  * 浅色块上的文字色（与 LIGHT_PALETTE_D 同索引配对）。
+ * 2026-11-24：按产品给的 16 色整板替换（前 8 / 后 8 按色相配对）。
  * ⚠️ 卡片不能 import 项目文件，两张卡各存一份；**改配色时三处要同步**。
  */
 const LIGHT_TEXT_D: string[] = [
-  '#BA5A4E', '#247E72', '#A8663C', '#486CA8',
-  '#A2963C', '#BA7284', '#4E7848', '#5A5A5A'
+  '#D2513B', '#D57538', '#C8A201', '#6AA65E',
+  '#4D9796', '#1981D8', '#675EC7', '#925AC7',
+  '#D30A2C', '#C36124', '#B3961E', '#408333',
+  '#198784', '#4172B7', '#785F96', '#5B619F'
 ];
 
 
@@ -98,6 +105,8 @@ interface DayViewSlot {
   courseName: string;
   place: string;
   color: string;
+  /** 主应用算好的相邻避让色槽（0..15）；缺省时回退课程名哈希。 */
+  colorSlot?: number;
 }
 
 /**
@@ -220,9 +229,21 @@ struct ScheduleDayCard {
     return span > 0 ? span : 1;
   }
 
-  /** 上游颜色为空 / 格式异常时退回官方那个酒红 `#602030`。 */
+  /**
+   * 课程色槽：优先用主应用按整学期「相邻避让」算好的 colorSlot，
+   * 没有（旧缓存 / 首次下发）时回退课程名哈希。同名课恒定同槽。
+   */
+  private slotIndexOf(slot: DayViewSlot): number {
+    const assigned: number | undefined = slot.colorSlot;
+    if (assigned !== undefined && assigned >= 0 && assigned < MONET_DARK_D.length) {
+      return assigned;
+    }
+    return this.monetIndex(slot.courseName);
+  }
+
+  /** 课程色槽落到色板取底色；色表本身就是兜底，不再写死某个酒红。 */
   private colorOf(slot: DayViewSlot): string {
-    const idx: number = this.monetIndex(slot.courseName);
+    const idx: number = this.slotIndexOf(slot);
     if (this.darkMode === '1') {
       return this.blendOn('#2F3034', MONET_DARK_D[idx], 0.92);
     }
@@ -289,9 +310,10 @@ struct ScheduleDayCard {
    */
   private textColorOn(slot: DayViewSlot): string {
     if (this.darkMode === '1') {
-      return MONET_TEXT_D;
+      // 深色：块色混白（与课表页 / 功能页同款），不再是统一暖白
+      return this.blendOn('#FFFFFF', this.colorOf(slot), DARK_TEXT_TINT_D);
     }
-    return LIGHT_TEXT_D[this.monetIndex(slot.courseName)];
+    return LIGHT_TEXT_D[this.slotIndexOf(slot)];
   }
 
   private textColorOnLegacy(slot: DayViewSlot): string {
@@ -301,12 +323,13 @@ struct ScheduleDayCard {
     return lum > 0.5 ? '#1A1A1A' : '#FFFFFF';
   }
 
-  /** 次要文字（地点）色。 */
+  /** 次要文字（地点）色：浅色下 = 主文字 75%（跟随课程名颜色）。 */
   private subTextColorOn(slot: DayViewSlot): string {
     if (this.darkMode === '1') {
-      return '#B3EDE8E0';
+      // 教室行同款混白，但比课程名淡一档（比例取 70%）
+      return this.blendOn('#FFFFFF', this.colorOf(slot), DARK_TEXT_TINT_D * 0.7);
     }
-    return this.textColorOn(slot) === '#FFFFFF' ? '#CCFFFFFF' : '#661A1A1A';
+    return '#BF' + this.textColorOn(slot).substring(1);
   }
 
   /** 取 `#RRGGBB` 里第 index 个通道（0=红 1=绿 2=蓝）；解析失败返回 0。 */
@@ -349,6 +372,18 @@ struct ScheduleDayCard {
     return slot.courseName.endsWith('节课');
   }
 
+  /**
+   * 一天有三节及以上课时是否把教室挪到课程名右侧。
+   *
+   * 2×4 卡约 150vp 高，顶部两行标题吃掉约一半后，每节课只剩约 20vp。
+   * 此时课程名（13fp）在上、地点（10fp）在下会上下压到一起（实机看到重叠）。
+   * 三节及以上时改成同行：课程名在左占 layoutWeight，教室贴右，二者不再叠。
+   * 两节及以下块更高，维持原来的「课名上 / 教室下」版式（信息更舒展）。
+   */
+  private placeBesideName(): boolean {
+    return (this.view?.slots?.length ?? 0) >= 3;
+  }
+
   @Builder
   courseCard(slot: DayViewSlot, span: number) {
     if (this.isMergedSlot(slot)) {
@@ -373,31 +408,54 @@ struct ScheduleDayCard {
       .clip(true)
     } else {
       Row() {
-        Column({ space: 2 }) {
-          // 照抄 App 内课表页：课程名 layoutWeight(1) 撑满，地点自然贴底
-          Text(slot.courseName)
-            .fontSize(13)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.textColorOn(slot))
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-            .layoutWeight(1)
-            .align(Alignment.TopStart)
-          // 地点：**只在跨节课上显示**。单节课行高最小，2×4 卡片上
-          // 每行都塞地点会被裁成半行（用户实机看到「J3-212」只剩上半截）。
-          if (slot.place.length > 0 && span > 1) {
-            Text(slot.place)
-              .fontSize(10)
-              .fontColor(this.subTextColorOn(slot))
+        if (this.placeBesideName()) {
+          // 三节及以上（块矮）：课程名在左、教室在同一行右侧，避免上下两行压到一起。
+          // 教室此时**不受 span>1 限制** —— 用户明确要三节课时也看到教室。
+          Row({ space: 4 }) {
+            Text(slot.courseName)
+              .fontSize(12)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(this.textColorOn(slot))
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+            if (slot.place.length > 0) {
+              Text(slot.place)
+                .fontSize(10)
+                .fontColor(this.subTextColorOn(slot))
+                .maxLines(2)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .constraintSize({ maxWidth: 60 })
+            }
+          }
+          .layoutWeight(1)
+          .alignItems(VerticalAlign.Center)
+        } else {
+          Column({ space: 2 }) {
+            // 两节及以下（块高）：照抄 App 内课表页，课程名撑满、地点贴底
+            Text(slot.courseName)
+              .fontSize(13)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(this.textColorOn(slot))
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
-              .align(Alignment.BottomStart)
+              .layoutWeight(1)
+              .align(Alignment.TopStart)
+            // 地点只在跨节课上显示：单节行高最小，塞地点会被裁成半行。
+            if (slot.place.length > 0 && span > 1) {
+              Text(slot.place)
+                .fontSize(10)
+                .fontColor(this.subTextColorOn(slot))
+                .maxLines(2)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width('100%')
+                .align(Alignment.BottomStart)
+            }
           }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
         }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
 
         /**
          * 右侧起止时间：**单行**。
@@ -471,7 +529,8 @@ struct ScheduleDayCard {
             .fontSize(16)
             .fontWeight(FontWeight.Bold)
             .fontColor(this.tPri())
-          Text((this.view?.dayCount ?? 0).toString())
+          // 2026-11-23：按用户要求数字后补单位「节课」（如「今天 3 节课」）
+          Text((this.view?.dayCount ?? 0).toString() + ' 节课')
             .fontSize(13)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.card_accent'))

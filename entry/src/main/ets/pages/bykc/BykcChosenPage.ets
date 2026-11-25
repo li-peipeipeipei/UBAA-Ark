@@ -7,6 +7,13 @@ import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { EmptyView, ErrorView, LoadingView } from '../../components/CommonViews';
 import { BykcChosenCourse } from '../../model/ApiTypes';
+import { PageCache } from '../../common/PageCache';
+import { OfflineKey } from '../../common/OfflineCache';
+
+/** 我的课程首帧缓存内容。 */
+interface BykcChosenCache {
+  chosen: BykcChosenCourse[];
+}
 
 /**
  * 博雅课程 · 我的课程（对齐原版 `BykcChosenCoursesScreen.kt`）。
@@ -30,14 +37,28 @@ export struct BykcChosenPage {
   }
 
   private async load(): Promise<void> {
-    this.loadState = LoadState.LOADING;
+    // 冷启动首帧：先同步读上次缓存，命中就直接进 SUCCESS
+    const cached: BykcChosenCache | null =
+      PageCache.load<BykcChosenCache>(OfflineKey.BYKC_CHOSEN, PageCache.TTL_HALF_DAY);
+    if (cached !== null && cached.chosen.length > 0) {
+      this.chosen = cached.chosen;
+      this.loadState = LoadState.SUCCESS;
+    }
+    if (this.loadState !== LoadState.SUCCESS) {
+      this.loadState = LoadState.LOADING;
+    }
     try {
       this.chosen = await ApiService.fetchBykcChosen();
       this.loadState = LoadState.SUCCESS;
+      PageCache.save(OfflineKey.BYKC_CHOSEN,
+        { chosen: this.chosen } as BykcChosenCache);
     } catch (error) {
       this.errorMessage = error instanceof ApiError ?
         (error as ApiError).friendlyMessage() : '已选课程加载失败';
-      this.loadState = LoadState.ERROR;
+      // 缓存命中过时失败不切 ERROR，保留已渲染的本地内容
+      if (this.loadState !== LoadState.SUCCESS) {
+        this.loadState = LoadState.ERROR;
+      }
       Logger.error('博雅已选课程加载失败：' + (error as Error).message);
     }
   }
@@ -159,6 +180,8 @@ export struct BykcChosenPage {
         .width('100%')
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
+        // 标题固定占两行：多列并排时，一行标题的卡不会比两行标题的卡矮一截
+        .constraintSize({ minHeight: AppSize.cardTitleTwoLines(AppFont.body) })
 
       this.infoRow('教师', item.teacher)
       this.infoRow('地点', item.position)
@@ -251,9 +274,15 @@ export struct BykcChosenPage {
         } else if (this.chosen.length === 0) {
           EmptyView({ message: '还没有选择博雅课程' })
         } else {
-          ForEach(this.chosen, (item: BykcChosenCourse) => {
-            this.courseCard(item)
-          }, (item: BykcChosenCourse) => item.chosenId.toString())
+          // 与「选择课程」一致：md 两列、lg / xxl 三列，手机整行一门。
+          GridRow({ columns: 12, gutter: { x: AppSize.gap, y: AppSize.gap } }) {
+            ForEach(this.chosen, (item: BykcChosenCourse) => {
+              GridCol({ span: { xs: 12, sm: 12, md: 6, lg: 4, xl: 4, xxl: 4 } }) {
+                this.courseCard(item)
+              }
+            }, (item: BykcChosenCourse) => item.chosenId.toString())
+          }
+          .width('100%')
         }
 
         Blank()

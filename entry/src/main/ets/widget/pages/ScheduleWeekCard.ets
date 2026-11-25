@@ -64,6 +64,8 @@ interface WeekViewSlot {
   courseName: string;
   place: string;
   color: string;
+  /** 主应用算好的相邻避让色槽（0..15）；缺省时回退课程名哈希。 */
+  colorSlot?: number;
 }
 
 /** 周课表卡数据（与主应用 CardCache 的 CardWeekView 同形）。 */
@@ -129,35 +131,42 @@ const CARD_PADDING: number = 11;
  * 同一门课按名字哈希固定取一色，不会每次渲染变色。
  */
 const MONET_DARK_W: string[] = [
-  '#602030',  // 酒红
-  '#284848',  // 墨绿青
-  '#583830',  // 暗棕
-  '#304058',  // 靛蓝
-  '#304830',  // 橄榄绿
-  '#504828',  // 土黄
-  '#383840',  // 灰紫
-  '#582030'   // 暗玫
+  '#944438', '#965B36', '#8E7714', '#54794E',
+  '#427071', '#21629A', '#524D8F', '#6C4A8F',
+  '#95182F', '#8B4E2A', '#816F26', '#3A6333',
+  '#216666', '#3A5985', '#5C4D71', '#4A4E76'
 ];
-/** 深色色块上的文字色（暖白，不用纯白以免发灰）。 */
-const MONET_TEXT_W: string = '#EDE8E0';
+/**
+ * 深色块上文字的「块色混白」比例：块色占 35%，白占 65%。
+ *
+ * 与 `ScheduleColors.DARK_TEXT_TINT_RATIO`、日卡 `DARK_TEXT_TINT_D` 三处同步
+ * ——卡片不能 import 项目文件，只能各存一份。
+ */
+const DARK_TEXT_TINT_W: number = 0.35;
 
+/**
+ * 浅色课程块底色：2026-11-22 第三轮——按反馈「对齐文字颜色和块颜色」，
+ * 每格底色 = 同索引 LIGHT_TEXT_W 文字色叠白派生（14%），
+ * 16 槽一一对应、同色系（2026-11-24 换产品线给的 16 色色表）。
+ * 必须与 ScheduleColors.LIGHT / ScheduleDayCard.LIGHT_PALETTE_D 三处同步。
+ * 仍是预混实色，不加真 alpha —— 真透明会露出网格横线。
+ */
 const LIGHT_PALETTE_W: string[] = [
-  '#FCF0F0',  // 淡粉（理论力学）
-  '#F0F8F8',  // 淡青（基础物理）
-  '#FCF4F0',  // 淡桃（常微分/毛概）
-  '#F4F4F8',  // 淡蓝紫（概率统计）
-  '#F8F4F0',  // 淡米
-  '#FCF0F4',  // 淡玫
-  '#F4F8F0',  // 淡黄绿（体育）
-  '#F4F4F4'   // 淡灰
+  '#F9E7E4', '#F9ECE3', '#F7F2DB', '#EAF3E8',
+  '#E6F0F0', '#DFEDFA', '#EAE8F7', '#F0E8F7',
+  '#F9DDE1', '#F7E9E0', '#F4F0E0', '#E4EEE2',
+  '#DFEEEE', '#E4EBF5', '#ECE9F0', '#E8E9F2'
 ];
 /**
  * 浅色块上的文字色（与 LIGHT_PALETTE_W 同索引配对）。
+ * 2026-11-24：按产品给的 16 色整板替换（前 8 / 后 8 按色相配对）。
  * ⚠️ 卡片不能 import 项目文件，两张卡各存一份；**改配色时三处要同步**。
  */
 const LIGHT_TEXT_W: string[] = [
-  '#BA5A4E', '#247E72', '#A8663C', '#486CA8',
-  '#A2963C', '#BA7284', '#4E7848', '#5A5A5A'
+  '#D2513B', '#D57538', '#C8A201', '#6AA65E',
+  '#4D9796', '#1981D8', '#675EC7', '#925AC7',
+  '#D30A2C', '#C36124', '#B3961E', '#408333',
+  '#198784', '#4172B7', '#785F96', '#5B619F'
 ];
 
 /**
@@ -354,9 +363,21 @@ struct ScheduleWeekCard {
     return 1;
   }
 
+  /**
+   * 课程色槽：优先用主应用按整学期「相邻避让」算好的 colorSlot，
+   * 没有（旧缓存 / 首次下发）时回退课程名哈希。同名课恒定同槽。
+   */
+  private slotIndexOf(slot: WeekViewSlot): number {
+    const assigned: number | undefined = slot.colorSlot;
+    if (assigned !== undefined && assigned >= 0 && assigned < MONET_DARK_W.length) {
+      return assigned;
+    }
+    return this.monetIndex(slot.courseName);
+  }
+
   /** 这门课的底色（上游给空/ 格式异常时退回深棕）。 */
   private blockColor(slot: WeekViewSlot): string {
-    const idx: number = this.monetIndex(slot.courseName);
+    const idx: number = this.slotIndexOf(slot);
     if (this.darkMode === '1') {
       // 深色：把色板以 0.92 预混到卡片底色上 —— 等效「带一点透明度」，
       // 但算出来是实色，网格横线不会从块里透出来（用户明确要求）。
@@ -425,10 +446,11 @@ struct ScheduleWeekCard {
    */
   private textColorOn(slot: WeekViewSlot): string {
     if (this.darkMode === '1') {
-      return MONET_TEXT_W;
+      // 深色：块色混白（与课表页 / 功能页同款），不再是统一暖白
+      return this.blendOn('#FFFFFF', this.blockColor(slot), DARK_TEXT_TINT_W);
     }
     // 浅色：用与块底配对的高饱和色，不是黑字
-    return LIGHT_TEXT_W[this.monetIndex(slot.courseName)];
+    return LIGHT_TEXT_W[this.slotIndexOf(slot)];
   }
 
   private textColorOnLegacy(slot: WeekViewSlot): string {
@@ -438,12 +460,13 @@ struct ScheduleWeekCard {
     return lum > 0.5 ? '#1A1A1A' : '#FFFFFF';
   }
 
-  /** 次要文字（地点）色。 */
+  /** 次要文字（地点）色：浅色下 = 主文字 75%（跟随课程名颜色）。 */
   private subTextColorOn(slot: WeekViewSlot): string {
     if (this.darkMode === '1') {
-      return '#B3EDE8E0';
+      // 教室行同款混白，但比课程名淡一档（比例取 70%）
+      return this.blendOn('#FFFFFF', this.blockColor(slot), DARK_TEXT_TINT_W * 0.7);
     }
-    return this.textColorOn(slot) === '#FFFFFF' ? '#CCFFFFFF' : '#661A1A1A';
+    return '#BF' + this.textColorOn(slot).substring(1);
   }
 
   /** 取 `#RRGGBB` 里第 index 个通道（0=红 1=绿 2=蓝）；解析失败返回 0。 */

@@ -4,7 +4,6 @@ import { CardCache, CardClassroom, CardDayView, CardToday, CardWeekView } from '
 import { CardDataBuilder } from './CardDataBuilder';
 import { DateUtil } from './DateUtil';
 import { ScheduleCache } from '../network/ScheduleCache';
-import { TokenStore } from '../network/TokenStore';
 import { Week, WeeklySchedule } from '../model/ApiTypes';
 
 const SUNDAY_ROLL_OVER_HOUR: number = 15;
@@ -82,14 +81,17 @@ export class CardRefresher {
       const isCurrentWeek: boolean = used === curWeek;
       const termName: string = ScheduleCache.loadTermName();
 
+      // 相邻避让槽位：整学期一次性算出，课程块与文字色跨端一致（同名同色、相邻不同相近色）
+      const courseSlots: Map<string, number> = CardDataBuilder.buildCourseSlotMap();
       const weekView: CardWeekView =
-        CardDataBuilder.buildWeekView(data, weeks, used, termName, isCurrentWeek ? today : 0);
+        CardDataBuilder.buildWeekView(data, weeks, used, termName, isCurrentWeek ? today : 0,
+          courseSlots);
       // 前两份不推送：一次刷新会连写三份卡片数据，每次都 pushAll 就是三倍的
       // 跨进程 IPC + Preferences 重读（冷启动首屏明显卡）。只在最后一份推一次。
       CardCache.saveWeekView(context, weekView, false);
 
       const dayView: CardDayView =
-        CardDataBuilder.buildDayView(data, weeks, used, today, today, isCurrentWeek);
+        CardDataBuilder.buildDayView(data, weeks, used, today, today, isCurrentWeek, courseSlots);
       CardCache.saveDayView(context, dayView, false);
 
       const todayCard: CardToday =

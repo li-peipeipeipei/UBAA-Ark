@@ -10,7 +10,7 @@
     },
     {
       "name": "EntryAbility_label",
-      "value": "UBAA"
+      "value": "UBAA Ark"
     },
     {
       "name": "permission_internet_reason",
@@ -51,6 +51,14 @@
     {
       "name": "card_schedule_small_desc",
       "value": "桌面 1×2 小卡：下一节课的时间、地点与今天节数"
+    },
+    {
+      "name": "card_schedule_next_name",
+      "value": "下一节课"
+    },
+    {
+      "name": "card_schedule_next_desc",
+      "value": "桌面 2×2 中卡：下一节课的课程名、时间与地点，附今天节数和教学周"
     },
     {
       "name": "card_exam_small_name",

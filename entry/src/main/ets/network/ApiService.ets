@@ -1,7 +1,9 @@
 import { http } from '@kit.NetworkKit';
-import { AppConfig } from '../common/AppConfig';
+import { AppConfig, ConnectionMode } from '../common/AppConfig';
 import { Logger } from '../common/Logger';
+import { AccountEvents } from '../common/AccountEvents';
 import { ApiError } from './ApiError';
+import { ScheduleCache } from './ScheduleCache';
 import { HttpEngine } from './HttpEngine';
 import { LocalAcademicService } from './LocalAcademicService';
 import { LocalAuthService } from './LocalAuthService';
@@ -18,6 +20,8 @@ import { LocalPortalService } from './LocalPortalService';
 import { LocalCloudPrintService } from './LocalCloudPrintService';
 import { LocalFinanceService } from './LocalFinanceService';
 import { MockData } from './MockData';
+import { RouteEngine } from './RouteEngine';
+import { SessionGuard } from './SessionGuard';
 import { StoredSession, TokenStore } from './TokenStore';
 import {
   BykcChosenCourse,
@@ -84,10 +88,15 @@ export class ApiService {
   /**
    * 是否处于本地模式。
    *
-   * 判据是「有没有上游 Cookie 登录态」，与连接模式（DIRECT / WEBVPN）无关 ——
+   * 判据是「当前路线上有没有上游 Cookie 登录态」，与连接模式（DIRECT / WEBVPN）无关 ——
    * 两种连接模式都是本地上游取数，区别只在地址是否经 WebVPN 改写。
+   *
+   * 🔴 换网后路线可能被钉到没有会话的那条路（典型：校内登录 → 切流量，WebVPN 槽为空）。
+   * 这里先同步借回另一条路上的活会话，否则业务层会在发请求前直接抛
+   * 「XX 仅支持本地模式」，而实际上账号并没有掉线。
    */
   private static localMode(): boolean {
+    RouteEngine.ensureSessionRoute();
     return TokenStore.hasLocalSession();
   }
 
@@ -132,12 +141,26 @@ export class ApiService {
       await MockData.pause();
       return MockData.login(username);
     }
-    return await LocalAuthService.login(
+    // 双路线登录：主路线必须就绪，副路线尽力而为（见 LocalAuthService.loginDual）
+    return await LocalAuthService.loginDual(
       username,
       password,
       captcha === undefined ? '' : captcha,
       execution === undefined ? '' : execution
     );
+  }
+
+  /**
+   * 确保当前（或指定）路线有可用会话，必要时用已保存凭据静默补登。
+   *
+   * 供启动自检与页面恢复使用：返回 `false` 表示确实需要用户手动登录。
+   */
+  static async ensureSession(mode?: ConnectionMode, force: boolean = false): Promise<boolean> {
+    if (TokenStore.getDemoMode()) {
+      return true;
+    }
+    return await SessionGuard.ensure(
+      mode === undefined ? TokenStore.getConnectionMode() : mode, force);
   }
 
   /** 查询当前会话状态（本地模式会实时打上游校验，不只是读本地）。 */
@@ -154,11 +177,14 @@ export class ApiService {
     if (TokenStore.getDemoMode()) {
       TokenStore.clear();
       TokenStore.clearAllLocalSessions();
+      // 主动退出：保留「记住密码」，但禁止静默重认证把人又登回来
+      TokenStore.setSignedOut(true);
       ApiService.resetLocalServices();
       return;
     }
     await LocalAuthService.logout();
     TokenStore.clear();
+    TokenStore.setSignedOut(true);
     ApiService.resetLocalServices();
   }
 
@@ -287,6 +313,20 @@ export class ApiService {
       ApiService.apiPath('/schedule/today')
     );
     return HttpEngine.decode<TodayClass[]>(result.body, []);
+  }
+
+  /**
+   * 指定日期（`yyyy-MM-dd`）的课程，供主页「明日课程」复用。
+   *
+   * 只有本地直连上游的分支能按日期取；演示模式没有「明天」的示例数据，
+   * 旧中转服务也只有 `/schedule/today` 一个接口 —— 这两种情况一律返回空数组，
+   * 宁可不显示明日课程，也不能把今天的课冒充明天。
+   */
+  static async fetchClassesOn(date: string, force: boolean = false): Promise<TodayClass[]> {
+    if (!ApiService.localMode()) {
+      return [];
+    }
+    return await LocalAcademicService.fetchClassesOn(date, force);
   }
 
   /* ========================= 考试 ========================= */
@@ -679,6 +719,17 @@ export class ApiService {
 
   /** 把登录响应落盘为本地会话。 */
   static persistLogin(response: LoginResponse, username: string): void {
+    // 换账号判定必须在覆盖会话**之前**做 —— 此刻 TokenStore 里还是上一账号的会话。
+    // 只依赖 ScheduleCache.loadAccount() 不够：用户没进过课表页时它为空，就会把
+    // 「换了账号」误判成「同账号」，上一账号的数据全部保留（上一版失效的主因）。
+    // 以旧会话的 schoolId/登录名为准，课表缓存记录只作历史兜底。
+    const oldSession: StoredSession = TokenStore.getSession();
+    const oldSid: string = oldSession.schoolId.trim();
+    const oldUser: string = oldSession.username.trim();
+    const cachedAccount: string = ScheduleCache.loadAccount();
+    const previousAccount: string =
+      (oldSid.length > 0 || oldUser.length > 0) ? oldSid + '|' + oldUser : cachedAccount;
+
     const session = new StoredSession();
     session.accessToken = response.accessToken;
     session.refreshToken = response.refreshToken;
@@ -688,6 +739,35 @@ export class ApiService {
     session.schoolId = response.user.schoolid;
     session.username = username;
     TokenStore.saveSession(session);
+    // 手动登录成功 = 重新授权：解除「主动退出」标记，允许后续静默重认证
+    TokenStore.setSignedOut(false);
+
+    const nextAccount: string = session.schoolId;
+    if (previousAccount.length > 0 &&
+      !AccountEvents.accountMatches(previousAccount, session.schoolId, username)) {
+      Logger.info('登录账号已变更（' + previousAccount + ' → ' + nextAccount + '），作废全部账号级缓存');
+      ApiService.invalidateAccountData();
+    }
+    // 账号身份确立：常驻页签（课表）据此丢弃上一账号的内存态并重拉。
+    // 只在此处播报一次，避免冷启动静默恢复（SessionGuard）时误触发无谓重拉。
+    AccountEvents.notifyChanged();
+  }
+
+  /**
+   * 账号身份 / 数据源发生变化时，作废所有按账号隔离的缓存。
+   *
+   * 两层缺一不可：
+   * - **磁盘**：`ScheduleCache.clear()`（不是 clearAll —— 后者只删当前学期的周 key，
+   *   切换过学期后上一账号其它学期的周课表会残留，被新账号读到）；
+   * - **进程内**：`resetLocalServices()` 清掉 MemoCache（其 key 不含账号，TTL 内会把
+   *   上一账号的学期/周次/周课表直接返回，新页面 `force=false` 重拉照样命中旧数据）
+   *   与各服务的会话态。
+   *
+   * 不动 LocalAuthService 的会话 —— 登录刚成功，Cookie 罐是新账号的，必须保留。
+   */
+  static invalidateAccountData(): void {
+    ScheduleCache.clear();
+    ApiService.resetLocalServices();
   }
 
   /** 用 UserData 更新本地缓存的用户信息。 */

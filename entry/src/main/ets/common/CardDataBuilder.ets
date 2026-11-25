@@ -17,6 +17,8 @@
 import { CardCourse, CardDayView, CardSlot, CardToday, CardWeekView } from './CardCache';
 import { CourseClass, SectionTime, Week, WeeklySchedule } from '../model/ApiTypes';
 import { DateUtil } from './DateUtil';
+import { CourseSlotInput, ScheduleColors } from './ScheduleColors';
+import { ScheduleCache } from '../network/ScheduleCache';
 
 /**
  * 卡片网格的最少行数。
@@ -114,6 +116,44 @@ export class CardDataBuilder {
     return out;
   }
 
+  /* ----------------------------- 课程色槽（相邻避让） ----------------------------- */
+
+  /**
+   * 从本地缓存的**整学期**课程构建避让槽位表，口径与课表页 `rebuildCourseSlots` 完全一致。
+   *
+   * 卡片进程不能 import 项目文件，也没有整学期数据，所以只能由主应用在写卡片时
+   * 把算好的槽位写进 `CardSlot.colorSlot` 随 payload 下发。
+   *
+   * 取不到缓存 / 没课程时返回空表，调用方回退到课程名哈希（兼容旧数据）。
+   */
+  static buildCourseSlotMap(): Map<string, number> {
+    const inputs: CourseSlotInput[] = [];
+    const termCode: string = ScheduleCache.loadTermCode();
+    const weeks: Week[] = ScheduleCache.loadWeeks();
+    if (termCode.length === 0) {
+      return new Map();
+    }
+    for (let w = 0; w < weeks.length; w++) {
+      const n: number = weeks[w].serialNumber;
+      const week: WeeklySchedule | null = ScheduleCache.loadWeek(termCode, n);
+      if (week === null || week === undefined || week.arrangedList === undefined) {
+        continue;
+      }
+      for (let i = 0; i < week.arrangedList.length; i++) {
+        const c: CourseClass = week.arrangedList[i];
+        const key: string = c.courseName.length > 0 ? c.courseName : c.courseCode;
+        if (key.length === 0) {
+          continue;
+        }
+        const begin: number = CardDataBuilder.beginOf(c);
+        const end: number = CardDataBuilder.endOf(c);
+        const day: number = c.dayOfWeek === undefined || c.dayOfWeek <= 0 ? 1 : c.dayOfWeek;
+        inputs.push({ key: key, day: day, begin: begin, end: end });
+      }
+    }
+    return ScheduleColors.assignCourseSlots(inputs);
+  }
+
   /* ----------------------------- 卡片扁平结构 ----------------------------- */
 
   /** 一门课 → 今日概览用的扁平结构（不合并冲突，逐门列）。 */
@@ -135,7 +175,8 @@ export class CardDataBuilder {
    * 多门课同处一格时写 `N节课`、教室留空，与课表页 `multiCourseBlock` 的文案一致；
    * 起止时间取簇内最早开始与最晚结束，免得跨节次的块在左列对不上。
    */
-  static toSlots(data: WeeklySchedule): CardSlot[] {
+  static toSlots(data: WeeklySchedule, assigned?: Map<string, number>): CardSlot[] {
+    const slots: Map<string, number> = assigned === undefined ? new Map() : assigned;
     const out: CardSlot[] = [];
     for (let day = 1; day <= 7; day++) {
       const clusters: CourseClass[][] = CardDataBuilder.clustersOfDay(data, day);
@@ -171,7 +212,10 @@ export class CardDataBuilder {
           time: beginTime + (endTime.length > 0 ? (beginTime.length > 0 ? '~' + endTime : endTime) : ''),
           courseName: multi ? (group.length.toString() + '节课') : first.courseName,
           place: multi ? '' : (first.placeName === undefined ? '' : first.placeName),
-          color: first.color === undefined ? '' : first.color
+          color: first.color === undefined ? '' : first.color,
+          // 相邻避让后的色槽（跨端一致）；卡片侧优先用它，缺省回退课程名哈希
+          colorSlot: ScheduleColors.slotOf(
+            first.courseName.length > 0 ? first.courseName : first.courseCode, slots)
         });
       }
     }
@@ -179,8 +223,8 @@ export class CardDataBuilder {
   }
 
   /** 某一天的卡片方块（已合并冲突）。 */
-  static slotsOfDay(data: WeeklySchedule, day: number): CardSlot[] {
-    const all: CardSlot[] = CardDataBuilder.toSlots(data);
+  static slotsOfDay(data: WeeklySchedule, day: number, assigned?: Map<string, number>): CardSlot[] {
+    const all: CardSlot[] = CardDataBuilder.toSlots(data, assigned);
     const out: CardSlot[] = [];
     for (let i = 0; i < all.length; i++) {
       if (all[i].day === day) {
@@ -264,6 +308,34 @@ export class CardDataBuilder {
     return 0;
   }
 
+  /**
+   * 系统规则下的「此刻该看哪一周」：按校历算出今天所在教学周，
+   * 周日下午 15:00 之后自动滚到下一周（周末新一周课表通常此时已发布）。
+   *
+   * ⚠️ 桌面卡片（今日概览 / 下一节课）**必须**用这个判定，不能用课表页翻到的
+   * `currentWeek` —— 用户在课表页翻到第 12 周，桌面卡片不该跟着变成第 12 周。
+   * 课表页切周后写卡片时调用本方法，与 `CardRefresher` 冷启动刷新共用同一口径。
+   */
+  static systemCurrentWeek(weeks: Week[]): number {
+    const curWeek: number = CardDataBuilder.weekOfToday(weeks);
+    if (curWeek <= 0) {
+      return 0;
+    }
+    const now: Date = new Date();
+    if (now.getDay() !== 0 || now.getHours() < 15) {
+      return curWeek;
+    }
+    // 周日 15:00 后滚到下一周，但不越过本学期最后一周
+    let maxWeek: number = 0;
+    for (let i = 0; i < weeks.length; i++) {
+      if (weeks[i].serialNumber > maxWeek) {
+        maxWeek = weeks[i].serialNumber;
+      }
+    }
+    const next: number = curWeek + 1;
+    return (maxWeek > 0 && next > maxWeek) ? curWeek : next;
+  }
+
   /** 某周某天的 `MM/DD`。 */
   static dayDate(weeks: Week[], day: number, week: number): string {
     const start: Date | null = CardDataBuilder.weekStart(weeks, week);
@@ -317,8 +389,8 @@ export class CardDataBuilder {
    * @param today 星期几（1~7）；传 0 表示不高亮任何一列
    */
   static buildWeekView(data: WeeklySchedule, weeks: Week[], shown: number,
-    termName: string, today: number): CardWeekView {
-    const slots: CardSlot[] = CardDataBuilder.toSlots(data);
+    termName: string, today: number, assigned?: Map<string, number>): CardWeekView {
+    const slots: CardSlot[] = CardDataBuilder.toSlots(data, assigned);
     const view: CardWeekView = {
       termName: termName.length > 0 ? termName : '课表',
       weekLabel: '第 ' + shown.toString() + ' 周',
@@ -340,12 +412,13 @@ export class CardDataBuilder {
    * 空卡没有信息量，「下一节课」才是用户想知道的。
    */
   static buildDayView(data: WeeklySchedule, weeks: Week[], shown: number,
-    weekday: number, today: number, isCurrentWeek: boolean): CardDayView {
+    weekday: number, today: number, isCurrentWeek: boolean,
+    assigned?: Map<string, number>): CardDayView {
     let target: number = weekday;
     let slots: CardSlot[] = [];
     for (let step = 0; step <= 7; step++) {
       const day: number = ((weekday - 1 + step) % 7) + 1;
-      const found: CardSlot[] = CardDataBuilder.slotsOfDay(data, day);
+      const found: CardSlot[] = CardDataBuilder.slotsOfDay(data, day, assigned);
       if (found.length > 0) {
         target = day;
         slots = found;
@@ -354,11 +427,10 @@ export class CardDataBuilder {
     }
     const weekdayName: string = DateUtil.weekdayNames()[target - 1];
     const dateText: string = CardDataBuilder.dayDate(weeks, target, shown);
-    const isToday: boolean = isCurrentWeek && today === target;
     const view: CardDayView = {
-      headline: isToday ?
-        ('今天 · ' + weekdayName + (dateText.length > 0 ? ' · ' + dateText : '')) :
-        (weekdayName + (dateText.length > 0 ? ' · ' + dateText : '')),
+      // 2026-11-23：按用户要求去掉「今天 · 」前缀 —— 左上角只留「周三 · 10/15」。
+      // 非今天本来就没有这个前缀，统一成同一套拼接。
+      headline: weekdayName + (dateText.length > 0 ? ' · ' + dateText : ''),
       weekLabel: '第 ' + shown.toString() + ' 周',
       day: target,
       slots: slots,

@@ -1,3 +1,5 @@
+import { Logger } from './Logger';
+
 /**
  * 返回键优先级：**浮层 > 页面**。
  *
@@ -73,7 +75,16 @@ export class BackGuard {
       return false;
     }
     const close: LayerCloser = BackGuard.layers[size - 1];
-    if (close()) {
+    let closed: boolean = false;
+    try {
+      closed = close();
+    } catch (error) {
+      // 关闭动作抛错时仍要放行返回，避免「关不掉又吞掉」把用户锁在页面里
+      Logger.error('BackGuard layer close threw: ' + (error as Error).message);
+      BackGuard.layers.pop();
+      return false;
+    }
+    if (closed) {
       BackGuard.layers.pop();
     }
     return true;

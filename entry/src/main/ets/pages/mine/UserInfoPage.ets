@@ -7,6 +7,13 @@ import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { ErrorView, InfoRow, LoadingView, SectionCard } from '../../components/CommonViews';
 import { UserInfo } from '../../model/ApiTypes';
+import { PageCache } from '../../common/PageCache';
+import { OfflineKey } from '../../common/OfflineCache';
+
+/** 学籍信息首帧缓存内容。 */
+interface UserInfoCache {
+  info: UserInfo;
+}
 
 /**
  * 个人资料。
@@ -24,14 +31,30 @@ export struct UserInfoPage {
   }
 
   private async load(): Promise<void> {
-    this.loadState = LoadState.LOADING;
+    // 冷启动首帧：先同步读上次缓存。info 初始是 {}，须判断关键字段有实质内容才算命中
+    const cached: UserInfoCache | null = PageCache.load<UserInfoCache>(
+      OfflineKey.USERINFO, PageCache.TTL_DAY);
+    if (cached !== null) {
+      const cachedInfo: UserInfo = cached.info;
+      if (cachedInfo !== null && cachedInfo.name !== undefined && cachedInfo.name.length > 0) {
+        this.info = cachedInfo;
+        this.loadState = LoadState.SUCCESS;
+      }
+    }
+    if (this.loadState !== LoadState.SUCCESS) {
+      this.loadState = LoadState.LOADING;
+    }
     try {
       this.info = await ApiService.fetchUserInfo();
       this.loadState = LoadState.SUCCESS;
+      PageCache.save(OfflineKey.USERINFO, { info: this.info } as UserInfoCache);
     } catch (error) {
       this.errorMessage = error instanceof ApiError ?
         (error as ApiError).friendlyMessage() : '个人信息加载失败';
-      this.loadState = LoadState.ERROR;
+      // 缓存命中过时失败不切 ERROR，保留已渲染的本地内容
+      if (this.loadState !== LoadState.SUCCESS) {
+        this.loadState = LoadState.ERROR;
+      }
       Logger.error('个人信息加载失败：' + (error as Error).message);
     }
   }

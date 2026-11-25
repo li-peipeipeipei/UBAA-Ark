@@ -82,7 +82,7 @@ export struct WideSideNav {
         .width(LayoutPolicy.matchParent)
         .height(LayoutPolicy.matchParent)
         .borderRadius(AppSize.cardRadius)
-        .backgroundColor(AppColor.brandContainerGlass)
+        .backgroundColor(AppColor.sideNavSelected)
     }
     .width(this.itemWidth())
     .height(SIDE_NAV_ITEM_HEIGHT)

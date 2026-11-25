@@ -7,7 +7,20 @@ import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { selectMenuMaterial } from '../../common/SystemMaterial';
 import { EmptyView, ErrorView, LoadingView } from '../../components/CommonViews';
+import { isTwoPane, KEY_BREAKPOINT } from '../../common/Breakpoint';
 import { YgdkClockinInput, YgdkItem, YgdkRecord, YgdkSummary } from '../../model/ApiTypes';
+import { PageCache } from '../../common/PageCache';
+import { OfflineKey } from '../../common/OfflineCache';
+
+/** 阳光打卡首帧缓存内容。itemIndex / place / submitting / shareToSquare 等交互态不缓存。 */
+interface YgdkCache {
+  summary: YgdkSummary;
+  classifyName: string;
+  items: YgdkItem[];
+  records: YgdkRecord[];
+  total: number;
+  defaultTimeText: string;
+}
 
 const PAGE_SIZE: number = 20;
 
@@ -50,13 +63,34 @@ export struct YgdkPage {
   @State private submitting: boolean = false;
   /** 自动填写会用的时间段文案（展示用，与提交时用的是同一份）。 */
   @State private defaultTimeText: string = '';
+  /**
+   * 当前宽度断点：lg / xxl 下走「左打卡 / 右统计 + 记录」两栏。
+   *
+   * 平板竖屏（md，673vp）不参与 —— 打卡卡里的「标签 + 控件」两段式排版在
+   * 316vp 一栏里会把地点输入框压到只剩一百多 vp。
+   */
+  @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
 
   aboutToAppear(): void {
     this.load();
   }
 
   private async load(): Promise<void> {
-    this.loadState = LoadState.LOADING;
+    // 冷启动首帧：先同步读上次缓存，命中就直接进 SUCCESS（后台继续拉新覆盖）
+    const cached: YgdkCache | null = PageCache.load<YgdkCache>(
+      OfflineKey.YGDK, PageCache.TTL_HALF_DAY);
+    if (cached !== null && cached.items.length > 0) {
+      this.summary = cached.summary;
+      this.classifyName = cached.classifyName;
+      this.items = cached.items;
+      this.records = cached.records;
+      this.total = cached.total;
+      this.defaultTimeText = cached.defaultTimeText;
+      this.loadState = LoadState.SUCCESS;
+    }
+    if (this.loadState !== LoadState.SUCCESS) {
+      this.loadState = LoadState.LOADING;
+    }
     try {
       const overview = await ApiService.fetchYgdkOverview();
       this.summary = overview.summary;
@@ -71,10 +105,21 @@ export struct YgdkPage {
       this.records = page.records;
       this.total = page.total;
       this.loadState = LoadState.SUCCESS;
+      PageCache.save(OfflineKey.YGDK, {
+        summary: this.summary,
+        classifyName: this.classifyName,
+        items: this.items,
+        records: this.records,
+        total: this.total,
+        defaultTimeText: this.defaultTimeText
+      } as YgdkCache);
     } catch (error) {
       this.errorMessage = error instanceof ApiError ?
         (error as ApiError).friendlyMessage() : '阳光打卡加载失败';
-      this.loadState = LoadState.ERROR;
+      // 缓存命中过时失败不切 ERROR，保留已渲染的本地内容
+      if (this.loadState !== LoadState.SUCCESS) {
+        this.loadState = LoadState.ERROR;
+      }
       Logger.error('阳光打卡加载失败：' + (error as Error).message);
     }
   }
@@ -134,6 +179,11 @@ export struct YgdkPage {
       return '运动';
     }
     return this.items[this.itemIndex].name;
+  }
+
+  /** 是否启用平板两栏（lg / xxl）。 */
+  private twoPaneMode(): boolean {
+    return isTwoPane(this.bp);
   }
 
   @Builder
@@ -390,6 +440,50 @@ export struct YgdkPage {
 
   /* ------------------------------ 主体 ------------------------------ */
 
+  /**
+   * 打卡记录区（标题 + 列表 + 加载更多）。
+   *
+   * 单列时接在统计卡下方；两栏时整块进右栏 —— 两处共用，避免复制一份列表逻辑。
+   */
+  @Builder
+  recordsSection() {
+    Text('打卡记录' + (this.total > 0 ? '（共 ' + this.total.toString() + ' 条）' : ''))
+      .fontSize(AppFont.body)
+      .fontWeight(FontWeight.Medium)
+      .fontColor(AppColor.textPrimary)
+      .width('100%')
+
+    if (this.records.length === 0) {
+      EmptyView({ message: '还没有打卡记录' })
+    } else {
+      Column() {
+        ForEach(this.records, (item: YgdkRecord, index: number) => {
+          this.recordItem(item)
+          if (index < this.records.length - 1) {
+            Divider().color(AppColor.divider).strokeWidth(0.5)
+          }
+        }, (item: YgdkRecord) => item.recordId.toString())
+      }
+      .width('100%')
+      .padding({ left: AppSize.cardPadding, right: AppSize.cardPadding })
+      .borderRadius(AppSize.cardRadius)
+      .backgroundColor(AppColor.surface)
+
+      if (this.hasMore()) {
+        Button(this.loadingMore ? '加载中…' : '加载更多')
+          .width('100%')
+          .height(40)
+          .fontSize(AppFont.body)
+          .fontColor(AppColor.brand)
+          .backgroundColor(AppColor.surfaceSubtle)
+          .enabled(!this.loadingMore)
+          .onClick(() => {
+            this.loadMore();
+          })
+      }
+    }
+  }
+
   build() {
     Scroll() {
       Column({ space: AppSize.gap }) {
@@ -402,45 +496,36 @@ export struct YgdkPage {
               this.load();
             }
           })
+        } else if (this.twoPaneMode()) {
+          /**
+           * 平板横屏（lg / xxl）：左打卡 / 右统计 + 记录。
+           *
+           * 左栏是「要做什么」（一键打卡与按选项提交，两个写入口集中在同一张卡里），
+           * 右栏是「做过什么」（学期 / 周 / 月达成情况 + 记录流水）。
+           * 左窄右宽：操作卡的控件只需要放得下一行「标签 + 输入框」，
+           * 记录行则要容纳「时间 + 地点 + 已分享」三段信息。
+           */
+          Row({ space: AppSize.gapLarge }) {
+            Column({ space: AppSize.gap }) {
+              this.clockinCard()
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+
+            Column({ space: AppSize.gap }) {
+              this.overviewCard()
+              this.recordsSection()
+            }
+            .layoutWeight(1.4)
+            .alignItems(HorizontalAlign.Start)
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Top)
         } else {
+          // 手机 / 平板竖屏：与改造前逐字一致
           this.clockinCard()
           this.overviewCard()
-
-          Text('打卡记录' + (this.total > 0 ? '（共 ' + this.total.toString() + ' 条）' : ''))
-            .fontSize(AppFont.body)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(AppColor.textPrimary)
-            .width('100%')
-
-          if (this.records.length === 0) {
-            EmptyView({ message: '还没有打卡记录' })
-          } else {
-            Column() {
-              ForEach(this.records, (item: YgdkRecord, index: number) => {
-                this.recordItem(item)
-                if (index < this.records.length - 1) {
-                  Divider().color(AppColor.divider).strokeWidth(0.5)
-                }
-              }, (item: YgdkRecord) => item.recordId.toString())
-            }
-            .width('100%')
-            .padding({ left: AppSize.cardPadding, right: AppSize.cardPadding })
-            .borderRadius(AppSize.cardRadius)
-            .backgroundColor(AppColor.surface)
-
-            if (this.hasMore()) {
-              Button(this.loadingMore ? '加载中…' : '加载更多')
-                .width('100%')
-                .height(40)
-                .fontSize(AppFont.body)
-                .fontColor(AppColor.brand)
-                .backgroundColor(AppColor.surfaceSubtle)
-                .enabled(!this.loadingMore)
-                .onClick(() => {
-                  this.loadMore();
-                })
-            }
-          }
+          this.recordsSection()
         }
 
         Blank()

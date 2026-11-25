@@ -3,6 +3,8 @@ import { Want } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { CardCache } from '../common/CardCache';
+import { CardRefresher } from '../common/CardRefresher';
+import { ScheduleCache } from '../network/ScheduleCache';
 
 const DOMAIN_NUMBER: number = 0x0100;
 const TAG: string = 'UBAAForm';
@@ -49,17 +51,33 @@ export default class UBAAFormAbility extends FormExtensionAbility {
       return this.payload();
     }
     CardCache.addFormId(this.context, formId);
+    // 新卡刚加桌就安排第一次"下一节课开始"刷新，不必等系统定点时间
+    CardCache.scheduleNextRefresh(this.context);
     return this.payload();
   }
 
   /**
    * 定时 / 定点 / 主动刷新时触发。
    *
-   * 只读缓存、只推数据，**不做任何网络请求**。
+   * 只读缓存、按系统时间重算、**不做任何网络请求**。
+   *
+   * 定时点由 `CardCache.scheduleNextRefresh()` 设在"下一节课开始时刻"，
+   * 到点后这里必须用**当前系统时间**重算一遍再推 —— 否则推的还是上次那份
+   * 旧快照，「下一节课」永远停在上一节。重算只用本地课表缓存（几十毫秒）。
    */
   onUpdateForm(formId: string): void {
     hilog.info(DOMAIN_NUMBER, TAG, 'onUpdateForm: %{public}s', formId);
-    this.push(formId);
+    try {
+      // 卡片进程的 GlobalContext 没初始化，先注入 context 让课表缓存可读
+      ScheduleCache.setFormContext(this.context);
+      // refresh 内部 saveToday(push=true) → pushAll → scheduleNextRefresh，
+      // 一次调用就完成「重算 + 推卡 + 安排下一次刷新」整条链
+      CardRefresher.refresh(this.context);
+    } catch (error) {
+      hilog.warn(DOMAIN_NUMBER, TAG, 'onUpdateForm 重算失败，回退为推旧缓存：%{public}s',
+        (error as Error).message);
+      this.push(formId);
+    }
   }
 
   /** 用户移除卡片时触发 —— 必须清掉持久化的 formId，否则会越攒越多。 */

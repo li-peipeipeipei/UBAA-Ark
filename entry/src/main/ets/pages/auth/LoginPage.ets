@@ -14,7 +14,10 @@ import { Logger } from '../../common/Logger';
 import { Toast } from '../../common/Toast';
 import { ApiError, CaptchaRequiredError } from '../../network/ApiError';
 import { ApiService } from '../../network/ApiService';
+import { CaptchaRecognizer } from '../../network/CaptchaRecognizer';
+import { LOGIN_PREPARED_TTL_MS } from '../../network/LocalAuthService';
 import { RouteEngine } from '../../network/RouteEngine';
+import { SessionGuard } from '../../network/SessionGuard';
 import { SavedCredentials, TokenStore } from '../../network/TokenStore';
 import { CaptchaInfo, UserData } from '../../model/ApiTypes';
 
@@ -57,6 +60,16 @@ export struct LoginPage {
    * 去 B 路提交，服务端一律判「凭据无效」，而用户明明没输错。
    */
   private warmedMode: ConnectionMode = ConnectionMode.DIRECT;
+  /**
+   * 最近一次取到令牌的时刻。
+   *
+   * 应用常被冻结在后台（过夜）后原样回到前台，`aboutToAppear` 不会重跑，
+   * 手里那份 `execution` 与验证码图早已随服务端 webflow 会话超时作废。
+   * 提交前按时间判一次旧，过期就先重新预热。
+   */
+  private warmedAt: number = 0;
+  /** 是否已经替用户静默提交过一次（每次进页面最多一次，避免失败后反复撞）。 */
+  private autoTried: boolean = false;
 
   aboutToAppear(): void {
     this.policy = TokenStore.getRoutePolicy();
@@ -69,7 +82,38 @@ export struct LoginPage {
         this.mode = mode;
       });
     }
-    this.warmUp();
+    void this.warmUp().then(() => {
+      void this.maybeAutoLogin();
+    });
+  }
+
+  /**
+   * 能不用重登就别让用户重登。
+   *
+   * 走到登录页有两种原因，处理必须分开：
+   * - **用户主动退出**：`canAutoLogin()` 为 false（`signedOut` 标记），什么都不做；
+   * - **换网/会话过期导致本地会话没了**：凭据还在，替用户提交一次，
+   *   成功后 `onLoginSuccess` 直接进主页 —— 与原版「换网后冷启动仍保持登录」一致。
+   *
+   * 两个前置条件刻意保守：验证码没识别出来时不代为提交（先让用户看图），
+   * 并且每次进页面只尝试一次。
+   */
+  private async maybeAutoLogin(): Promise<void> {
+    if (this.autoTried || this.demoMode || this.loading) {
+      return;
+    }
+    if (TokenStore.hasLocalSession() || !SessionGuard.canAutoLogin()) {
+      return;
+    }
+    if (this.username.length === 0 || this.password.length === 0) {
+      return;
+    }
+    if (this.showCaptcha && this.captchaCode.length === 0) {
+      return;
+    }
+    this.autoTried = true;
+    Logger.info('无本地会话但有已保存凭据，尝试静默登录');
+    await this.doLogin();
   }
 
   /**
@@ -118,9 +162,19 @@ export struct LoginPage {
       return;
     }
     try {
+      // 🔴 自动策略下必须**先选路、再取登录页**。
+      //
+      // `aboutToAppear` 里的选路是异步的，而 warmUp 是紧接着同步发起的 ——
+      // 预加载会用到 TokenStore 里上一次记住的路线（通常是 WebVPN）。
+      // 于是出现「自动模式判定为校内直连，却弹验证码」：拿到的其实是
+      // 校外网关那张**必然带验证码**的登录页。
+      if (this.policy === RoutePolicy.AUTO) {
+        this.mode = await RouteEngine.prepareForLogin();
+      }
       const preload = await ApiService.preload(TokenStore.getOrCreateClientId());
       // 记下令牌是在哪条路上取的（预热期间自动选路可能刚把路线定下来）
       this.warmedMode = TokenStore.getConnectionMode();
+      this.warmedAt = Date.now();
       if (preload.execution !== undefined && preload.execution.length > 0) {
         this.execution = preload.execution;
       }
@@ -132,13 +186,40 @@ export struct LoginPage {
       if (needCaptcha && preload.captcha !== undefined) {
         this.captchaImageUri = this.buildCaptchaUri(preload.captcha);
       }
+      // 本地识别出的答案直接预填：用户只需点「登录」，不用照着图敲
+      if (needCaptcha && preload.captchaAnswer !== undefined &&
+        preload.captchaAnswer.length > 0) {
+        this.captchaCode = preload.captchaAnswer;
+      } else if (!needCaptcha) {
+        this.captchaCode = '';
+      }
     } catch (error) {
       Logger.warn('登录页预热失败（不影响继续登录）：' + (error as Error).message);
     }
   }
 
-  /** 根据登录响应构造验证码图片地址（优先内联 base64）。 */
-  private buildCaptchaUri(captcha: CaptchaInfo): string {
+  /**
+   * 对服务端刚下发的挑战做一次本地识别并预填。
+   *
+   * 识别失败就保持空串，让用户照图输入 —— 这里**不**做任何自动提交，
+   * 保证「一次挑战一次提交」的语义与原版一致。
+   */
+  private async prefillCaptcha(captcha: CaptchaInfo): Promise<void> {
+    const base64: string | undefined = captcha.base64Image;
+    if (base64 === undefined || base64.length === 0) {
+      return;
+    }
+    const comma: number = base64.indexOf(',');
+    const payload: string = base64.startsWith('data:') && comma >= 0 ?
+      base64.substring(comma + 1) : base64;
+    const answer: string = await CaptchaRecognizer.recognizeBase64(payload);
+    if (answer.length === 6) {
+      this.captchaCode = answer;
+      Logger.info('验证码已预填：' + answer);
+    }
+  }
+
+  /** 根据登录响应构造验证码图片地址（优先内联 base64）。 */  private buildCaptchaUri(captcha: CaptchaInfo): string {
     const base64 = captcha.base64Image;
     if (base64 !== undefined && base64.length > 0) {
       if (base64.startsWith('data:')) {
@@ -199,6 +280,24 @@ export struct LoginPage {
       await this.warmUp();
     }
 
+    /**
+     * 令牌过夜失效的兜底。
+     *
+     * 「晚上没登录、第二天打开就点登录」的场景里，进程常被冻结后原样恢复：
+     * 页面状态还在，但服务端的登录流程上下文早已超时回收。此时提交旧令牌只能换回
+     * 一张 `Error decoding flow execution` 错误页 —— 用户看到的是一次无意义失败。
+     * 按空置时长判旧、先换新页面，把这次失败挡在提交之前。
+     */
+    if (this.execution.length > 0 &&
+      Date.now() - this.warmedAt > LOGIN_PREPARED_TTL_MS) {
+      Logger.info('登录令牌已空置 ' + Math.round((Date.now() - this.warmedAt) / 60000) +
+        ' 分钟，重新预热后再提交');
+      this.execution = '';
+      this.showCaptcha = false;
+      this.captchaCode = '';
+      await this.warmUp();
+    }
+
     // 最多两次：第二次只在「自动策略 + 网络层失败」时发生（换另一条路重试）。
     // 凭据错误、验证码、业务拒绝都不换路 —— 那与走哪条路无关。
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -249,6 +348,8 @@ export struct LoginPage {
           this.showCaptcha = true;
           this.captchaCode = '';
           this.errorMessage = challenge.message;
+          // 新挑战同样先本地识别一次并预填，用户只需再点一次「登录」
+          this.prefillCaptcha(challenge.captcha);
         } else if (error instanceof ApiError) {
           this.errorMessage = apiError.friendlyMessage();
           // 网络层失败时补上目标地址，避免「不知道连的是哪个地址」这种无从下手的报错

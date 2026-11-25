@@ -21,6 +21,26 @@
       "metadata": []
     },
     {
+      "name": "ubaa_schedule_next",
+      "displayName": "$string:card_schedule_next_name",
+      "description": "$string:card_schedule_next_desc",
+      "src": "./ets/widget/pages/ScheduleNextCard.ets",
+      "uiSyntax": "arkts",
+      "renderingMode": "fullColor",
+      "isDefault": false,
+      "isDynamic": true,
+      "updateEnabled": true,
+      "scheduledUpdateTime": "07:30",
+      "updateDuration": 0,
+      "multiScheduledUpdateTime": "07:30,11:50,16:50",
+      "defaultDimension": "2*2",
+      "supportDimensions": [
+        "2*2"
+      ],
+      "formConfigAbility": "ability://EntryAbility",
+      "metadata": []
+    },
+    {
       "name": "ubaa_exam_small",
       "displayName": "$string:card_exam_small_name",
       "description": "$string:card_exam_small_desc",

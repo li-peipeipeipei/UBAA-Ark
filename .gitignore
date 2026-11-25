@@ -1,6 +1,6 @@
 # ===== 构建产物与本地环境 =====
 /node_modules
-/oh_modules
+**/oh_modules
 /local.properties
 /build-profile.json5
 /.idea

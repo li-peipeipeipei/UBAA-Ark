@@ -48,6 +48,25 @@ const ERROR_RES: RegExp[] = [
 
 const TAG_RE = new RegExp('<[^>]+>', 'g');
 
+/**
+ * Spring Webflow「执行上下文失效」页面标记。
+ *
+ * CAS 的登录页属于服务端一条 webflow 会话，页面里的 `execution` 只是这条会话的
+ * 句柄。会话超时（过夜）、服务重启、或令牌已被消费过之后，提交上来的 `execution`
+ * 就再也解不出来，服务端改为返回这张错误页 —— 典型正文是
+ * `Error decoding flow execution`。
+ *
+ * 🔴 这**不是**凭据错误：按「账号或密码错误」透出会把用户引去改密码，方向全错。
+ * 正确处置是丢掉当前准备页、重新取一张登录页再提交。
+ */
+const FLOW_EXPIRED_MARKERS: string[] = [
+  'error decoding flow execution',
+  'flow execution has expired',
+  'no flow execution could be found',
+  'invalid flow execution',
+  'flowexecutionexception'
+];
+
 /** 表单里出现这些标签说明有本应用未实现的交互控件。 */
 const SELECT_RE: RegExp = new RegExp('<select\\b', 'i');
 const TEXTAREA_RE: RegExp = new RegExp('<textarea\\b', 'i');
@@ -210,6 +229,25 @@ export class CasParser {
       }
     }
     return '';
+  }
+
+  /**
+   * 页面是否为「webflow 执行上下文失效」错误页（`execution` 过期 / 被回收）。
+   *
+   * 判据是正文里的固定英文标记：这是 Spring Webflow 自带的异常页文案，
+   * 与账号密码无关，因此必须与 `findLoginError` 区分开单独上报。
+   */
+  static isFlowExecutionExpired(html: string): boolean {
+    if (html.length === 0) {
+      return false;
+    }
+    const lower: string = html.toLowerCase();
+    for (let i = 0; i < FLOW_EXPIRED_MARKERS.length; i++) {
+      if (lower.indexOf(FLOW_EXPIRED_MARKERS[i]) >= 0) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

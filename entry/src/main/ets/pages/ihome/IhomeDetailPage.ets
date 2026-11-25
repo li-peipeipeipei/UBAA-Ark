@@ -15,6 +15,13 @@ import {
   IhomeReactionResult,
   IhomeReply
 } from '../../model/ApiTypes';
+import { PageCache } from '../../common/PageCache';
+import { OfflineKey } from '../../common/OfflineCache';
+
+/** 诉求详情首帧缓存内容。 */
+interface IhomeDetailCache {
+  appeal: IhomeAppeal | null;
+}
 
 /**
  * iHome 诉求详情。
@@ -38,7 +45,16 @@ export struct IhomeDetailPage {
   }
 
   private async load(): Promise<void> {
-    this.loadState = LoadState.LOADING;
+    // 冷启动首帧：按当前诉求 id 同步读上次详情缓存，命中就直接进 SUCCESS
+    const key: string = OfflineKey.IHOME_DETAIL_PREFIX + IhomeNav.id.toString();
+    const cached: IhomeDetailCache | null = PageCache.load<IhomeDetailCache>(key, PageCache.TTL_DAY);
+    if (cached !== null && cached.appeal !== null) {
+      this.appeal = cached.appeal;
+      this.loadState = LoadState.SUCCESS;
+    }
+    if (this.loadState !== LoadState.SUCCESS) {
+      this.loadState = LoadState.LOADING;
+    }
     try {
       this.appeal = await ApiService.fetchIhomeDetail(IhomeNav.id, IhomeNav.mine);
       try {
@@ -49,10 +65,15 @@ export struct IhomeDetailPage {
         Logger.warn('iHome 配置加载失败：' + (error as Error).message);
       }
       this.loadState = LoadState.SUCCESS;
+      // 拉新成功：写回缓存（动态 key，登记以便换账号清理）
+      PageCache.save(key, { appeal: this.appeal } as IhomeDetailCache, true);
     } catch (error) {
       this.errorMessage = error instanceof ApiError
         ? (error as ApiError).friendlyMessage() : '诉求详情加载失败';
-      this.loadState = LoadState.ERROR;
+      // 缓存命中过时失败不切 ERROR，保留已渲染的本地内容
+      if (this.loadState !== LoadState.SUCCESS) {
+        this.loadState = LoadState.ERROR;
+      }
       Logger.error('iHome 详情加载失败：' + (error as Error).message);
     }
   }

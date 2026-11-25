@@ -1,6 +1,7 @@
 import { LoadState } from '../../common/AppRouter';
 import { DateUtil } from '../../common/DateUtil';
 import { Logger } from '../../common/Logger';
+import { KEY_ACCOUNT_VERSION, AccountEvents } from '../../common/AccountEvents';
 import { Toast } from '../../common/Toast';
 import curves from '@ohos.curves';
 import { ApiError } from '../../network/ApiError';
@@ -16,7 +17,7 @@ import { buildCourseDetail, CourseDetailDialog, CourseDetail } from '../../compo
 import { MultiCourseDialog } from '../../components/MultiCourseDialog';
 import { CardCache, CardCourse, CardDayView, CardSlot, CardToday, CardWeekView } from '../../common/CardCache';
 import { CardDataBuilder } from '../../common/CardDataBuilder';
-import { ScheduleColors } from '../../common/ScheduleColors';
+import { CourseSlotInput, ScheduleColors } from '../../common/ScheduleColors';
 import { ScheduleCache } from '../../network/ScheduleCache';
 import { GlobalContext } from '../../common/GlobalContext';
 import { CourseClass, SectionTime, Term, Week, WeeklySchedule } from '../../model/ApiTypes';
@@ -458,7 +459,15 @@ export struct SchedulePage {
    * 切周时不需要联网、不需要转加载态，像翻照片一样立刻显示
    * （用户要求「提前把所有课表全加载出来、直接滑动图片一样直接显示」）。
    */
-  @State private weekSchedules: WeeklySchedule[] = [];
+  // @Watch 覆盖所有赋值路径（缓存首屏 / 预取完成 / 静默刷新 / 切周拉取）——
+  // 这些地方最终都会换数组引用或 .slice()，能稳定触发重算。
+  @State @Watch('onWeekSchedulesChanged') private weekSchedules: WeeklySchedule[] = [];
+  /**
+   * 课程名 → 避让后的色槽（整学期一次性算出，见 `rebuildCourseSlots`）。
+   *
+   * 不用 @State：它只被取色方法读，不直接驱动 UI；每周数据变化时重建一次即可。
+   */
+  private courseSlots: Map<string, number> = new Map();
   /** 某周拉取失败且无本地缓存时置 true，该周页面显示错误占位。 */
   @State private weekErrors: boolean[] = [];
   /** 切周横滑的 Swiper 控制器：点周次条时用它做带动画的跳页。 */
@@ -572,6 +581,40 @@ export struct SchedulePage {
   }
 
   /**
+   * 账号身份变化的跨页信号（登录新账号 / 演示模式切换时由 persistLogin 播报）。
+   *
+   * 课表是常驻页签：HdsTabs 不销毁它，退出/切换账号后 aboutToAppear 未必再跑，
+   * 于是内存态与磁盘缓存会一起停留在上一个账号。收到信号后无条件作废两者并重拉。
+   *
+   * @StorageLink 初始值不触发 @Watch —— 新建的 SchedulePage 走 aboutToAppear →
+   * restoreFromCache；而登录时 persistLogin 已按账号清过磁盘缓存，两条路径互不遗漏。
+   */
+  @StorageLink(KEY_ACCOUNT_VERSION) @Watch('onAccountVersionChanged') private accountVersion: number = 0;
+
+  private onAccountVersionChanged(): void {
+    Logger.info('账号已切换，作废课表缓存并重新加载');
+    // 用 clear() 全清而非 clearAll()：后者只删当前学期的周 key，切换过学期后
+    // 上一账号其它学期的周课表会残留，新账号默认回到那一学期时就会读到旧数据。
+    ScheduleCache.clear();
+    this.terms = [];
+    this.weeks = [];
+    this.weekData.setItems([]);
+    this.schedule = { arrangedList: [], code: '', name: '', sectionTimes: [] };
+    this.termCode = '';
+    this.currentWeek = 1;
+    this.weekSchedules = [];
+    this.weekErrors = [];
+    this.fromCache = false;
+    this.cachedAt = '';
+    this.header.termName = '';
+    this.header.weeks = [];
+    this.loadState = LoadState.LOADING;
+    this.needFullRefresh = true;
+    this.lastLoadAt = Date.now();
+    this.loadTerms();
+  }
+
+  /**
    * 页面重新可见时（从别的页签切回来 / App 从后台恢复）刷新当前周。
    *
    * 「每次打开刷新一下」靠这个。⚠️ **不是靠 `onPageShow`** ——
@@ -608,22 +651,37 @@ export struct SchedulePage {
    *
    * 返回是否成功渲染了本地数据：调用方据此决定失败时是「静默」还是「报错」。
    */
-  /** 当前登录账号的学号（优先本地会话，退 JWT 会话）。 */
+  /**
+   * 当前登录账号的学号。
+   *
+   * 以 `getSession()`（persistLogin 落盘的身份）为准 —— 它与登录时作废缓存用的是
+   * 同一份数据。原来优先读 `getLocalSession()`（按连接模式分槽），换账号时若当前
+   * 路线的槽位没写全，就可能读到上一账号的残留，导致缓存校验误判为同一账号。
+   * 本地会话仅作兜底：JWT 会话为空的历史场景才用它。
+   */
   private currentSchoolId(): string {
+    const sessionSchoolId: string = TokenStore.getSession().schoolId.trim();
+    if (sessionSchoolId.length > 0) {
+      return sessionSchoolId;
+    }
     const local = TokenStore.getLocalSession();
     if (local !== null && local.schoolId.length > 0) {
       return local.schoolId.trim();
     }
-    return TokenStore.getSession().schoolId.trim();
+    return '';
   }
 
-  /** 当前登录账号的登录名。 */
+  /** 当前登录账号的登录名（同样以落盘会话为准）。 */
   private currentUsername(): string {
+    const sessionUsername: string = TokenStore.getSession().username.trim();
+    if (sessionUsername.length > 0) {
+      return sessionUsername;
+    }
     const local = TokenStore.getLocalSession();
     if (local !== null && local.username.length > 0) {
       return local.username.trim();
     }
-    return TokenStore.getSession().username.trim();
+    return '';
   }
 
   /**
@@ -645,24 +703,10 @@ export struct SchedulePage {
    * - 缓存里没有账号信息（老版本）→ 视为一致并补写，避免无谓地清缓存重拉。
    */
   private isSameCachedAccount(cached: string): boolean {
-    if (cached.length === 0) {
-      return true;
-    }
-    const sid = this.currentSchoolId();
-    const user = this.currentUsername();
-    if (cached.indexOf('|') < 0) {
-      return cached === sid || cached === user;
-    }
-    const parts: string[] = cached.split('|');
-    const cachedSid = parts.length > 0 ? parts[0] : '';
-    const cachedUser = parts.length > 1 ? parts[1] : '';
-    if (sid.length > 0 && cachedSid.length > 0) {
-      return sid === cachedSid;
-    }
-    if (user.length > 0 && cachedUser.length > 0) {
-      return user === cachedUser;
-    }
-    return true;
+    // 与登录时作废缓存共用同一套判据（AccountEvents.accountMatches），避免两处规则
+    // 不一致又串号。关键差异：读不到当前账号信息时不再放行旧缓存（旧版末尾 return true
+    // 是账号切换仍显示旧课表的元凶之一），宁可重拉一次也不显示别人的数据。
+    return AccountEvents.accountMatches(cached, this.currentSchoolId(), this.currentUsername());
   }
 
   private restoreFromCache(): boolean {
@@ -672,7 +716,7 @@ export struct SchedulePage {
       const cachedAccount: string = ScheduleCache.loadAccount();
       if (!this.isSameCachedAccount(cachedAccount)) {
         Logger.info('课表缓存属于其他账号（' + cachedAccount + ' ≠ ' + account + '），清空后重新拉取');
-        ScheduleCache.clearAll();
+        ScheduleCache.clear();
         return false;
       }
       if (cachedAccount.length === 0) {
@@ -795,6 +839,59 @@ export struct SchedulePage {
    * 单独抽出来是为了保证「本地渲染出来的界面」与「联网渲染出来的」**逐像素一致** ——
    * 否则会出现断网时排版和联网时不一样这种诡异差异。
    */
+  onWeekSchedulesChanged(): void {
+    this.rebuildCourseSlots();
+  }
+
+  /**
+   * 用**整学期**课程重建颜色分配表。
+   *
+   * 必须传全学期而非当前周：否则同一门课在不同周的邻居不同 → 分到不同色，
+   * 用户翻周就会看到同一门课变色。整学期集合稳定，分配结果才稳定。
+   *
+   * 每次 weekSchedules 变化（首屏缓存、预取完成、静默刷新）后都重算一次；
+   * 算法按课程名排序 + 确定性贪心，重算结果不变，不会导致颜色跳变。
+   */
+  private rebuildCourseSlots(): void {
+    const inputs: CourseSlotInput[] = [];
+    for (let w = 0; w < this.weekSchedules.length; w++) {
+      const week: WeeklySchedule | undefined = this.weekSchedules[w];
+      if (week === undefined || week === null || week.arrangedList === undefined) {
+        continue;
+      }
+      for (let i = 0; i < week.arrangedList.length; i++) {
+        const c: CourseClass = week.arrangedList[i];
+        const key: string = c.courseName.length > 0 ? c.courseName : c.courseCode;
+        if (key.length === 0) {
+          continue;
+        }
+        const begin: number = c.beginSection === undefined || c.beginSection <= 0 ? 1 : c.beginSection;
+        const end: number = c.endSection === undefined || c.endSection < begin ? begin : c.endSection;
+        const day: number = c.dayOfWeek === undefined || c.dayOfWeek <= 0 ? 1 : c.dayOfWeek;
+        inputs.push({ key: key, day: day, begin: begin, end: end });
+      }
+    }
+    this.courseSlots = ScheduleColors.assignCourseSlots(inputs);
+  }
+
+  /**
+   * 取课程色槽的唯一入口。
+   *
+   * ⚠️ 惰性兜底：`@Watch('weekSchedules')` 在首屏 `aboutToAppear → restoreFromCache`
+   * 的初始化赋值时可能不触发，导致 `courseSlots` 一直是空表、取色回退到原始哈希
+   * —— 表现为「前后挨着的两门课撞上相近色对」（如理论力学 slot 9 / 复变函数 slot 1，
+   * 同属 group 1）。这里在首次取色时补算，保证同一次渲染就用上避让结果。
+   *
+   * 表一旦算定就不再重算（`size > 0` 直接返回）；整学期数据后续补齐时由 @Watch
+   * 负责重建，算法按课程名排序 + 确定性贪心，同一门课全程同色。
+   */
+  private slotFor(key: string): number {
+    if (this.courseSlots.size === 0 && this.weekSchedules.length > 0) {
+      this.rebuildCourseSlots();
+    }
+    return ScheduleColors.slotOf(key, this.courseSlots);
+  }
+
   private applySchedule(data: WeeklySchedule, week: number): void {
     this.currentWeek = week;
     this.header.currentWeek = week;
@@ -1227,12 +1324,14 @@ export struct SchedulePage {
       // 显式收窄：上面的 null 判断在 ArkTS 里不足以让 `cur` 摆脱 `WeeklySchedule | null`
       const weekData: WeeklySchedule = cur;
 
+      // 相邻避让槽位：与卡片刷新共用的整学期算法
+      const cardSlots: Map<string, number> = CardDataBuilder.buildCourseSlotMap();
       // ---- 周课表卡 ----
       CardCache.saveWeekView(ctx, CardDataBuilder.buildWeekView(
-        weekData, this.weeks, shown, termName, isCurrentWeek ? today : 0));
+        weekData, this.weeks, shown, termName, isCurrentWeek ? today : 0, cardSlots));
       // ---- 日课表卡 ----
       CardCache.saveDayView(ctx, CardDataBuilder.buildDayView(
-        weekData, this.weeks, shown, today, today, isCurrentWeek));
+        weekData, this.weeks, shown, today, today, isCurrentWeek, cardSlots));
     } catch (error) {
       Logger.warn('写入周/日课表卡片失败：' + (error as Error).message);
     }
@@ -1548,7 +1647,7 @@ export struct SchedulePage {
   private multiController: CustomDialogController | null = null;
 
   /**
-   * 把「今天」写进跨进程缓存，供桌面卡片读取。
+   * 把「今天 / 下一节课」写进跨进程缓存，供桌面卡片读取。
    *
    * ## 为什么是「主应用写、卡片只读」
    *
@@ -1557,19 +1656,35 @@ export struct SchedulePage {
    * 教务系统那条 CAS 登录 + Cookie 跳转 + 解密的链路必然超时，
    * 所以卡片那边**绝不联网**，只读这里写好的快照。
    *
-   * 「下一节课」在主应用这边判定：卡片渲染进程与主应用的时间可能差几秒，
-   * 让卡片自己判断会出现「明明还有一节课却显示今天没课了」。
+   * ## 判定口径：一律按系统时间，不按课表页翻到的周
+   *
+   * 周次用 `CardDataBuilder.systemCurrentWeek`（校历算今天在哪周 + 周日 15:00 滚动），
+   * 星期用 `DateUtil.currentWeekday()`——两者都取系统时钟。
+   * ⚠️ 不要用 `this.currentWeek` / `this.schedule`：那是用户此刻在课表页翻到的周，
+   * 翻到第 12 周就会让桌面两张卡片长期停在第 12 周（今天明明在第 11 周）。
+   * 数据从缓存按系统周读取（课表页拉到的数据已 `saveWeek` 落盘），读不到就跳过本次，
+   * 不用页面周数据污染卡片。
    *
    * 找「下一节」时会**往后跨天找**（今天没有就找明天、再找本周后面的课）——
    * 否则周末/无课日卡片是一片空白，什么信息都给不出。
    */
   private pushToCards(): void {
     try {
-      // 内容计算全部交给 CardDataBuilder —— 与启动刷新（CardRefresher）共用同一份实现，
-      // 免得两处各算一遍、字段一改就悄悄漂移。
+      if (this.weeks.length === 0 || this.termCode.length === 0) {
+        return;
+      }
+      const sysWeek: number = CardDataBuilder.systemCurrentWeek(this.weeks);
+      if (sysWeek <= 0) {
+        return;
+      }
+      const sysData: WeeklySchedule | null = ScheduleCache.loadWeek(this.termCode, sysWeek);
+      if (sysData === null) {
+        return;
+      }
+      // 内容计算全部交给 CardDataBuilder —— 与启动刷新（CardRefresher）共用同一份实现。
+      // isCurrentWeek 传 true：数据就是系统周本身，星期标记「今天」有意义。
       const snapshot: CardToday = CardDataBuilder.buildToday(
-        this.schedule, this.weeks, this.currentWeek,
-        DateUtil.currentWeekday(), true);
+        sysData, this.weeks, sysWeek, DateUtil.currentWeekday(), true);
       CardCache.saveToday(GlobalContext.getContext(), snapshot, snapshot.headline);
     } catch (error) {
       Logger.warn('写入桌面卡片缓存失败：' + (error as Error).message);
@@ -1669,10 +1784,13 @@ export struct SchedulePage {
     /**
      * 统一走 `ScheduleColors` 的两套主题色板，**不再用上游色**：
      * 1. 上游是一整套浅色系（#FFF0CC 这类），铺在深色页面上刺眼；
-     * 2. 课表页要和桌面卡片保持同色 —— 卡片用的就是这套板 + 课程名哈希。
+     * 2. 课表页要和桌面卡片保持同色 —— 卡片用的就是这套板 + 相同的避让槽位。
+     *
+     * 2026-11-24：色槽不再直接取课程名哈希，而是 `assignCourseSlots` 的
+     * **相邻避让结果**（同类课不同相近色）。同名课恒定同槽，跨周不褪色。
      */
     const key: string = course.courseName.length > 0 ? course.courseName : course.courseCode;
-    return ScheduleColors.forCourse(key, this.isDark);
+    return ScheduleColors.courseColorOf(this.slotFor(key), this.isDark);
   }
 
   /**
@@ -1706,16 +1824,19 @@ export struct SchedulePage {
    *   配暖白字更统一）。
    */
   private courseTextColor(course: CourseClass): ResourceColor {
-    if (!this.isDark) {
-      const key: string = course.courseName.length > 0 ? course.courseName : course.courseCode;
-      return ScheduleColors.textForCourse(key);
-    }
-    return this.isLightColor(this.courseColor(course)) ? '#FF000000' : '#FFFFFFFF';
+    const key: string = course.courseName.length > 0 ? course.courseName : course.courseCode;
+    return ScheduleColors.courseTextOf(this.slotFor(key), this.isDark);
   }
 
-  /** 课程块副文字（地点）颜色：主文字的柔和版本。 */
+  /**
+   * 课程块副文字（地点）颜色。
+   *
+   * 2026-11-22 反馈：浅色下教室行**跟随课程名颜色**（主文字的 75% 不透明度），
+   * 不再用中性黑 `#B3000000`。深色模式维持原暖白逻辑。
+   */
   private courseSubTextColor(course: CourseClass): ResourceColor {
-    return this.isLightColor(this.courseColor(course)) ? '#B3000000' : '#E8FFFFFF';
+    const key: string = course.courseName.length > 0 ? course.courseName : course.courseCode;
+    return ScheduleColors.courseSubTextOf(this.slotFor(key), this.isDark);
   }
 
   /** 课程块描边色：浅底用淡黑、深底用淡白，让相邻 / 同色块的边界更清晰。 */
@@ -1727,11 +1848,13 @@ export struct SchedulePage {
    * - **深色模式**：维持原逻辑，块色亮则黑边、块色暗则白边。
    */
   private courseBorderColor(course: CourseClass): ResourceColor {
+    const key: string = course.courseName.length > 0 ? course.courseName : course.courseCode;
+    const slot: number = this.slotFor(key);
     if (!this.isDark) {
-      const key: string = course.courseName.length > 0 ? course.courseName : course.courseCode;
-      return ScheduleColors.borderFor(key, false);
+      return ScheduleColors.courseBorderOf(slot, false);
     }
-    return this.isLightColor(this.courseColor(course)) ? '#26000000' : '#33FFFFFF';
+    // 深色维持原规则：块色亮则黑边、块色暗则白边（与避让前的观感一致）
+    return this.isLightColor(ScheduleColors.courseColorOf(slot, true)) ? '#26000000' : '#33FFFFFF';
   }
 
   /** 点击课程块：组装详情并弹出。 */
@@ -2515,9 +2638,10 @@ export struct SchedulePage {
     Column() {
       // 课程名贴顶，占满可用宽度；行数按块高动态放宽（见 nameMaxLines）
       Text(course.courseName)
-        .fontSize(11)
+        // 2026-11-24：课程名放大一档（11→12）并加粗；教室同样放大但保持常规字重
+        .fontSize(12)
         .fontColor(this.courseTextColor(course))
-        .fontWeight(FontWeight.Medium)
+        .fontWeight(FontWeight.Bold)
         .maxLines(this.nameMaxLines(course))
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
@@ -2530,7 +2654,8 @@ export struct SchedulePage {
       // 教室贴底：优先完整显示（行数按块高给，见 placeMaxLines）
       if (course.placeName !== undefined && course.placeName.length > 0) {
         Text(course.placeName)
-          .fontSize(10)
+          // 教室放大一档（10→11），不加粗（仅课程名加粗）
+          .fontSize(11)
           .fontColor(this.courseSubTextColor(course))
           .maxLines(this.placeMaxLines(course))
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2566,20 +2691,28 @@ export struct SchedulePage {
    * 占满整列宽，正中写「N节课 / 查看」，点开才选具体哪门课。
    *
    * 同一门课的多条记录（如常微分方程 1-1 与 2-2）节次不相交，仍各自成块、不受影响。
+   *
+   * 底色原为实色 `brand`（浅 #1976D2 / 深 #5AA9F0）+ 白字，深浅两套都是饱和蓝，
+   * 在课程色块里过于跳。现改成与宽屏侧栏选中项**观感相同**的浅蓝 `multiCourseBlock`
+   * （浅 #A7CCED / 深 #223750），文字同步换成侧栏选中态用的品牌色（浅深蓝 / 深亮蓝）。
+   *
+   * ⚠️ 不能用半透明的 `sideNavSelected`：那会让底下的课表网格横线从块里透出来。
+   * `multiCourseBlock` 是把它按侧栏底色**预混好的实色**，颜色一致但完全不透明。
    */
   @Builder
   multiCourseBlock(cluster: ScheduleCluster) {
     Column({ space: 2 }) {
       Text(cluster.courses.length.toString() + '节课')
         .fontSize(12)
-        .fontColor('#FFFFFFFF')
+        .fontColor(AppColor.brand)
         .fontWeight(FontWeight.Medium)
         .maxLines(1)
       // 块太矮（就一节高）时只留一行，别把「查看」挤出去
       if (cluster.height * SECTION_CELL_HEIGHT >= 96) {
         Text('查看')
           .fontSize(11)
-          .fontColor('#CCFFFFFF')
+          .fontColor(AppColor.brand)
+          .opacity(0.75)
           .maxLines(1)
       }
     }
@@ -2588,9 +2721,8 @@ export struct SchedulePage {
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
     .borderRadius(8)
-    // 品牌蓝：与课程本身的颜色区分开，一眼认出「这是汇总入口，不是某门课」
-    .backgroundColor(AppColor.brand)
-    .border({ width: 1, color: '#33FFFFFF' })
+    // 与侧栏选中块观感一致的预混实色（不透网格横线）；白描边在浅底上会发虚，去掉
+    .backgroundColor(AppColor.multiCourseBlock)
     .position({
       x: 1,
       y: (cluster.begin - 1) * SECTION_CELL_HEIGHT + 1

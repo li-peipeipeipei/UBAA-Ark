@@ -73,6 +73,40 @@ const ICLASS_COURSE_URL: string =
  */
 const ICLASS_API_BASE: string = 'https://iclass.buaa.edu.cn:8347/';
 
+/**
+ * 课堂签到**提交**入口（上游 2.0.3 `build_auto_signin_url` 裁决）。
+ *
+ * ⚠️ 这是 2026-11-19 抓包裁决后的唯一提交入口，三个要点不能「统一」掉：
+ * - 端口是 **8181**，既不是列表的 8347、也不是二维码的 8081；
+ * - **POST 不带查询串**，所有参数都在表单体里；
+ * - 表单恰好六个字段，`routerInfo` / `longitude` / `latitude` / `machineInfo`
+ *   是官方客户端的固定值，服务端只校验形状、不校验真实性。
+ *
+ * 旧的 `stu_scan_sign.action` 是**扫码签到**，它要的是「扫到的那张码」里的
+ * 参数；拿它当自动签到的提交入口，上游必然回 `ERRMSG=!appMsg.qxktSign!`
+ * （服务端 i18n 键「请先扫码」）。这正是 11-19 那次「签到永远失败」的根因 ——
+ * 参数载体没有错，**接口选错了**。`stu_scan_sign` 现在只用于生成二维码内容
+ * （见 `qrContent`），不再用于提交。
+ */
+const ICLASS_AUTO_SIGN_URL: string = 'https://iclass.buaa.edu.cn:8181/app/course/stu_auto_sign.action';
+
+/**
+ * 签到二维码的**内容前缀**（给 iClass App / 微信扫的那张码）。
+ *
+ * ⚠️ 这里用 `http` + 8081 + `eschool` 前缀，与上面两条都不一样，是上游按用途
+ * 分开的入口，不是笔误：
+ * - 8021/8081 的 `eschool/...` 是**学生端 H5** 的路径，二维码扫出来要落到那边；
+ * - 这串只是**字符串内容**，本机不会去请求它，因此不受「HarmonyOS 默认拦截明文
+ *   HTTP」的限制（见官方错误码 `2300997`）。真要本机请求才需要 network_config.json。
+ *
+ * 反过来说：**别因为「要开明文许可」就把二维码改到 8347** —— 扫出来对方打不开。
+ */
+const ICLASS_QR_SCAN_URL: string =
+  'http://iclass.buaa.edu.cn:8081/eschool/app/course/stu_scan_sign.action';
+
+/** 二维码时间戳允许的前后偏移上限（与上游 `get_qr` 校验一致）。 */
+const QR_OFFSET_LIMIT_MS: number = 60000;
+
 /** 统一身份认证入口（门户没带回 loginName 时显式换取一次）。 */
 const CAS_LOGIN_URL: string = 'https://' + AppConfig.UPSTREAM_SSO_HOST + '/login';
 
@@ -113,6 +147,8 @@ function percentDecode(text: string): string {
 /** iclass 的通用信封：`STATUS` 为 "0" / "200" / "success" 表示成功。 */
 interface IclassEnvelope<T> {
   STATUS?: string | number;
+  /** 业务错误码（失败时和 `ERRMSG` 成对出现，只用于日志定位）。 */
+  ERRCODE?: string | number;
   ERRMSG?: string;
   result?: T;
 }
@@ -187,10 +223,12 @@ export class LocalSigninService {
       await LocalSigninService.relogin();
       response = await UpstreamClient.get(url, true, LocalSigninService.sessionHeaders());
       if (LocalSigninService.needsRelogin(response)) {
-        // 重登之后依然不成功：当作「今天没有需要签到的课」，
-        // 与原实现第二轮回退空列表一致（避免把「无数据」渲染成整页报错）
-        Logger.warn('课堂列表仍未取到（' + response.status + '），按空列表处理');
-        return [];
+        // 重登之后仍然失败：以前这里回退空列表，结果是「明明有课、界面说没有」，
+        // 把会话故障伪装成「今天没课」，和签到失败撞在同一个坑里。
+        // 现在明确报错，交给页面 ErrorView 给重试入口。
+        Logger.warn('课堂列表仍未取到（HTTP ' + response.status + '）');
+        throw new ApiError(502, 'signin_error',
+          '签到课堂加载失败：课堂系统会话未建立，请返回设置页重新登录后重试');
       }
     }
 
@@ -215,9 +253,69 @@ export class LocalSigninService {
    */
   static async signIn(courseId: string): Promise<SigninActionResult> {
     await LocalSigninService.ensureLogin();
+
+    /**
+     * 提交走 `stu_auto_sign`，**不取时间戳**：这个接口按排课 id + 会话认课时段，
+     * 时间戳是扫码签发那条链路的东西（`stu_scan_sign`），混进来只会多一跳请求
+     * 和一个「取不到就签不了」的假依赖。
+     */
+    const body = LocalSigninService.autoSignForm(courseId);
+
+    // ⚠️ 写请求**不跟随重定向**（与云打印那次修的同一类坑）：自动跟随会把 3xx 吞掉，
+    // 最终落到登录页 HTML 上，调用方再也看不到「会话失效」这个事实。
+    let response = await UpstreamClient.postForm(
+      ICLASS_AUTO_SIGN_URL, body, false, LocalSigninService.sessionHeaders());
+    if (LocalSigninService.signRetryWorthy(response)) {
+      Logger.warn('课堂签到会话已失效，重新换取后重试');
+      await LocalSigninService.relogin();
+      response = await UpstreamClient.postForm(
+        ICLASS_AUTO_SIGN_URL, body, false, LocalSigninService.sessionHeaders());
+    }
+
+    const envelope = LocalSigninService.parse<IclassSignResult>(response, '签到失败');
+    const result = envelope.result;
+    const signStatus = result === undefined ? '' : textOf(result.stuSignStatus);
+    const statusOk = LocalSigninService.isStatusOk(envelope.STATUS);
+    const success = statusOk && signStatus === '1';
+
+    const raw = textOf(envelope.ERRMSG);
+    const errCode = textOf(envelope.ERRCODE);
+    if (!success) {
+      Logger.warn('签到未成功：STATUS=' + textOf(envelope.STATUS) +
+        ' ERRCODE=' + (errCode.length > 0 ? errCode : '-') +
+        ' ERRMSG=' + (raw.length > 0 ? raw : '-') +
+        ' stuSignStatus=' + (signStatus.length > 0 ? signStatus : '-'));
+    }
+    return {
+      success: success,
+      message: LocalSigninService.friendlyMessage(success, raw, errCode, statusOk, signStatus)
+    };
+  }
+
+  /**
+   * 生成课堂签到二维码的**内容字符串**（不提交任何请求）。
+   *
+   * 内容形如
+   * `http://iclass.buaa.edu.cn:8081/eschool/app/course/stu_scan_sign.action?courseSchedId=X&timestamp=T`，
+   * 由对方（iClass App / 微信）扫码后自己去访问 —— 所以本机**只需要真实的服务端
+   * 时间戳**，不需要能连通 8081。
+   *
+   * 时间戳必须是上游的：用 `Date.now()` 拼出来的码会被对方判为过期/无效。
+   *
+   * @param offsetMs 在校验通过后额外加的毫秒偏移（0 ~ 60000）。
+   *        实时展示用 0；「保存到相册」用 2000 —— 图片是静态的，留一点余量让对方
+   *        扫码时还落在有效期内。
+   */
+  static async buildScanQrContent(courseId: string, offsetMs: number): Promise<string> {
+    if (courseId.length === 0) {
+      throw new ApiError(400, 'invalid_request', '缺少课程安排标识');
+    }
+    if (offsetMs < 0 || offsetMs > QR_OFFSET_LIMIT_MS) {
+      throw new ApiError(400, 'invalid_request', '二维码时间偏移超出允许范围');
+    }
     let timestamp = await LocalSigninService.fetchTimestamp();
     if (timestamp.length === 0) {
-      // 从「打开页面」到「点签到」之间会话可能被服务端回收，重换一次即可自愈
+      // 与签到提交同款自愈：面板开着的几分钟里会话可能已被回收
       Logger.warn('取服务器时间失败，重新换取会话后重试');
       await LocalSigninService.relogin();
       timestamp = await LocalSigninService.fetchTimestamp();
@@ -225,34 +323,12 @@ export class LocalSigninService {
     if (timestamp.length === 0) {
       throw new ApiError(502, 'signin_error', '获取服务器时间失败，请稍后重试');
     }
-
-    const url = LocalSigninService.checkinUrl('app/course/stu_scan_sign.action');
-    const body = 'id=' + enc(LocalSigninService.userId) +
-      '&courseSchedId=' + enc(courseId) +
-      '&timestamp=' + enc(timestamp);
-
-    let response = await UpstreamClient.postForm(
-      url, body, true, LocalSigninService.sessionHeaders());
-    if (LocalSigninService.signRetryWorthy(response)) {
-      Logger.warn('课堂签到会话已失效，重新换取后重试');
-      await LocalSigninService.relogin();
-      response = await UpstreamClient.postForm(
-        url, body, true, LocalSigninService.sessionHeaders());
+    const base: number = Number.parseInt(timestamp, 10);
+    if (Number.isNaN(base) || base <= 0) {
+      throw new ApiError(502, 'signin_error', '服务器返回的时间戳格式异常');
     }
-
-    const envelope = LocalSigninService.parse<IclassSignResult>(response, '签到失败');
-    const result = envelope.result;
-    const signStatus = result === undefined ? '' : textOf(result.stuSignStatus);
-    const success = LocalSigninService.isStatusOk(envelope.STATUS) && signStatus === '1';
-
-    const raw = textOf(envelope.ERRMSG);
-    if (!success) {
-      Logger.warn('签到未成功：' + (raw.length > 0 ? raw : '上游未给出原因'));
-    }
-    return {
-      success: success,
-      message: LocalSigninService.friendlyMessage(success, raw)
-    };
+    return ICLASS_QR_SCAN_URL + '?courseSchedId=' + enc(courseId) +
+      '&timestamp=' + (base + offsetMs).toString();
   }
 
   /* ---------------------------- 会话准备 ---------------------------- */
@@ -377,7 +453,12 @@ export class LocalSigninService {
   }
 
   /**
-   * 取服务器时间戳（签到请求必须带上，上游据此判断签到时窗）。
+   * 取服务器时间戳（毫秒 epoch）。
+   *
+   * **提交签到已经不需要它了**（`stu_auto_sign` 按排课 id 认时段）。这个入口保留给
+   * 签到二维码：二维码内容 = `stu_scan_sign` 地址 + `courseSchedId` + 服务器时间戳，
+   * 时间戳必须是**服务端**的，用本机时间拼出来的码对方扫不开 —— 这也是它不能用
+   * `Date.now()` 兜底的原因。
    *
    * 拿不到时返回空串而**不抛错** —— 调用方要用它区分「换个会话还能救」与
    * 「真的取不到」，把判据留在调用处更好读。
@@ -408,10 +489,31 @@ export class LocalSigninService {
   /* ------------------------------ 内部 ------------------------------ */
 
   /**
-   * 组装签到类接口的实际地址。
+   * `stu_auto_sign` 的表单体，**恰好六个字段**。
+   *
+   * `routerInfo`（MAC 样式串）、`longitude` / `latitude`（经纬度）、`machineInfo`
+   * 都是官方客户端上报的固定占位值：上游只校验「字段在、形状对」，不校验真实性
+   * —— 学校没有接入基站/WiFi 定位核验，签到是否成立由教师开窗决定。2.0.3 的契约
+   * 测试把这六个字段钉死成契约（`stu_auto_sign表单包含六个固定字段`），少一个
+   * 或多一个都会让上游进入不同的失败分支。
+   */
+  private static autoSignForm(courseId: string): string {
+    return 'id=' + enc(LocalSigninService.userId) +
+      '&courseSchedId=' + enc(courseId) +
+      '&routerInfo=' + enc('02:00:00:00:00:00') +
+      '&longitude=0' +
+      '&latitude=0' +
+      '&machineInfo=Android';
+  }
+
+  /**
+   * 组装 iclass **读接口**的实际地址（课程列表、时间戳）。
    *
    * 两种连接模式统一走 8347 的 https、路径不带 `eschool` 前缀（见 ICLASS_API_BASE
    * 注释），故这里只收一个路径参数。
+   *
+   * ⚠️ **提交不走这里** —— 提交是 8181 的 `stu_auto_sign`，见 `ICLASS_AUTO_SIGN_URL`。
+   * 别把两者合并成「统一基址」，端口是上游按接口划分的，不是笔误。
    */
   private static checkinUrl(path: string): string {
     return ICLASS_API_BASE + path;
@@ -441,7 +543,9 @@ export class LocalSigninService {
   /**
    * 课程列表的会话判定：STATUS 失败也重换一次（与原 `getClasses` 一致）。
    *
-   * 极少数接口（`get_timestamp`）不带 STATUS 字段，那种视为正常。
+   * 极少数接口（`get_timestamp`）不带 STATUS 字段，那种视为正常；
+   * **`STATUS` 为 `2` 是「今天没有课」的合法空结果**（2.x `empty_result`），
+   * 不能当成会话失效 —— 否则没课的那天每次进页面都白跑一轮 SSO 跳转链。
    */
   private static needsRelogin(response: UpstreamResponse): boolean {
     if (LocalSigninService.transportDead(response)) {
@@ -451,6 +555,9 @@ export class LocalSigninService {
       const probe = JSON.parse(response.body.trimStart()) as IclassStatusProbe;
       const status = probe.STATUS;
       if (status === undefined) {
+        return false;
+      }
+      if (LocalSigninService.isEmptyStatus(status)) {
         return false;
       }
       return !LocalSigninService.isStatusOk(status);
@@ -487,6 +594,29 @@ export class LocalSigninService {
   private static isStatusOk(status: string | number | undefined): boolean {
     const value = textOf(status);
     return value === '0' || value === '200' || value === 'success';
+  }
+
+  /**
+   * `STATUS` 是否表示「今天没有课」（2.x `empty_result` 的口径：字符串或数字 2）。
+   *
+   * 这是**合法空结果**，不是会话失效 —— 混为一谈会在没课的日子每进一次页面
+   * 就白跑一轮 SSO 跳转链。
+   */
+  private static isEmptyStatus(status: string | number | undefined): boolean {
+    return textOf(status) === '2';
+  }
+
+  /**
+   * 剥出上游未本地化的 i18n 占位（形如 `!appMsg.qxktSign!`）里的键名。
+   *
+   * 真机实测：参数不全时上游直接吐这个键，中文资源没打包进去。不剥掉的话
+   * 它会原样飘到用户眼前，也没法参与下面的关键字映射。
+   */
+  private static i18nKey(raw: string): string {
+    if (raw.length < 3 || !raw.startsWith('!') || !raw.endsWith('!')) {
+      return '';
+    }
+    return raw.substring(1, raw.length - 1);
   }
 
   /** 解析 iclass 信封；HTTP 层或 JSON 层出问题时抛出可读错误。 */
@@ -546,14 +676,36 @@ export class LocalSigninService {
   }
 
   /**
-   * 把上游的原始报错翻成人话（原 `sanitizeSignInMessage`）。
+   * 把上游的原始报错翻成人话（原 `sanitizeSignInMessage`，本轮按真机实测扩充）。
    *
    * 上游的 ERRMSG 是写给运维看的（「用户不存在」「不在范围」），直接甩到界面上
    * 既含糊又吓人，这里逐条映射。判断顺序与原实现保持一致。
+   *
+   * 🔴 最后**不再无条件吞成「签到失败，请稍后重试」**：以前任何未命中关键字的
+   * 原因都会塌成这一句，用户和开发者都拿不到线索（课堂签到长期「签到失败」的
+   * 直接观感就是这么来的）。现在未命中的原始文案原样带出，至少能看出是哪一步。
    */
-  private static friendlyMessage(success: boolean, rawMessage: string): string {
+  private static friendlyMessage(
+    success: boolean,
+    rawMessage: string,
+    errCode: string,
+    statusOk: boolean,
+    signStatus: string
+  ): string {
     if (success) {
-      return rawMessage.length > 0 ? rawMessage : '签到成功';
+      return rawMessage.length > 0 && LocalSigninService.i18nKey(rawMessage).length === 0
+        ? rawMessage : '签到成功';
+    }
+    // STATUS 成功、但没拿到 `stuSignStatus`：上游没给出结论，属于「请求已到、
+    // 结果不明」的中间态。不能让用户以为没签上而反复点（写操作无法撤销）。
+    if (statusOk && signStatus.length === 0) {
+      return '签到结果未知，请刷新确认状态后再决定是否重试';
+    }
+    // `ERRCODE=101` + 「签到失败！」：真机实测（2026-11-19 13:05 点 14:00 的课）——
+    // 参数与用户都已被上游接受，是**业务层拒绝**：教师还没开窗，或本课走扫码签到。
+    // 上游不给细节，这里只能把已知的两种可能都说出来，别再让用户对着「签到失败」猜。
+    if (errCode === '101') {
+      return '课堂系统拒绝了本次签到：教师可能还没开启签到窗口，或本课需要扫码签到';
     }
     if (rawMessage.indexOf('已签到') >= 0) {
       return '您今天已经签到过了';
@@ -575,6 +727,22 @@ export class LocalSigninService {
     }
     if (rawMessage.indexOf('课程') >= 0 && rawMessage.indexOf('不存在') >= 0) {
       return '未找到对应课程，请刷新后重试';
+    }
+    // 会话过期在上游是「未登录」/「登录已失效」这类字样，原实现完全没映射，
+    // 于是被吞成通用文案 —— 用户不知道重登就能解决。
+    if (rawMessage.indexOf('登录') >= 0) {
+      return '课堂系统登录状态已失效，请返回设置页重新登录后重试';
+    }
+    const key = LocalSigninService.i18nKey(rawMessage);
+    if (key.length > 0) {
+      // `qxktSign`：实测「缺 courseSchedId」时返回，即上游找不到这堂课的签到任务
+      if (key.indexOf('qxktSign') >= 0) {
+        return '课堂系统没有该课程的签到任务（教师可能未开启签到，或本课不支持一键签到）';
+      }
+      return '签到未成功（课堂系统错误码 ' + key + '）';
+    }
+    if (rawMessage.length > 0) {
+      return '签到未成功：' + rawMessage;
     }
     return '签到失败，请稍后重试';
   }

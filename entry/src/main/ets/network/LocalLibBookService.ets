@@ -1,5 +1,6 @@
 import { util } from '@kit.ArkTS';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
+import { ConnectionMode } from '../common/AppConfig';
 import {
   BykcLibBookLibrary,
   BykcLibBookStorey,
@@ -9,6 +10,7 @@ import {
 } from '../model/ApiTypes';
 import { UpstreamClient, resolveLocation } from './UpstreamClient';
 import { LocalWebVpn } from './LocalWebVpn';
+import { RouteEngine } from './RouteEngine';
 import { TokenStore } from './TokenStore';
 
 /**
@@ -448,6 +450,13 @@ export class LocalLibBookService {
   private static async ensureLogin(forceRefresh: boolean): Promise<void> {
     // 图书馆的 CAS 登录**依赖已有的 SSO 会话**（主站的登录态）——
     // 没有它，CAS 跳转会停在登录页，捞不到 cas 参数。
+    // 换网后全局路线可能停在无会话的那条：先同步借回另一条路上的活会话。
+    const before: ConnectionMode = TokenStore.getConnectionMode();
+    RouteEngine.ensureSessionRoute();
+    if (TokenStore.getConnectionMode() !== before) {
+      // 图书馆 token 是从主站 SSO 换来的，换路后作废重取，避免拿旧 Cookie 走新网关
+      LocalLibBookService.token = '';
+    }
     if (!TokenStore.hasLocalSession()) {
       throw new Error('请先登录后再使用图书馆座位功能');
     }

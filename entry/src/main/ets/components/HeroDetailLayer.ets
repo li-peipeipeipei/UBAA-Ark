@@ -228,6 +228,12 @@ export struct HeroDetailLayer {
                   // 所以坐标一律走 `arrowPath()` 按当前密度换算。
                   Path()
                     .commands(this.arrowPath())
+                    // ⚠️ 必须显式给尺寸：Path 省略 width/height 时不同 API 版本的
+                    // 「按内容自动算尺寸」行为不一致，实测在本机按钮里会算成 0×0 而完全不显示。
+                    // 路径包围盒 = 0.715..7.855 × 0.715..15.855（vp），加两侧半个线宽 0.715
+                    // → 8.57 × 16.57vp。注意 commands 是 px、这里 width/height 是 vp。
+                    .width(8.57)
+                    .height(16.57)
                     .stroke(AppColor.textPrimary)
                     .strokeWidth(1.43)
                     .strokeLineCap(LineCapStyle.Round)
@@ -240,6 +246,7 @@ export struct HeroDetailLayer {
                 .type(ButtonType.Normal)
                 .width(40)
                 .height(40)
+                .padding(0)
                 .borderRadius(20)
                 // 材质的层级在 backgroundColor 之上，按钮自身必须透明，否则把材质盖死
                 .backgroundColor(Color.Transparent)

@@ -92,6 +92,20 @@ export function useBottomTabBar(bp: string): boolean {
 }
 
 /**
+ * 页面内「两栏并排」版式是否启用（lg / xxl）。
+ *
+ * 与 `useSideNav` 同义，抽出来是为了让语义留在调用点：侧栏形态下内容区才够宽
+ * （lg 1077 − 侧栏 112 ≈ 965vp），两栏各约 470vp；平板竖屏（md 673vp）按官方
+ * 「大屏竖屏」规范仍走底部页签，页面内部保持单列。
+ *
+ * 手机横屏若落入 lg（部分机型横向断点会到 lg），同样适用两栏 —— 横向空间充足、
+ * 纵向只剩 374vp，并排比上下滚动更合适。
+ */
+export function isTwoPane(bp: string): boolean {
+  return useSideNav(bp);
+}
+
+/**
  * 是否具备分栏能力。
  *
  * md 也算：平板竖屏点进二级页后同样走「左列表 + 右详情」。
@@ -234,6 +248,34 @@ export function templateOfColumns(count: number): string {
     cells.push('1fr');
   }
   return cells.join(' ');
+}
+
+/**
+ * 按「单项最小宽度」反推列数（**不做整除优化**）。
+ *
+ * 与 `columnsCountByWidth` 的区别：那个会为了「最后一行不留残行」主动改列数，
+ * 适合功能磁贴这种固定枚举；而座位表、课程卡这类**条目数量不定、且要求单块尺寸稳定**
+ * 的网格不能改列数 —— 否则同一个分区换一批数据，块大小就会跳一档。
+ *
+ * @param widthVp 容器可用宽度（vp，已扣掉左右内边距）
+ * @param minItem 单项最小宽度（vp）
+ * @param gap     列间距（vp）
+ * @param minCols 列数下限（手机上的基准列数）
+ * @param maxCols 列数上限（大屏别排得过密）
+ */
+export function columnsByMinWidth(widthVp: number, minItem: number, gap: number,
+  minCols: number, maxCols: number): number {
+  if (!(widthVp > 0)) {
+    return minCols;
+  }
+  let columns: number = Math.floor((widthVp + gap) / (minItem + gap));
+  if (columns < minCols) {
+    columns = minCols;
+  }
+  if (columns > maxCols) {
+    columns = maxCols;
+  }
+  return columns;
 }
 
 /** 按容器宽度直接生成 columnsTemplate（不需要缓存列数时的便捷写法）。 */

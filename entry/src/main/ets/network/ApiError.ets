@@ -128,6 +128,9 @@ export class ApiError extends Error {  /** 服务端错误码，如 invalid_toke
         return '学校服务响应超时，请稍后重试';
       case 'captcha_required':
         return '需要输入验证码';
+      case 'cas_flow_expired':
+        // 服务端 webflow 会话已回收（过夜 / 长时间停留）：换一份新登录页即可
+        return '登录页面已过期，请再点一次「登录」';
       case 'unsupported_portal':
         return '当前账号类型暂不支持该功能';
       case 'schedule_error':

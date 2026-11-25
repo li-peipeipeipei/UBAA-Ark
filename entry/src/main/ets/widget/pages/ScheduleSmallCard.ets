@@ -42,7 +42,6 @@ struct ScheduleSmallCard {
    */
   @LocalStorageProp('scheduleJson') @Watch('onPayloadChanged') scheduleJson: string = '';
   @LocalStorageProp('weekLabel') weekLabel: string = '';
-  @LocalStorageProp('updatedAt') updatedAt: string = '';
 
   @State private today: SmallCardToday | null = null;
 
@@ -78,74 +77,93 @@ struct ScheduleSmallCard {
     });
   }
 
-  /** 右侧竖排：今天几节 + 数据时间。 */
-  @Builder
-  rightColumn() {
-    Column({ space: 2 }) {
-      Text(this.today !== null ? (this.today?.courses?.length ?? 0).toString() : '0')
-        .fontSize(26)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.brand'))
-      Text('节 / 今天')
-        .fontSize(9)
-        .fontColor($r('app.color.text_tertiary'))
-      Text(this.updatedAt.length > 0 ? this.updatedAt.slice(6) : '')
-        .fontSize(9)
-        .fontColor($r('app.color.text_tertiary'))
-    }
-    .alignItems(HorizontalAlign.End)
-    .justifyContent(FlexAlign.Center)
-  }
-
+  /**
+   * 主体：单列全宽布局（2026-11-23 改）。
+   *
+   * 原来的「右侧竖列」（大数字 + 节/今天 + 教室）占 76vp、把课程名挤得只剩几个字，
+   * 现按用户要求重排为三行、各行都能延伸到卡片最右端：
+   *   ① 教学周（左） + 今天 N 节（右上角，样式与大卡完全一致）
+   *   ② 时间·节次（左） + 教室（右，同一行）
+   *   ③ 课程名（整行全宽）
+   *
+   * ⚠️ 尺寸预算：`1*2` 卡高约 79vp，扣掉上下 padding（6+12）后可用约 61vp。
+   * 三行锁高 15+15+19=49vp，稳妥不被裁。
+   */
   build() {
-    Row() {
-      Column({ space: 3 }) {
+    Column({ space: 0 }) {
+      // ① 顶部：教学周 + 今天节数（右上角）
+      Row() {
         Text(this.weekLabel.length > 0 ? this.weekLabel : (this.today?.headline ?? 'UBAA 课表'))
-          .fontSize(12)
+          .fontSize(11)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
+          .layoutWeight(1)
+        // 与大卡底部「今天 N 节」同款：fontSize(10) + text_tertiary
+        Text('今天 ' + (this.today?.courses?.length ?? 0).toString() + ' 节')
+          .fontSize(10)
+          .fontColor($r('app.color.text_tertiary'))
+          .maxLines(1)
+      }
+      .width('100%')
+      .height(15)
+      .alignItems(VerticalAlign.Center)
+      .justifyContent(FlexAlign.SpaceBetween)
 
-        if (this.today === null) {
-          Text('打开 App 查看课表')
-            .fontSize(11)
-            .fontColor($r('app.color.text_secondary'))
-            .maxLines(1)
-        } else if (this.today?.next !== null && this.today?.next !== undefined) {
+      if (this.today === null) {
+        Text('打开 App 查看课表')
+          .fontSize(11)
+          .fontColor($r('app.color.text_secondary'))
+          .lineHeight(16)
+          .maxLines(1)
+          .width('100%')
+      } else if (this.today?.next !== null && this.today?.next !== undefined) {
+        // ② 时间·节次（左） + 教室（右，同行）
+        Row() {
           Text(this.today?.next?.time + ' · ' + this.today?.next?.section)
-            .fontSize(10)
+            .fontSize(9)
             .fontColor($r('app.color.brand'))
             .maxLines(1)
-          Text(this.today?.next?.courseName ?? '')
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
-            .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
+            .layoutWeight(1)
           Text(this.today?.next?.place ?? '')
-            .fontSize(10)
+            .fontSize(9)
+            .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_secondary'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
-        } else {
-          Text('今天没有课了')
-            .fontSize(13)
-            .fontColor($r('app.color.text_secondary'))
-            .maxLines(1)
+            .constraintSize({ maxWidth: 72 })
         }
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
+        .width('100%')
+        .height(15)
+        .alignItems(VerticalAlign.Center)
+        .justifyContent(FlexAlign.SpaceBetween)
 
-      this.rightColumn()
+        // ③ 课程名：整行全宽，延伸到卡片最右端
+        Text(this.today?.next?.courseName ?? '')
+          .fontSize(14)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_primary'))
+          .lineHeight(19)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+      } else {
+        Text('今天没有课了')
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+          .lineHeight(18)
+          .maxLines(1)
+          .width('100%')
+      }
     }
     .width('100%')
     .height('100%')
-    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .justifyContent(FlexAlign.Center)
+    // 2026-11-23：内容整体上移 2vp（top 8→6 / bottom 10→12，内容区高度不变），
+    // 下方多留的白抵消文字 lineHeight 的视觉下沉，使上下观感等距。
+    .padding({ left: 12, right: 10, top: 6, bottom: 12 })
     .backgroundColor($r('app.color.surface'))
     .onClick(() => {
       this.openApp();

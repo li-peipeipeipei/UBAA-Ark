@@ -50,6 +50,22 @@ export class ScheduleCache {
   private static pref: preferences.Preferences | null = null;
   /** 打开失败过就别再试了（每次读写都抛异常会拖慢页面）。 */
   private static failed: boolean = false;
+  /**
+   * 卡片进程（FormExtensionAbility）注入的 context。
+   *
+   * 卡片进程里 `GlobalContext` 没初始化（那是 UIAbility 启动时才 set 的），
+   * 直接走 `GlobalContext.getContext()` 会抛错 → cache 打不开 → 重算退化成旧快照。
+   * 定时刷新触发 `onUpdateForm` 时由卡片侧注入自己的 context，读写同一份 Preferences。
+   */
+  private static formContext: common.Context | null = null;
+
+  /** 供卡片进程注入 context 用（主应用无需调用，它走 GlobalContext）。 */
+  static setFormContext(context: common.Context): void {
+    ScheduleCache.formContext = context;
+    // 换了 context 就重开一次 preferences，避免复用主应用进程留下的旧句柄
+    ScheduleCache.pref = null;
+    ScheduleCache.failed = false;
+  }
 
   private static store(): preferences.Preferences | null {
     if (ScheduleCache.failed) {
@@ -57,7 +73,9 @@ export class ScheduleCache {
     }
     if (ScheduleCache.pref === null) {
       try {
-        const ctx: common.UIAbilityContext = GlobalContext.getContext();
+        const ctx: common.Context = ScheduleCache.formContext !== null
+          ? ScheduleCache.formContext as common.Context
+          : GlobalContext.getContext() as common.Context;
         ScheduleCache.pref = preferences.getPreferencesSync(ctx, { name: STORE_NAME });
       } catch (error) {
         ScheduleCache.failed = true;

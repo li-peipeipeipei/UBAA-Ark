@@ -12,8 +12,9 @@ import { ImmersiveUtil } from '../common/ImmersiveUtil';
 import { resourceManager } from '@kit.LocalizationKit';
 import { CardCache } from '../common/CardCache';
 import { CardRefresher } from '../common/CardRefresher';
+import { IconStore, KEY_APP_ICON_SCHEME } from '../common/IconStore';
 import { Logger } from '../common/Logger';
-import { RouteEngine } from '../network/RouteEngine';
+import { NETWORK_BACK_TICK_KEY, RouteEngine } from '../network/RouteEngine';
 import { TokenStore } from '../network/TokenStore';
 import { KEY_MAIN_TAB_INDEX } from '../common/NavStacks';
 import { NavHero } from '../common/NavHero';
@@ -81,6 +82,10 @@ export default class EntryAbility extends UIAbility {
     // 预热本地存储：clientId 与连接配置需要在首帧前可用
     TokenStore.getOrCreateClientId();
     TokenStore.getApiBaseUrl();
+    // 同步用户上次选择的桌面图标（重启后系统图标本身会保持，这里纠正
+    // 「清过应用数据/升级」造成的偏好与系统实际图标不一致）。异步，不阻塞首帧。
+    AppStorage.setOrCreate(KEY_APP_ICON_SCHEME, IconStore.current());
+    IconStore.restore();
     // 冷启动：先建好 key（@StorageLink 才不会读到 undefined），再写入卡片带的目标
     AppStorage.setOrCreate<string>(KEY_PENDING_ROUTE, '');
     AppStorage.setOrCreate<string>(KEY_PENDING_PAGE, '');
@@ -166,6 +171,8 @@ export default class EntryAbility extends UIAbility {
       : ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT;
     CardCache.darkHint = isDark;
     AppStorage.setOrCreate('isDark', isDark);
+    // 网络恢复广播的初值：错误页的 @StorageLink 需要键在组件创建前就存在
+    AppStorage.setOrCreate<number>(NETWORK_BACK_TICK_KEY, 0);
 
     // 方向策略（必须在 loadContent 之前）：
     // - 平板 / 2in1：跟随握持方向，横屏不再被塞进竖屏兼容窗口；
@@ -269,6 +276,26 @@ export default class EntryAbility extends UIAbility {
     // 切后台就停掉启动预取：用户已经离开前台，继续跑只是白耗流量与电。
     // 已完成的步骤留在内存缓存里，回前台照常复用。
     StartupPrefetch.cancel();
+
+    /**
+     * 回桌面（按 Home / 上滑 / 锁屏）时按系统时间重算一次桌面卡片。
+     *
+     * 解决「卡片停在旧快照」：上一节课已经上完、或隔了几天没进课表页时，
+     * 桌面上的「下一节课」还指向过去的课。此前重算只发生在冷启动和课表页加载，
+     * 用户吃完饭回桌面看到的就是过期的。onBackground 是普通应用能拿到的
+     * 唯一可靠的「即将看桌面」时机 ——
+     * ⚠️ 卡片可见回调 `onChangeFormVisibility` 仅对**系统应用**生效，用不了；
+     * 定时刷新 updateDuration 最短 30 分钟，都不够。
+     *
+     * 只读本地缓存、不联网（CardRefresher 内部口径），几十毫秒完成；
+     * 失败只 warn、不影响退后台流程。切后台做这件事不占前台时间。
+     */
+    try {
+      CardRefresher.refresh(this.context);
+      Logger.info('onBackground：桌面卡片已按系统时间重算');
+    } catch (error) {
+      Logger.warn('onBackground 重算桌面卡片失败：' + (error as Error).message);
+    }
   }
 
   onConfigurationUpdate(newConfig: Configuration): void {

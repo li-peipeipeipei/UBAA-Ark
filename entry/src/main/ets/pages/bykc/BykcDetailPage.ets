@@ -7,6 +7,8 @@ import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { EmptyView, ErrorView, LoadingView } from '../../components/CommonViews';
 import { BykcCourseDetail } from '../../model/ApiTypes';
 import { BykcNav } from '../../components/BykcNav';
+import { PageCache } from '../../common/PageCache';
+import { OfflineKey } from '../../common/OfflineCache';
 
 /**
  * 博雅课程 · 课程详情（对齐原版 `BykcCourseDetailScreen.kt`）。
@@ -36,15 +38,34 @@ export struct BykcDetailPage {
     this.load();
   }
 
+  /** 本课程的缓存 key（按 id 隔离，不同课程不串）。 */
+  private cacheKey(): string {
+    return OfflineKey.BYKC_DETAIL_PREFIX + BykcNav.shared.courseId.toString();
+  }
+
   private async load(): Promise<void> {
-    this.loadState = LoadState.LOADING;
-    try {
-      this.detail = await ApiService.fetchBykcCourseDetail(BykcNav.shared.courseId);
+    // 冷启动/重进详情：先同步读上次缓存，命中就直接渲染真实内容
+    const cached: BykcCourseDetail | null =
+      PageCache.load<BykcCourseDetail>(this.cacheKey(), PageCache.TTL_DAY);
+    if (cached !== null) {
+      this.detail = cached;
       this.loadState = LoadState.SUCCESS;
+    } else if (this.loadState !== LoadState.SUCCESS) {
+      this.loadState = LoadState.LOADING;
+    }
+    try {
+      const fresh: BykcCourseDetail =
+        await ApiService.fetchBykcCourseDetail(BykcNav.shared.courseId);
+      this.detail = fresh;
+      this.loadState = LoadState.SUCCESS;
+      PageCache.save(this.cacheKey(), fresh, true);
     } catch (error) {
-      this.errorMessage = error instanceof ApiError ?
-        (error as ApiError).friendlyMessage() : '课程详情加载失败';
-      this.loadState = LoadState.ERROR;
+      // 有缓存内容就保留，不切错误页
+      if (this.detail === null) {
+        this.errorMessage = error instanceof ApiError ?
+          (error as ApiError).friendlyMessage() : '课程详情加载失败';
+        this.loadState = LoadState.ERROR;
+      }
       Logger.error('博雅课程详情加载失败：' + (error as Error).message);
     }
   }

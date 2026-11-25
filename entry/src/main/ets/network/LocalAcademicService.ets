@@ -282,22 +282,31 @@ export class LocalAcademicService {
     return schedule;
   }
 
-  /** 今日课程摘要。 */
   /** 今日课程（带缓存；key 含日期，跨天自动失效）。 */
   static async fetchTodayClasses(force: boolean = false): Promise<TodayClass[]> {
-    return await MemoCache.through<TodayClass[]>(LocalAcademicService.MEMO_TODAY + DateUtil.today(), LocalAcademicService.TTL_TODAY,
-      async (): Promise<Object> => await LocalAcademicService.doFetchTodayClasses(), force);
+    return await LocalAcademicService.fetchClassesOn(DateUtil.today(), force);
   }
 
-  private static async doFetchTodayClasses(): Promise<TodayClass[]> {
+  /**
+   * 指定日期的课程（今日 / 明日共用）。
+   *
+   * 上游接口本来就带 `rq` 日期参数，明日课程不需要解析周课表，换一天即可。
+   * 缓存键按日期隔离，所以「今天」与「明天」不会互相覆盖。
+   */
+  static async fetchClassesOn(date: string, force: boolean = false): Promise<TodayClass[]> {
+    return await MemoCache.through<TodayClass[]>(LocalAcademicService.MEMO_TODAY + date, LocalAcademicService.TTL_TODAY,
+      async (): Promise<Object> => await LocalAcademicService.doFetchClassesOn(date), force);
+  }
+
+  private static async doFetchClassesOn(date: string): Promise<TodayClass[]> {
     await LocalAcademicService.ensureByxt();
-    const url = BYXT_TODAY_URL + '?rq=' + DateUtil.today() + '&lxdm=student';
+    const url = BYXT_TODAY_URL + '?rq=' + date + '&lxdm=student';
     const response = await LocalAcademicService.byxtCall(
       'GET', url, await LocalAcademicService.byxtReferer(BYXT_BASE +
         '/jwapp/sys/homeapp/index.html'), '');
-    const envelope = LocalAcademicService.parseByxt<TodayClass[]>(response, '获取今日课程失败');
+    const envelope = LocalAcademicService.parseByxt<TodayClass[]>(response, '获取课程失败');
     const classes = LocalAcademicService.normalizeTodayClasses(envelope.datas);
-    Logger.info('今日课程（' + DateUtil.today() + '）：' + classes.length + ' 条');
+    Logger.info('课程（' + date + '）：' + classes.length + ' 条');
     return classes;
   }
 

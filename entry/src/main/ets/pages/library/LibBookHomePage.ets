@@ -34,8 +34,10 @@ export struct LibBookHomePage {
 
         // 两个入口
         Row({ space: AppSize.gap }) {
-          this.entryCard('预约座位', '选择楼馆、分区和座位', '▤', RouteName.LIBBOOK_RESERVE)
-          this.entryCard('我的预约', '查看座位预约与取消', '◷', RouteName.LIBBOOK_BOOKINGS)
+          this.entryCard('预约座位', '选择楼馆、分区和座位',
+            $r('app.media.ic_libbook_reserve'), RouteName.LIBBOOK_RESERVE, 28)
+          this.entryCard('我的预约', '查看座位预约与取消',
+            $r('app.media.ic_libbook_bookings'), RouteName.LIBBOOK_BOOKINGS, 30)
         }
         .width('100%')
 
@@ -74,16 +76,20 @@ export struct LibBookHomePage {
    * （官方 FAQ：卡片不支持加载 media，强行加载得到 undefined 会 JS crash）。
    */
   @Builder
-  entryCard(title: string, subtitle: string, icon: string, route: string) {
+  entryCard(title: string, subtitle: string, icon: Resource, route: string, iconSize: number = 24) {
     Column({ space: 8 }) {
-      Text(icon)
-        .fontSize(26)
-        .fontColor(AppColor.brand)
-        .width(48)
-        .height(48)
-        .textAlign(TextAlign.Center)
-        .borderRadius(12)
-        .backgroundColor(AppColor.brandContainer)
+      Column() {
+        Image(icon)
+          .width(iconSize)
+          .height(iconSize)
+          .objectFit(ImageFit.Contain)
+          .fillColor(AppColor.brand)
+      }
+      .width(48)
+      .height(48)
+      .justifyContent(FlexAlign.Center)
+      .borderRadius(12)
+      .backgroundColor(AppColor.brandContainer)
       Text(title)
         .fontSize(AppFont.body)
         .fontWeight(FontWeight.Medium)

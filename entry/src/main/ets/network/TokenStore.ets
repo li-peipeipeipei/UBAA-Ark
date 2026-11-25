@@ -17,6 +17,14 @@ const KEY_WEEK: string = 'selected_week';
 const KEY_LOCAL_SESSION: string = 'local_auth_session';
 const KEY_LOCAL_COOKIES: string = 'local_connection_cookies';
 const KEY_SAVED_CREDENTIALS: string = 'saved_credentials';
+/**
+ * 「本次是用户主动退出」标记。
+ *
+ * 退出登录只清会话、**不清**「记住密码」——这是原有的产品语义。但静默重认证如果
+ * 不看这个标记，就会在退出后立刻用保存的密码把人又登回来（上游同样需要这个区分：
+ * 「主动退出只恢复表单，保存的自动登录选项不触发认证」）。
+ */
+const KEY_SIGNED_OUT: string = 'signed_out_flag';
 const KEY_FEATURE_USAGE: string = 'feature_usage';
 
 /**
@@ -261,6 +269,16 @@ export class TokenStore {
   /** 清掉保存的凭据（取消勾选「记住密码」时调用）。 */
   static clearSavedCredentials(): void {
     TokenStore.writeString(KEY_SAVED_CREDENTIALS, '');
+    TokenStore.flush();
+  }
+
+  /** 是否处于「用户主动退出」状态（此时禁止静默重认证）。 */
+  static isSignedOut(): boolean {
+    return TokenStore.readString(KEY_SIGNED_OUT, '0') === '1';
+  }
+
+  static setSignedOut(signedOut: boolean): void {
+    TokenStore.writeString(KEY_SIGNED_OUT, signedOut ? '1' : '0');
     TokenStore.flush();
   }
 

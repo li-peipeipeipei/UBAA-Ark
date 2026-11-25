@@ -98,12 +98,23 @@
     "metadata": [
       {
         /*
-         * 应用级沉浸光感开关。
-         * 系统级 uiMaterial（普通 ArkUI 组件材质）自 API 26 起生效；
-         * 在 API 23 上该 metadata 被忽略，沉浸光感由 HDS 组件的 systemMaterialEffect 提供。
+         * 应用级沉浸光感开关（系统级 uiMaterial）。
+         *
+         * name/value 必须用官方枚举值：
+         *   name  = ohos.arkui.UIMaterial.state
+         *   value = enable | default | disable
+         * 之前写的 "uiMaterial"/"true" 不在官方枚举内，等价于未配置（落到 default）。
+         *
+         * 改成 enable 的影响（全局，非局部）：
+         * - Select/Toggle/Menu/Chip/Toast/Dialog/Navigation/Tabs 悬浮底栏等更多组件
+         *   默认开启沉浸光感，且材质样式优先级高于组件自身 background/blur/shadow/border；
+         * - 自绘按钮用的 uiMaterial.ImmersiveMaterial 与 HDS 的 hdsMaterial 是两套 API，
+         *   这里改 enable 不会让自绘返回按钮跟随 HDS 的 MaterialLevel.ADAPTIVE 档位；
+         * - API 26 起系统级 uiMaterial 才生效；API 23 上该 metadata 被忽略，
+         *   沉浸光感仍由 HDS 组件的 systemMaterialEffect 提供。
          */
-        "name": "uiMaterial",
-        "value": "true"
+        "name": "ohos.arkui.UIMaterial.state",
+        "value": "enable"
       }
     ]
   }

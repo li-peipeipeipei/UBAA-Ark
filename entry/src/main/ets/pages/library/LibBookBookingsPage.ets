@@ -10,6 +10,13 @@ import {
   LIBBOOK_BOOKING_UNCANCELLABLE,
   LocalLibBookService
 } from '../../network/LocalLibBookService';
+import { PageCache } from '../../common/PageCache';
+import { OfflineKey } from '../../common/OfflineCache';
+
+/** 预约记录首帧缓存内容。cancelingId 等交互态不缓存。 */
+interface LibBookingsCache {
+  bookings: BykcLibBookBooking[];
+}
 
 /**
  * 图书馆座位 · 我的座位预约（对齐原版 `LibBookBookingsScreen.kt`）。
@@ -36,13 +43,27 @@ export struct LibBookBookingsPage {
   }
 
   private async load(): Promise<void> {
-    this.loadState = LoadState.LOADING;
+    // 冷启动首帧：先同步读上次缓存，命中就直接进 SUCCESS（后台继续拉新覆盖）
+    const cached: LibBookingsCache | null = PageCache.load<LibBookingsCache>(
+      OfflineKey.LIB_BOOKINGS, PageCache.TTL_HALF_DAY);
+    if (cached !== null && cached.bookings.length > 0) {
+      this.bookings = cached.bookings;
+      this.loadState = LoadState.SUCCESS;
+    }
+    if (this.loadState !== LoadState.SUCCESS) {
+      this.loadState = LoadState.LOADING;
+    }
     try {
       this.bookings = await LocalLibBookService.fetchBookings(1, 50);
       this.loadState = LoadState.SUCCESS;
+      // 拉新成功写回缓存；取消后重新 load 会自然刷新这里
+      PageCache.save(OfflineKey.LIB_BOOKINGS, { bookings: this.bookings } as LibBookingsCache);
     } catch (error) {
       this.errorMessage = '加载预约记录失败：' + (error as Error).message;
-      this.loadState = LoadState.ERROR;
+      // 缓存命中过时失败不切 ERROR，保留已渲染的本地内容
+      if (this.loadState !== LoadState.SUCCESS) {
+        this.loadState = LoadState.ERROR;
+      }
       Logger.error('图书馆预约记录加载失败：' + (error as Error).message);
     }
   }

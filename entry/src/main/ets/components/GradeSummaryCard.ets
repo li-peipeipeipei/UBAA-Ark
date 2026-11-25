@@ -72,6 +72,14 @@ export struct GradeSummaryCard {
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
+      /**
+       * 标题行固定 24vp 高（= 学期切换按钮的直径）。
+       *
+       * 「本学期」的插槽里是 24×24 的箭头按钮，「全部成绩」没有插槽 —— 只按文字算，
+       * 两张卡并排时标题行差 2vp，整张卡底边就差 2vp（真机看得出来）。
+       * 给标题行一个下限，有没有插槽都同高；字体放大时两卡一起增高，仍保持一致。
+       */
+      .constraintSize({ minHeight: 24 })
 
       if (this.showCourseAndCredits) {
         Row() {

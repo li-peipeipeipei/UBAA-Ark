@@ -4,6 +4,7 @@ import { formBindingData, formProvider } from '@kit.FormKit';
 import { resourceManager } from '@kit.LocalizationKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { DateUtil } from './DateUtil';
 
 /**
  * 推给卡片的扁平数据。
@@ -207,6 +208,11 @@ export interface CardSlot {
   place: string;
   /** 上游给的颜色（`#RRGGBB`），卡片用它画课程块底色 */
   color: string;
+  /**
+   * 相邻避让后的色槽（0..15），由主应用按整学期课程算出后随 payload 下发。
+   * 卡片进程拿不到全学期数据，只能直接用它索引色板；缺省回退课程名哈希。
+   */
+  colorSlot?: number;
 }
 
 /** 周课表卡数据。 */
@@ -463,6 +469,94 @@ export class CardCache {
       });
     }
     logInfo('已推送卡片数据，共 ' + ids.length + ' 张');
+    // 数据变了（尤其「下一节课」可能变了），刷新点要跟着重设到新的下一节开始时刻
+    CardCache.scheduleNextRefresh(context);
+  }
+
+  /**
+   * 按「下一节课开始时刻」给所有卡片安排下一次定时刷新（链式）。
+   *
+   * ## 为什么这样做
+   *
+   * 用户要的是「每节课开始时卡片自动换到下一节」，而不是固定 30 分钟轮询：
+   * 课表节次是不均匀的（8:00 / 10:00 / 14:00…），定点轮询要么错过要么白刷。
+   * 这里读主应用算好的 `next`，解析它的开始时刻，用 `setFormNextRefreshTime`
+   * 精确设到那一刻；系统触发 `onUpdateForm` → 卡片进程重算 → 再设下一次，
+   * 形成"课表节次驱动"的链。
+   *
+   * ## 边界
+   *
+   * - 官方最短 5 分钟：目标已过或太近时按 5 分钟设，避免短于下限报 401；
+   * - 官方每天定时刷新配额 50 次：一天最多十几节课，远够用；
+   * - 卡片不可见时系统只记录、可见时统一刷新，正好符合"看桌面时才更新"；
+   * - 无下一节课（放学/周末）时不设点，靠 form_config 里的定点刷新兜底。
+   *
+   * 主应用在 `pushAll` 后调一次，卡片进程在 `onUpdateForm` 重算后再调一次。
+   */
+  static scheduleNextRefresh(context: common.Context): void {
+    const ids: string[] = CardCache.getFormIds(context);
+    if (ids.length === 0) {
+      return;
+    }
+    const today: CardToday | null = CardCache.loadToday(context);
+    if (today === null || today.next === null) {
+      return;
+    }
+    const next: CardCourse = today.next;
+    // next.time 形如 `08:00~09:35`，取开始端 `08:00`
+    const tilde: number = next.time.indexOf('~');
+    const clock: string = tilde > 0 ? next.time.substring(0, tilde) : next.time;
+    const colon: number = clock.indexOf(':');
+    if (colon <= 0) {
+      return;
+    }
+    const hour: number = Number.parseInt(clock.substring(0, colon), 10);
+    const minute: number = Number.parseInt(clock.substring(colon + 1, colon + 3), 10);
+    if (Number.isNaN(hour) || Number.isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+      return;
+    }
+
+    // 目标天后天偏移：nextWhen 形如 `今天 08:00` / `明天 08:00` / `周三 08:00`
+    const when: string = today.nextWhen;
+    let dayOffset: number = 0;
+    if (when.startsWith('明天')) {
+      dayOffset = 1;
+    } else if (!when.startsWith('今天')) {
+      const names: string[] = DateUtil.weekdayNames();
+      for (let i = 0; i < names.length; i++) {
+        if (when.startsWith(names[i])) {
+          let delta: number = (i + 1) - DateUtil.currentWeekday();
+          if (delta <= 0) {
+            delta += 7;
+          }
+          dayOffset = delta;
+          break;
+        }
+      }
+    }
+
+    const now: Date = new Date();
+    const target: Date = new Date(now.getFullYear(), now.getMonth(),
+      now.getDate() + dayOffset, hour, minute, 0, 0);
+    const diffMin: number = Math.ceil((target.getTime() - now.getTime()) / 60000);
+    // 官方 setFormNextRefreshTime 最短 5 分钟；目标已过/太近就按 5 分钟设
+    const delay: number = diffMin > 5 ? diffMin : 5;
+
+    for (let i = 0; i < ids.length; i++) {
+      const id: string = ids[i];
+      try {
+        formProvider.setFormNextRefreshTime(id, delay).catch((error: BusinessError) => {
+          if (error.code === 16501001) {
+            CardCache.dropDeadFormId(context, id);
+            return;
+          }
+          logWarn('设置卡片下次刷新失败：' + id + ' code=' + error.code);
+        });
+      } catch (error) {
+        logWarn('设置卡片下次刷新异常：' + (error as Error).message);
+      }
+    }
+    logInfo('已安排卡片下次刷新：' + delay + ' 分钟后（下一节 ' + clock + '）');
   }
 
   /**

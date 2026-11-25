@@ -10,6 +10,7 @@ import { JudgeDetailPage } from '../pages/evaluation/JudgeDetailPage';
 import { IhomePage } from '../pages/ihome/IhomePage';
 import { IhomeDetailPage } from '../pages/ihome/IhomeDetailPage';
 import { SpocPage } from '../pages/spoc/SpocPage';
+import { SpocWebPage } from '../pages/spoc/SpocWebPage';
 import { YgdkPage } from '../pages/activity/YgdkPage';
 import { BykcPage } from '../pages/bykc/BykcPage';
 import { BykcCoursesPage } from '../pages/bykc/BykcCoursesPage';
@@ -55,7 +56,9 @@ export struct FeatureDestBody {
     } else if (this.name === RouteName.EVALUATION) {
       EvaluationPage()
     } else if (this.name === RouteName.SPOC) {
-      SpocPage()
+      SpocPage({ stack: this.stack })
+    } else if (this.name === RouteName.SPOC_WEB) {
+      SpocWebPage({ stack: this.stack })
     } else if (this.name === RouteName.FINANCE) {
       FinancePage()
     } else if (this.name === RouteName.NETWORK) {

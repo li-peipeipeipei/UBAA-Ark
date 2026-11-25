@@ -8,6 +8,14 @@ import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { EmptyView, ErrorView, LoadingView } from '../../components/CommonViews';
 import { EvaluationCourse, EvaluationProgress, EvaluationResult } from '../../model/ApiTypes';
+import { PageCache } from '../../common/PageCache';
+import { OfflineKey } from '../../common/OfflineCache';
+
+/** 评教首帧缓存内容。selected 是勾选交互态，不缓存（由 courses 重算）。 */
+interface EvaluationCache {
+  courses: EvaluationCourse[];
+  progress: EvaluationProgress;
+}
 
 /**
  * 自动评教。
@@ -40,17 +48,36 @@ export struct EvaluationPage {
   }
 
   private async load(): Promise<void> {
-    this.loadState = LoadState.LOADING;
+    // 冷启动首帧：先同步读上次缓存，命中就直接进 SUCCESS
+    const cached: EvaluationCache | null =
+      PageCache.load<EvaluationCache>(OfflineKey.EVALUATION, PageCache.TTL_HALF_DAY);
+    if (cached !== null && cached.courses.length > 0) {
+      this.courses = cached.courses;
+      this.progress = cached.progress;
+      // selected 不缓存：若还没有勾选，按恢复出的 courses 重算默认全选
+      if (this.selected.length === 0) {
+        this.selected = this.defaultSelection(cached.courses);
+      }
+      this.loadState = LoadState.SUCCESS;
+    }
+    if (this.loadState !== LoadState.SUCCESS) {
+      this.loadState = LoadState.LOADING;
+    }
     try {
       const data = await ApiService.fetchEvaluations();
       this.courses = data.courses;
       this.progress = data.progress;
       this.selected = this.defaultSelection(data.courses);
       this.loadState = LoadState.SUCCESS;
+      PageCache.save(OfflineKey.EVALUATION,
+        { courses: this.courses, progress: this.progress } as EvaluationCache);
     } catch (error) {
       this.errorMessage = error instanceof ApiError
         ? (error as ApiError).friendlyMessage() : '评教课程加载失败';
-      this.loadState = LoadState.ERROR;
+      // 缓存命中过时失败不切 ERROR，保留已渲染的本地内容
+      if (this.loadState !== LoadState.SUCCESS) {
+        this.loadState = LoadState.ERROR;
+      }
       Logger.error('评教课程加载失败：' + (error as Error).message);
     }
   }

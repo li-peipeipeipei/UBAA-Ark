@@ -6,10 +6,15 @@ import { Toast } from '../../common/Toast';
 import { ApiService } from '../../network/ApiService';
 import { LocalPortalService } from '../../network/LocalPortalService';
 import { TokenStore } from '../../network/TokenStore';
+import { IconScheme, IconStore, KEY_APP_ICON_SCHEME } from '../../common/IconStore';
 import { PortalMetric, PortalMetrics } from '../../model/ApiTypes';
 import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { SectionCard } from '../../components/CommonViews';
+import { isTwoPane, KEY_BREAKPOINT } from '../../common/Breakpoint';
+import { PageCache } from '../../common/PageCache';
+import { OfflineKey } from '../../common/OfflineCache';
+import { PullToRefresh } from '../../components/PullToRefresh';
 
 /**
  * 「我的」页。
@@ -34,17 +39,46 @@ export struct MinePage {
   @State private metrics: PortalMetrics | null = null;
   @State private metricsLoading: boolean = false;
   @State private metricsError: string = '';
+  /**
+   * 当前宽度断点：决定「我的」页是否走两栏（lg / xxl）。
+   *
+   * 手机（sm）与平板竖屏（md）保持单列 —— 平板竖屏按官方「大屏竖屏」规范
+   * 仍用底部页签，673vp 平分两栏后每栏只有 316vp，菜单副标题会被切掉。
+   */
+  @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
+  /**
+   * 当前图标方案：入口副标题与前置图标由它决定。
+   *
+   * 必须 @StorageProp(@Watch) + @State 两段式，不能只用 @StorageLink：
+   * 「我的」页是 Navigation 的 home 内容，二级页覆盖期间 AppStorage 的值虽然变了，
+   * 但恢复可见时 home 页不会因 @StorageLink 自身变化而重绘（实测：切换返回仍是旧
+   * 图标，冷启动重建组件才更新）。@Watch 回调里把值转赋给 @State 才会真正标脏重绘。
+   * 与签到刷新（SigninEvents / KEY_SIGNIN_VERSION）用的是同一套跨页模式。
+   */
+  @StorageProp(KEY_APP_ICON_SCHEME) @Watch('onIconSchemeChanged')
+  private iconSchemeProp: string = IconScheme.DEFAULT;
+  @State private currentIcon: string = IconScheme.DEFAULT;
+
+  private onIconSchemeChanged(): void {
+    this.currentIcon = this.iconSchemeProp;
+  }
 
   onLogout: () => void = () => {};
 
   aboutToAppear(): void {
+    // 兜底：组件创建时 @StorageProp 已经带上了最新值，@Watch 不会为初始值触发回调，
+    // 所以首帧这里显式同步一次，保证前置图标/副标题从创建起就是当前方案。
+    this.currentIcon = this.iconSchemeProp;
     const session = TokenStore.getSession();
     this.userName = session.userName.length > 0 ? session.userName : '未设置姓名';
     this.schoolId = session.schoolId.length > 0 ? session.schoolId : session.username;
-    // 启动预取（StartupPrefetch 第 ⑤ 步）已经把五项指标写进 MemoCache，
-    // 这里**同步**取出来当首帧内容 —— 进页面就是真实的余额，不会先闪一下
-    // 「正在读取…」再跳成数字。没预取到（未登录过 / 已过期）则为 null，照常走网络。
-    const cached: PortalMetrics | null = LocalPortalService.cachedMetrics();
+    // 冷启动首帧：优先读磁盘缓存（跨进程保留上次结果），再读内存预取缓存。
+    // 两者都取不到才保持 null 走网络。这样冷启动进来就是上次真实的余额，
+    // 而非先闪「正在读取…」再跳数字。
+    const diskCached: PortalMetrics | null =
+      PageCache.load<PortalMetrics>(OfflineKey.MINE_METRICS, PageCache.TTL_HALF_DAY);
+    const cached: PortalMetrics | null = diskCached !== null ?
+      diskCached : LocalPortalService.cachedMetrics();
     if (cached !== null) {
       this.metrics = cached;
     }
@@ -61,6 +95,7 @@ export struct MinePage {
     try {
       const data: PortalMetrics = await LocalPortalService.fetchMetrics(force);
       this.metrics = data;
+      PageCache.save(OfflineKey.MINE_METRICS, data);
       Logger.info('门户指标已加载');
     } catch (error) {
       const apiError = error as Error;
@@ -339,6 +374,48 @@ export struct MinePage {
     })
   }
 
+  /**
+   * 菜单行（前置图标是当前生效的应用图标，与桌面图标一一对应）。
+   * 用于「切换图标」入口 —— 让用户一眼看到现在用的是哪套图标。
+   */
+  @Builder
+  menuRowIconPreview(title: string, subtitle: string, icon: Resource, onClick: () => void) {
+    Row({ space: AppSize.gap }) {
+      Column() {
+        Image(icon)
+          .width(34)
+          .height(34)
+          .borderRadius(9)
+          .objectFit(ImageFit.Cover)
+          .draggable(false)
+      }
+      .width(34)
+      .height(34)
+
+      Column({ space: 2 }) {
+        Text(title)
+          .fontSize(AppFont.body)
+          .fontColor(AppColor.textPrimary)
+        Text(subtitle)
+          .fontSize(AppFont.caption)
+          .fontColor(AppColor.textTertiary)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(14)
+        .fontColor([AppColor.textTertiary])
+    }
+    .width('100%')
+    .padding({ top: 10, bottom: 10 })
+    .onClick(() => {
+      onClick();
+    })
+  }
+
   private async doLogout(): Promise<void> {
     if (this.loggingOut) {
       return;
@@ -400,44 +477,100 @@ export struct MinePage {
     }
   }
 
-  build() {
+  private twoPaneMode(): boolean {
+    return isTwoPane(this.bp);
+  }
+
+  /** 「账户」分组（个人资料 / 连接设置）。单列与两栏共用。 */
+  @Builder
+  accountSection() {
+    SectionCard({ title: '账户', subtitle: '学籍与连接配置' }) {
+      Column() {
+        this.menuRow('个人资料', '查看学籍信息与联系方式', $r('sys.symbol.person'), () => {
+          this.openRoute(RouteName.USER_INFO);
+        })
+        Divider().color(AppColor.divider).strokeWidth(0.5)
+        this.menuRowImage('连接设置', this.connectionSummary(),
+          $r('app.media.ic_connection'), () => {
+            this.openRoute(RouteName.SETTINGS);
+          })
+      }
+      .width('100%')
+    }
+  }
+
+  /** 「关于」分组（切换图标 / 关于 UBAA）。单列与两栏共用。 */
+  @Builder
+  aboutSection() {
+    SectionCard({ title: '关于', subtitle: '版本与开源信息' }) {
+      Column() {
+        // 前置图标 = 当前正在使用的图标方案（严格跟随，与系统深浅色无关）。
+        this.menuRowIconPreview(
+          '切换图标',
+          '当前：' + IconStore.displayName(this.currentIcon),
+          IconStore.displayIcon(this.currentIcon),
+          () => {
+            this.openRoute(RouteName.ICON_SWITCH);
+          })
+        Divider().color(AppColor.divider).strokeWidth(0.5)
+        this.menuRow('关于 UBAA', '版本 ' + AppConfig.APP_VERSION, $r('sys.symbol.info_circle'), () => {
+          this.openRoute(RouteName.ABOUT);
+        })
+      }
+      .width('100%')
+    }
+  }
+
+  @Builder
+  logoutButton() {
+    Button('退出登录')
+      .width('100%')
+      .height(48)
+      .fontSize(AppFont.subtitle)
+      .fontColor(AppColor.danger)
+      .backgroundColor(AppColor.surface)
+      .onClick(() => {
+        this.doLogout();
+      })
+  }
+
+  /** 原页面内容。下拉刷新由外层 `build()` 的 PullToRefresh 提供。 */
+  @Builder
+  pageContent() {
     Scroll() {
       Column({ space: AppSize.gapLarge }) {
-        this.profileCard()
-        this.metricsCard()
+        if (this.twoPaneMode()) {
+          /**
+           * 平板横屏（lg / xxl）：两栏。
+           *
+           * 左栏是「我是谁 + 我的账户余额」，右栏是「能去哪里」——
+           * 身份信息与操作入口分列，宽屏下不再是一路向下滑的长表单。
+           */
+          Row({ space: AppSize.gapLarge }) {
+            Column({ space: AppSize.gapLarge }) {
+              this.profileCard()
+              this.metricsCard()
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
 
-        SectionCard({ title: '账户', subtitle: '学籍与连接配置' }) {
-          Column() {
-            this.menuRow('个人资料', '查看学籍信息与联系方式', $r('sys.symbol.person'), () => {
-              this.openRoute(RouteName.USER_INFO);
-            })
-            Divider().color(AppColor.divider).strokeWidth(0.5)
-            this.menuRowImage('连接设置', this.connectionSummary(),
-              $r('app.media.ic_connection'), () => {
-                this.openRoute(RouteName.SETTINGS);
-              })
+            Column({ space: AppSize.gapLarge }) {
+              this.accountSection()
+              this.aboutSection()
+              this.logoutButton()
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
           }
           .width('100%')
+          .alignItems(VerticalAlign.Top)
+        } else {
+          this.profileCard()
+          this.metricsCard()
+          this.accountSection()
+          this.aboutSection()
+          this.logoutButton()
         }
-
-        SectionCard({ title: '关于', subtitle: '版本与开源信息' }) {
-          Column() {
-            this.menuRow('关于 UBAA', '版本 ' + AppConfig.APP_VERSION, $r('sys.symbol.info_circle'), () => {
-              this.openRoute(RouteName.ABOUT);
-            })
-          }
-          .width('100%')
-        }
-
-        Button('退出登录')
-          .width('100%')
-          .height(48)
-          .fontSize(AppFont.subtitle)
-          .fontColor(AppColor.danger)
-          .backgroundColor(AppColor.surface)
-          .onClick(() => {
-            this.doLogout();
-          })
 
         Blank()
           .height(AppSize.contentBottomInset)
@@ -470,5 +603,14 @@ export struct MinePage {
     // 顶部留白不写在 Scroll 上 —— ArkUI 会把 Scroll 的 padding 当 contentInset，
     // 把滚动内容整体上移（实测反而顶到时钟上）；留白写在滚动内容的内边距里。
     .backgroundColor(AppColor.pageBackground)
+  }
+
+  build() {
+    PullToRefresh({
+      onRefresh: () => this.loadMetrics(true),
+      contentBuilder: () => {
+        this.pageContent();
+      }
+    })
   }
 }

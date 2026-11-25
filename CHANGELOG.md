@@ -7,6 +7,224 @@
 
 > 目标：对齐上游 UBAA 2.0 的功能面。分支 `release/0.9.0`。
 
+### 调整（今日详表卡：三节课不重叠 + 文案）
+
+- **三节及以上课不重叠**：2×4 日卡块矮（每节约 20vp），课程名（13fp）在上、教室（10fp）
+  在下会挤到一起。加 `placeBesideName()` 判定（slots≥3）→ 课程名在左占 layoutWeight、
+  教室同行贴右（此时不受 `span>1` 限制，三节也显示教室）；两节及以下维持原上下版式。
+- 日卡左上角 headline 去掉「今天 · 」前缀（`CardDataBuilder.buildDayView`），只留「周三 · 10/15」。
+- 日卡第二行分组标题数字补单位：「今天 3」→「今天 3 节课」。
+
+### 调整（卡片按课表节次自动刷新 + 回桌面重算）
+
+- **按节次链式定时刷新**：`CardCache.scheduleNextRefresh()` 读 `next` 的开始时刻，
+  用 `formProvider.setFormNextRefreshTime` 把所有卡的下次刷新精确设到"下一节课开始时"；
+  到点 `onUpdateForm` → 卡片进程按系统时间重算 → pushAll → 再设下一次，形成链。
+  官方最短 5 分钟、每天 50 次配额（十几节课够用）；无下一节不设点，靠定点刷新兜底。
+- 卡片进程 `GlobalContext` 未初始化 → 新增 `ScheduleCache.setFormContext()` 注入 context，
+  否则重算读不到课表缓存、退化成旧快照。`CardRefresher` 去掉未用的 TokenStore import。
+- **回桌面重算**：`EntryAbility.onBackground()` 调 `CardRefresher.refresh()`，
+  用户按 Home / 上滑 / 锁屏回桌面时卡片按系统时间刷新，不再停在旧快照。
+  （卡片可见回调 `onChangeFormVisibility` 仅系统应用可用，故走 onBackground。）
+
+### 调整（1×2 小卡：右上角节数 + 教室移时间行 + 名称全宽）
+
+- 删掉原右侧竖列（大数字 + `节/今天` + 教室，占 76vp 挤窄课程名），改为单列全宽三行布局：
+  ① 教学周（左）+ **今天 N 节**（右上角，`fontSize(10)` + `text_tertiary`，与大卡同款）；
+  ② 时间·节次（左）+ **教室**（右，同一行）；③ **课程名整行全宽**延伸到卡片最右端。
+- 三行锁高 15+15+19=49vp，落在 1×2 卡的 61vp 可用高度内。
+
+### 调整（下一节课卡：手机端布局收紧）
+
+- **1×2 小卡**：右侧 `maxWidth` 96→76（原太宽把课程名挤到只剩几个字就省略），右侧字号
+  22→20 / 教室 10→9，左侧课程名 15→14、时间行 10→9，padding `{left12,right10,top8,bottom10}`
+  （底部留白加大）。一行多显示约两个字再省略，整体不再挤、离底边有留白。
+  随后按反馈把内容整体上移 2vp（padding top 8→6 / bottom 10→12，内容区高度不变），
+  抵消文字 lineHeight 的视觉下沉，使上下间距观感一致。
+- **2×2 大卡**：课程名 19→16（手机宽度小，19 号一行只显示几个字），删除右下角更新时间
+  （底部只留「今天 N 节」，SpaceBetween→Start）。
+- 同一份卡片代码在手机/平板共用；这些改动在平板上同样是「信息更全」，不改结构。
+
+### 调整（下一节课卡：教室移位 / 系统时间判定 / 加粗）
+
+- **1×2 右下角时间 → 教室**：`ScheduleSmallCard` 删掉右侧「更新时间」行，改成下一节课教室
+  （右对齐、可省略）；左侧原教室行删除避免重复。右侧 `constraintSize({maxWidth:96})` 防挤压课程名。
+- **两张卡按系统时间判定周次**：`buildToday` 的周次原先取课表页 `this.currentWeek`（用户翻到哪周
+  桌面就停在哪周）。`SchedulePage.pushToCards` 改按 `CardDataBuilder.systemCurrentWeek`（校历算今天
+  在哪周 + 周日 15:00 滚动），从 `ScheduleCache` 读系统周数据；星期仍用 `DateUtil.currentWeekday()`。
+  与 `CardRefresher` 冷启动刷新同口径。
+- **加粗**：大卡（2×2）课程名原已 Bold、教室加 Bold；小卡课程名 Medium→Bold、教室 Bold。
+
+### 调整（下一节课桌面卡：1×2 修溢出 + 新增 2×2）
+
+- **1×2 修溢出**：`ScheduleSmallCard` 左侧 4 行文字原行高约 69vp + padding 20vp ≈ 89vp，
+  超出 `1*2` 卡约 79vp 的高度 → 最后一行「地点」被裁掉看不见。收 `space 3→0`、
+  逐行锁 `lineHeight`（16/15/20/15）、padding 上下 10→6、右侧数字 26→22，
+  合计约 60vp 落在可用高度内，4 行全部可见。
+- **新增 2×2「下一节课」卡**：`widget/pages/ScheduleNextCard.ets`（`ubaa_schedule_next`），
+  复用同一份 `scheduleJson`（含 `next`/`nextWhen`）+ `weekLabel`/`updatedAt`，无需新增数据字段。
+  158vp 见方内展示卡片名、教学周、跨天标签、时间·节次、课程名（可两行）、地点、
+  今天节数 + 更新时间。空态/无课态各有引导。已注册 `form_config.json`（`2*2` 单规格）
+  + `string.json` 两串。卡片红线照旧：不 import 项目文件、不用 hilog、`@LocalStorageProp`+`@Watch`。
+
+### 调整（课表色板扩到 11 槽 + 底字同色系对齐）
+
+- **文字色整板替换**：浅色块文字色按用户取色器实采的 11 色更换
+  （`#B09627 / #408333 / #1D8682 / #C5102F / #4272B4 / #D0523B / #CD533E / #C06225 / #CD533C / #D0523C / #CC523D`），
+  色板由 8 槽扩到 **11 槽**。`indexOf` 的取模基数是 `DARK.length`，故深色板/浅底/文字三套数组
+  必须同步扩到 11，否则第 9-11 槽取不到、文字色越界 Undefined。三处（`ScheduleColors` /
+  周卡 / 日卡）× 四套数组全部同步。扩容后所有课程按 `% 11` 重新洗牌取色。
+- **底字对齐**：浅底整板按「同索引文字色叠白」重新派生（如 `#B09627 → #F1ECD8`），
+  底色与文字永远同色系；描边从块底派生，自动跟随。
+  叠白比例 30% → 24% → 18% → **14%**（反馈逐档调淡）。
+- **教室行跟随课程名颜色**：浅色下副文字（地点）由中性黑 `#B3000000` 改为
+  **课程名文字色的 75% 不透明度**（`#BF` + RGB，新增 `ScheduleColors.subTextForCourse`）；
+  桌面两卡同步。深色模式维持原暖白逻辑。
+
+### 修复（个人资料始终获取失败 + 横屏转场缝）
+
+- **个人资料**：`LocalAuthService.fetchUserInfo()` 实测未登录返回 200 +
+  `{"code":10600,"data":null}`（非 302）。原代码只在登录时建一次 UC 会话，换网/切路线/冷启动后
+  UC cookie 掉了、SSO 仍有效 → 一直报「获取失败」。现识别 10600 时用现有 SSO 会话重建
+  UC 会话（`activateUcLogin`）再重试一次；非 2xx/非 JSON 仍走原 `unauthorized` 语义。
+- **横屏二级页转场缝**：29 个二级页共用的 `DestShell` 外壳原本不铺底色、只靠
+  `HdsNavDestination.backgroundColor`。转场时系统渲染的是 destination 内容树，底色不在参与
+  平移的内容上 → 新页面未落位时左缘透明，露出旧页面一条，落位后消失（竖屏无侧栏参照故看不见）。
+  现给 `DestShell` 内容外壳铺不透明 `pageBackground`，随页面一起平移，任何一帧都不透。
+
+### 调整（浅色课程块加深 + 多节课块不透底 + 去灰）
+
+- 浅色课程块按反馈再"去灰"：饱和度由 4~5% 提到 15%（明度不变、色相显现），
+  三处色板同步；文字色不动（提饱和保持明度时对比度实测几乎不变）。
+
+- 浅色模式所有课程块底色整体加深约 10%（每通道 ×0.9，色相不变）—— 三处色板同步：
+  `ScheduleColors.LIGHT`、周卡 `LIGHT_PALETTE_W`、日卡 `LIGHT_PALETTE_D`。
+  仍是预混实色、不加真 alpha（真透明会露出网格横线）。
+- 多节课块底色由半透明 `sideNavSelected` 改为观感一致但**完全不透明**的预混实色
+  `multiCourseBlock`（浅 #A7CCED / 深 #223750 = 侧栏沾色按栏底预混的结果），避免网格横线透出。
+
+### 修复（课表「同时段多节课」蓝块过显眼）
+
+- `SchedulePage.multiCourseBlock` 底色由实色 `brand`（浅 #1976D2 / 深 #5AA9F0，白字）
+  改为与侧栏选中块同一个半透明沾色 `sideNavSelected`，文字同步换成品牌色（半透明底上白字看不清）；
+  去掉白描边。桌面卡片的合并块走 Monet 课程配色、不随主题变，不在本次范围。
+
+### 修复（浅色模式横屏侧栏选中底色）
+
+- 宽屏侧栏选中项底色由通用 `brandContainerGlass`（浅色约 60% 的 #E3F0FC，与近白栏几乎融在一起）
+  改为专用 `sideNavSelected`（浅色 #85B9E8 系，加深但保留半透明以透出材质）；深色模式沿用原值。
+  单独建资源色，避免把共用 `brandContainerGlass` 的筛选胶囊 / 学期选择一起改深。
+
+### 新增（平板横屏页面级两栏）
+
+手机与平板竖屏（sm / md）保持原单列，仅 lg / xxl 换形态；判据统一走
+`common/Breakpoint.ets::isTwoPane()`（等价 `useSideNav`）：
+
+- **主页**：左「问候 + 日期 / 最近使用 / 待办」、右「考试倒计时 + 今日课程」；
+  问候语抽成 `greetingBlock()`，两栏时上移量归零以对齐左右顶边；
+- **我的**：左「头像卡 + 校园账户」、右「账户 / 关于 / 退出登录」；
+- **成绩查询**：「全部成绩」与「本学期」并排，课程卡按 12 栅格排（lg 2 列 / xxl 3 列）；
+- **博雅课程**（选择 / 我的课程）：卡片 md 2 列、lg 3 列；
+- **课堂签到**（iclass，`SigninPage`）：左课程列表 + 右签到区（信息 + 签到按钮 + **常驻**签到码），
+  `SigninQrSheet` 新增 `embedded` 模式；两栏下左栏点卡片只做选择，写操作全部收到右栏；
+- **阳光打卡**（`YgdkPage`）：左打卡操作卡（一键打卡 / 项目 / 地点 / 分享 / 按选项提交），
+  右统计卡（学期 / 周 / 月）+ 打卡记录列表，左右 1 : 1.4。
+
+### 新增（主页明日课程 + 今日课程三态）
+
+- 主页「今日课程」在同一张卡内按状态切换：今天没课 → 空态 + 明日课程；
+  今天全部上完 → 「今日课程已完成」且今日列表不再显示 + 明日课程；
+  其余情况只显示今日课程，**不出现明日课程**。
+- 「全部上完」按课程结束时间判定（每门课都要有时间串且已过），不依赖 iclass 签到；
+  由 30 秒 tick / 回到前台 / 数据加载后推进，最后一节课下课即自动切换。
+- 明日课程复用教务 `detail.do?rq=日期`，新增 `LocalAcademicService.fetchClassesOn(date)`
+  与 `ApiService.fetchClassesOn(date)`；缓存键按日期隔离，跨天自动重拉。
+- 明日课程行独立实现，不接签到与详情点击 —— 避免同名课错拿今天的签到状态。
+- 今日无课空态改成一行轻文字、去掉图标：原通用 `EmptyView`（44vp 图标 + 上下各 60vp）
+  会把紧接着的明日课程顶出一屏。
+- 「最近使用」入口按卡片**实际内宽**自适应个数（4~8 个，手机 4 / 平板竖屏 8 /
+  两栏左栏约 6），每项 `layoutWeight(1)` 等宽铺满，标题居中并可截断；
+  不再固定 4 个 62vp。
+- 平板两栏右栏首块与左栏「最近使用」齐顶：右栏顶部放一份隐藏的 `greetingBlock()`
+  占位（跟随问候语实际高度，不用写死 padding）。
+- 今日课程卡副标题只在有课时显示「N 节课」；无课 / 已完成时留空，状态提示只在卡内出现一次。
+- 明日课程行可点开与今日课程同一个详情弹窗：新增 `openTomorrowDetail()` 按明天的 weekday
+  匹配课表，`findCourseByNameAndTime` 增加 `strict` 参数并在明日场景关闭「仅凭名字取第一条」。
+- 修复明日课程详情只有「时间 / 地点」两项（理论力学实例）：周日时明天属下一教学周，
+  本周课表不含单双周交替的课程；`coursesForTomorrow()` 在周日按 `thisWeek + 1` 重取课表。
+  同时让「时间串完全相等的同名课」兜住 `dayOfWeek` 缺失的课表条目。
+
+### 修复（「展开页 → 页内二级页 → 返回」后功能块消失）
+
+功能页点「博雅课程」→ 博雅首页 →「我的课程」→ 返回功能页时，「博雅课程」块视觉消失、
+位置上仍可点击，再进出一次才恢复。真因是原卡片只在 `finishShrink()` 里被放回来，
+这条路径上走的是系统默认转场（或收缩信号因页面被回收而丢失），SHOW 从未发出：
+
+- POP 且栈顶不是展开页时：延时确认「已回到功能栈根」即 `notifyTileShow()`（判据用栈深，
+  不用 `NavContentInfo.name`）；
+- POP 接管转场时增加 1200ms 兜底：收缩始终没开始就强制 `finishShrink()`
+  （放开卡片 + 释放转场 proxy），轮次号防串。详见 `docs/tech/feature-tile-transition.md`。
+
+### 改进（图书馆座位块自适应列数）
+
+预约座位页的座位网格从固定 4 列改为按最小块宽（76vp）反推列数：手机仍 4 列，
+平板横屏到 10 列，块宽不再被拉成 230vp 的方块。用新增的
+`Breakpoint.columnsByMinWidth()`（不做整除优化，避免块大小随数据跳档）。
+
+### 修复（并排卡片因标题行数不同而高低错落）
+
+平板横屏多列卡片里，标题占 2 行的卡比占 1 行的高出约 20vp，同一行高低不齐
+（博雅「选择课程」「我的课程」、成绩查询三页实机可见）：
+
+- 新增 `AppSize.cardTitleTwoLines(fontSize)`：标题固定占两行高度，1 行标题在标题区留白，
+  2 行正好铺满；超过 2 行仍由 `maxLines(2)` 截断，不会继续撑高卡片；
+- 应用于成绩课程卡（`AppFont.subtitle`）、博雅两张课程卡（`AppFont.body`）；
+- 成绩页两张概览卡并排时，「全部成绩」补显示课程数 / 总学分（数据本就在 `allSummary`），
+  与「本学期」行数一致、底边对齐；手机端仍为原版三行指标；
+- 其余并排容器（功能磁贴 `aspectRatio`、图标卡、我的页指标格、空闲教室座位表）已核过不受影响，
+  清单见 `docs/tech/tablet-adaptation.md` §3.5 第 4 条。
+
+实现约束与踩坑记录见 `docs/tech/tablet-adaptation.md` §3.5。
+
+### 新增（双路线会话：换网后不再要求重新登录）
+
+原来登录只认证**当前那一条**路线，校内只登 Direct、校外只登 WebVPN，另一条路的
+Cookie 罐永远是空的 —— 换网（宿舍 Wi-Fi ↔ 流量、校内 ↔ 校外）就必然掉回登录页。
+原版从不要求重登，靠的是「一次登录灌满两条路 + 缺会话时用已授权凭据静默补登」，
+本轮按此补齐：
+
+- `LocalAuthService.loginDual()`：按 `RouteEngine.loginRoutes()` 顺序认证两条路线
+  （校园网仅 Direct，校外主+备）；主路线失败照旧抛错，副路线失败只登记（`partial`）；
+- `RouteScope`：新增路线作用域，让一条登录流程能在**另一条路线**上完整跑完
+  （地址改写、Cookie 读写、会话落槽全部按作用域走）；作用域内禁止网络层自动换路；
+- `PreparedLogin.mode`：一次性令牌只在所属路线上有效，杜绝跨路线复用；
+- `SessionGuard`：目标路线缺会话时用保存凭据静默补登（按路线单飞、`TRANSIENT` 保留会话、
+  验证码即停）；接入 `adaptToNetwork` / `onNetworkChanged` / 启动自检 / 登录页；
+- 主动退出标记 `signed_out_flag`：退出只清会话不清密码，但禁止静默重认证把人登回来；
+- 401 只清**当前路线**的槽位（原来 `clearAllLocalSessions` 会把另一条活会话一起清掉）；
+- `logout()` 对两条有会话的路线各注销一次（对齐上游 `remote_logout` 各调一次）。
+
+详见 `docs/tech/session-dual-route.md`，路线判定表更新见 `docs/tech/auto-route-switch.md`。
+
+### 修复（过夜后第一次点「登录」报 `Error decoding flow execution`）
+
+真因是一次性令牌的有效期属于**服务端 webflow 会话**：应用被冻结在后台过夜后
+`aboutToAppear` 不会重跑，手里那份 `execution` 仍是隔夜的，而服务端会话早已超时回收。
+二次放大：`loginOnce()` 原先「调用方传的令牌优先于刚取到的新页面」，方向正好反了；
+且该错误页没有表单与 `tip-text`，只会被泛化成「账号或密码验证未通过」，把人引去改密码。
+
+- `CasParser.isFlowExecutionExpired()`：认 Spring Webflow 的固定英文标记，
+  在 `followAndCheck` / `activateUcLogin` 里**排在凭据错误之前**判定；
+- `LocalAuthService.login()`：识别到 `cas_flow_expired` → 清准备页、整轮重试一次
+  （含自动验证码），用户无感；
+- `PreparedLogin.preparedAt` + 5 min TTL：`loginOnce()` / `submitCaptcha()` 提交前判旧，
+  过期先换新页面；`loginOnce()` 改为**只信准备页里的令牌**，不再采信调用方缓存；
+- `LoginPage` 侧同口径兜底：`warmedAt` 空置超期先 `warmUp()` 再提交；
+- 验证码路径：准备页过期时 `submitCaptcha()` 重取挑战，新页面若不再要验证码则直接普通登录；
+- `friendlyMessage()` 新增 `cas_flow_expired` → 「登录页面已过期，请再点一次「登录」」。
+
+详见 `docs/tech/login-2.0.2-parity.md` §5.2。
+
 ### 修复（首页反复「登录状态已失效，请重新登录」）
 
 真因不在登录链路，也不在会话过期，而在 **Cookie 罐**：真正的会话凭证

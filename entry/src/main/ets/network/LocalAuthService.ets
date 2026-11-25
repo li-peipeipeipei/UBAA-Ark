@@ -2,10 +2,13 @@ import { util } from '@kit.ArkTS';
 import { ConnectionMode } from '../common/AppConfig';
 import { Logger } from '../common/Logger';
 import { ApiError, CaptchaRequiredError } from './ApiError';
+import { CaptchaRecognizer } from './CaptchaRecognizer';
 import { CasParser } from './CasParser';
 import { resolveLocation, stripQuery, UpstreamClient, UpstreamResponse } from './UpstreamClient';
+import { RouteScope } from './RouteScope';
 import { LocalAuthSession, TokenStore } from './TokenStore';
 import { LocalWebVpn } from './LocalWebVpn';
+import { RouteEngine } from './RouteEngine';
 import {
   CaptchaInfo,
   LoginPreloadResponse,
@@ -48,6 +51,8 @@ const CAS_LOGOUT_URL: string = 'https://sso.buaa.edu.cn/logout';
 const CAS_CAPTCHA_URL: string = 'https://sso.buaa.edu.cn/captcha';
 const SSO_VALIDATE_URL: string = 'https://sso.buaa.edu.cn/serviceValidate';
 const UC_USERINFO_URL: string = 'https://uc.buaa.edu.cn/api/uc/userinfo';
+/** UC `api/uc/userinfo` 的「会话未激活/已失效」码（实测未登录态返回 200 + code=10600）。 */
+const UC_NOT_ACTIVATED: number = 10600;
 const UC_ACTIVATE_URL: string =
   'https://uc.buaa.edu.cn/api/login?target=https%3A%2F%2Fuc.buaa.edu.cn%2F%23%2Fuser%2Flogin';
 
@@ -71,6 +76,31 @@ const SSO_HOST: string = 'sso.buaa.edu.cn';
 
 /** 单条重定向链最大跳数（正常登录不超过 5 跳，超过说明打转了）。 */
 const MAX_REDIRECT_HOPS: number = 10;
+
+/**
+ * 验证码自动识别的尝试次数（对齐原版 2.0.2 的「3 次预算」）。
+ *
+ * 每次失败都必须换服务端新下发的挑战再试 —— 同一个 captchaId 的答案用第二次
+ * 一定是错的。用完仍不成功就交回人工输入。
+ */
+const AUTO_CAPTCHA_ATTEMPTS: number = 3;
+
+/**
+ * 准备页（`execution`）在客户端侧的最大可用时长。
+ *
+ * 服务端 webflow 会话超时后令牌即作废，但具体时长由服务端配置决定、客户端看不到。
+ * 这里取一个保守值：超过它就**在提交前**重新取一次登录页（一次 GET，几百毫秒），
+ * 避免用死令牌换回一张 `Error decoding flow execution` 错误页。
+ *
+ * 典型触发场景：应用被冻结在后台过夜，第二天直接点「登录」。
+ */
+const PREPARED_TTL_MS: number = 5 * 60 * 1000;
+
+/** 供 UI 复用同一口径：登录页据此判断「手里的令牌是不是该换了」。 */
+export const LOGIN_PREPARED_TTL_MS: number = PREPARED_TTL_MS;
+
+/** 「webflow 执行上下文失效」的错误码（内部信号，由 login() 消化并自动重试）。 */
+const CAS_FLOW_EXPIRED: string = 'cas_flow_expired';
 
 /** UC 的响应信封：{ code, msg, data }。 */
 interface UcEnvelope {
@@ -119,6 +149,26 @@ export class LocalValidation {
 }
 
 /**
+ * 单条路线的登录结果（双路线登录逐条登记，对齐上游 `RouteLoginState`）。
+ */
+export enum RouteLoginState {
+  /** 该路线会话已建立。 */
+  READY = 'READY',
+  /** 该路线要用验证码，且本地自动识别未通过（不阻塞其它路线）。 */
+  NEEDS_CAPTCHA = 'NEEDS_CAPTCHA',
+  /** 该路线明确失败（凭据被拒 / 上游异常）。 */
+  FAILED = 'FAILED',
+  /** 本次未尝试（例如校园网只认证 Direct）。 */
+  SKIPPED = 'SKIPPED'
+}
+
+export class RouteLoginResult {
+  mode: ConnectionMode = ConnectionMode.DIRECT;
+  state: RouteLoginState = RouteLoginState.SKIPPED;
+  message: string = '';
+}
+
+/**
  * 已准备的登录页。
  *
  * `execution` 与 `captchaId` 是**一对**：服务端在每次渲染登录页时同时下发，
@@ -131,6 +181,22 @@ class PreparedLogin {
   execution: string = '';
   /** 验证码标识（`''` 表示这一页不需要验证码）。 */
   captchaId: string = '';
+  /**
+   * 这一页属于哪条路线。
+   *
+   * 登录页的一次性令牌只对**下发它的那条路线**有效（Direct 与 WebVPN 是两套
+   * Cookie 罐、两条 webflow 会话）。双路线登录会先后跑两条流程，不校验来源就会
+   * 拿 A 路的令牌去 B 路提交 —— 必然被判无效。
+   */
+  mode: ConnectionMode = ConnectionMode.DIRECT;
+  /**
+   * 取到这一页的时刻（毫秒时间戳）。
+   *
+   * `execution` 的寿命由**服务端的 webflow 会话**决定，不由客户端决定：
+   * 应用被冻结在后台过夜后，手里的令牌早已随会话超时作废，再拿去提交只会换回
+   * 一张 `Error decoding flow execution` 错误页。记时间戳是为了在提交前判掉它。
+   */
+  preparedAt: number = 0;
 }
 
 function nowIso(): string {
@@ -221,6 +287,20 @@ export class LocalAuthService {
    */
   private static prepared: PreparedLogin | null = null;
 
+  /**
+   * 取当前路线可用的准备页。
+   *
+   * 落在别的路线上的准备页等同「没有」—— 令牌与那份 Cookie 罐绑定，
+   * 拿它去另一条路提交只会换回「凭据无效」。
+   */
+  private static preparedFor(mode: ConnectionMode): PreparedLogin | null {
+    const current: PreparedLogin | null = LocalAuthService.prepared;
+    if (current === null || current.mode !== mode) {
+      return null;
+    }
+    return current;
+  }
+
   /* ============================ 登录前置 ============================ */
 
   /**
@@ -230,13 +310,29 @@ export class LocalAuthService {
    * 并把用户信息带回去（不再走一次凭据提交）。
    */
   static async preload(): Promise<LoginPreloadResponse> {
+    // 登录页已经用 prepareForLogin() 选好路线；请求入口的「借回活会话」不能把
+    // 这次预热拉回另一条路（否则令牌与实际提交时的路线不匹配，必判凭据无效）。
+    RouteScope.enter(TokenStore.getConnectionMode());
+    try {
+      return await LocalAuthService.preloadScoped();
+    } finally {
+      RouteScope.exit();
+    }
+  }
+
+  /** 已锁定路线作用域内的预热实现。 */
+  private static async preloadScoped(): Promise<LoginPreloadResponse> {
     const result: LoginPreloadResponse = { captchaRequired: false };
+    // 后台预热验证码识别模型（首次要把 52 MB 模型释放到沙箱，不阻塞登录页）
+    if (!CaptchaRecognizer.isReady()) {
+      CaptchaRecognizer.ensureReady();
+    }
     const page = await UpstreamClient.get(CAS_LOGIN_URL, false);
     if (page.isRedirect()) {
       LocalAuthService.prepared = null;
       const validation = await LocalAuthService.validate();
       if (validation.state === LocalSessionState.VALID && validation.session !== null) {
-        TokenStore.saveLocalSession(validation.session);
+        TokenStore.saveLocalSession(validation.session, RouteScope.mode());
         result.userData = toUserData(validation.session);
       }
       return result;
@@ -248,7 +344,26 @@ export class LocalAuthService {
     result.execution = prepared.execution;
     if (prepared.captchaId.length > 0) {
       result.captchaRequired = true;
-      result.captcha = await LocalAuthService.hydrateCaptcha(prepared.captchaId);
+      // 取一次图片：既内联给 UI 显示，也顺手本地识别出答案（预填，省得手输）
+      const bytes: Uint8Array | null = await LocalAuthService.fetchCaptchaBytes(prepared.captchaId);
+      if (bytes !== null) {
+        const helper = new util.Base64Helper();
+        const info: CaptchaInfo = {
+          id: prepared.captchaId,
+          type: 'image',
+          imageUrl: CAS_CAPTCHA_URL + '?captchaId=' + prepared.captchaId,
+          base64Image: 'data:image/jpeg;base64,' + helper.encodeToStringSync(bytes)
+        };
+        result.captcha = info;
+        const started: number = Date.now();
+        const answer: string = await CaptchaRecognizer.recognizeImage(bytes);
+        if (answer.length === 6) {
+          result.captchaAnswer = answer;
+          Logger.info('验证码预识别：' + answer + '（' + (Date.now() - started) + 'ms）');
+        } else {
+          Logger.warn('验证码预识别未收敛，需人工输入（' + (Date.now() - started) + 'ms）');
+        }
+      }
     }
     return result;
   }
@@ -260,7 +375,8 @@ export class LocalAuthService {
    *
    * 两条互斥路径：
    * - **带验证码**：直接提交准备页（不重新 GET，见类注释），失败按「验证未完成」处理；
-   * - **不带验证码**：普通表单提交；WebVPN 模式下整链失败追加一次重试（2.0.2 口径）。
+   * - **不带验证码**：普通表单提交；页面过期换新页重来一次，WebVPN 模式下整链失败
+   *   再追加一次重试（2.0.2 口径）。
    *
    * @throws CaptchaRequiredError 需要验证码 / 验证码被拒（携带新图与配套 execution）
    * @throws ApiError 凭据错误（`cas_login_failed`）/ 上游不可用（`auth_upstream_timeout`）
@@ -274,22 +390,138 @@ export class LocalAuthService {
     if (captcha.length > 0) {
       return await LocalAuthService.submitCaptcha(username, password, captcha, execution);
     }
-    const mode: ConnectionMode = TokenStore.getConnectionMode();
-    try {
-      return await LocalAuthService.loginOnce(username, password, execution);
-    } catch (error) {
-      if (!LocalAuthService.shouldRetryLogin(mode, error)) {
-        if (!(error instanceof CaptchaRequiredError)) {
+    const mode: ConnectionMode = RouteScope.mode();
+    /**
+     * 最多两轮：第一轮撞上「流程上下文失效」（`execution` 已随服务端会话超时作废，
+     * 典型场景是应用被冻结在后台过夜、第二天直接点登录）时，丢掉准备页、取一张新
+     * 登录页**整轮**重来一次。只重试一次 —— 再失败说明上游确有异常，不该空转。
+     */
+    for (let round = 0; round < 2; round++) {
+      try {
+        return await LocalAuthService.loginAttempt(username, password);
+      } catch (error) {
+        if (round === 0 && LocalAuthService.isFlowExpired(error)) {
+          Logger.warn('CAS 登录流程上下文已失效（execution 过期 / 被回收），换新登录页重试');
           LocalAuthService.prepared = null;
+          continue;
         }
+        // 需要验证码：`loginAttempt` 已试过本地自动识别，这里直接把挑战交给 UI
+        if (error instanceof CaptchaRequiredError) {
+          throw error as Error;
+        }
+        if (!LocalAuthService.shouldRetryLogin(mode, error)) {
+          LocalAuthService.prepared = null;
+          throw error as Error;
+        }
+        // 2.0.2：WebVPN 下「明确凭据拒绝 / 网络 / 超时 / 上游不可用」整链重试一次。
+        // 重试前必须丢掉旧准备页 —— 复用已提交的 execution 一定被判无效。
+        Logger.warn('WebVPN 登录失败，整链重试一次：' + (error as Error).message);
+        LocalAuthService.prepared = null;
+        return await LocalAuthService.loginOnce(username, password);
+      }
+    }
+    throw new ApiError(400, CAS_FLOW_EXPIRED, '登录页面已失效，请重新点击登录');
+  }
+
+  /**
+   * 双路线登录（对齐上游 `facade/auth.rs::login`）。
+   *
+   * 为什么必须两条都登：登录态是**按路线隔离的 Cookie 罐**，另一条路线上没有会话，
+   * 一旦换网（校内↔校外）就要重新输密码。原版之所以「换网、冷启动都不用重登」，
+   * 一半靠这个（另一半靠静默重认证，见 `SessionGuard`）。
+   *
+   * 失败语义：
+   * - **主路线**失败照旧抛出（含 `CaptchaRequiredError`），由登录页展示；
+   * - **副路线**失败只登记不抛出 —— 另一条通道的验证码不该阻塞已经可用的主通道
+   *   （上游同样是 `partial`，只要求「至少一条就绪」）。
+   */
+  static async loginDual(
+    username: string,
+    password: string,
+    captcha: string,
+    execution: string
+  ): Promise<LoginResponse> {
+    const routes: ConnectionMode[] = await RouteEngine.loginRoutes();
+    // 主路线必须是 App 接下来实际走的那条，否则登录完还是一条空罐
+    if (routes.length > 0 && TokenStore.getConnectionMode() !== routes[0]) {
+      RouteEngine.pinMode(routes[0]);
+    }
+    let primary: LoginResponse | null = null;
+    const results: RouteLoginResult[] = [];
+    for (let i = 0; i < routes.length; i++) {
+      const route: ConnectionMode = routes[i];
+      const isPrimary: boolean = i === 0;
+      const result: RouteLoginResult = new RouteLoginResult();
+      result.mode = route;
+      RouteScope.enter(route);
+      try {
+        const response: LoginResponse = await LocalAuthService.login(
+          username, password, isPrimary ? captcha : '', isPrimary ? execution : '');
+        result.state = RouteLoginState.READY;
+        if (primary === null) {
+          primary = response;
+        }
+        Logger.info('双路线登录：' + route + ' 已就绪' + (isPrimary ? '（主）' : '（备）'));
+      } catch (error) {
+        if (isPrimary) {
+          throw error as Error;
+        }
+        if (error instanceof CaptchaRequiredError) {
+          result.state = RouteLoginState.NEEDS_CAPTCHA;
+          result.message = '备用通道待验证码';
+        } else {
+          result.state = RouteLoginState.FAILED;
+          result.message = (error as Error).message;
+        }
+        Logger.warn('双路线登录：备用通道 ' + route + ' 未就绪（' + result.message + '）');
+      } finally {
+        RouteScope.exit();
+        results.push(result);
+      }
+    }
+    const ready: LoginResponse | null = primary;
+    if (ready === null) {
+      throw new ApiError(401, 'cas_login_failed', '登录未能完成，请重试');
+    }
+    return ready;
+  }
+
+  /**
+   * 一轮完整登录（不含 WebVPN 整链重试与「页面过期」重来）。
+   *
+   * 页面要求验证码时先本地自动识别（不上传图片，最多 `AUTO_CAPTCHA_ATTEMPTS` 次），
+   * 全部失败才把挑战交回 UI 让人工输入。
+   */
+  private static async loginAttempt(
+    username: string,
+    password: string
+  ): Promise<LoginResponse> {
+    try {
+      return await LocalAuthService.loginOnce(username, password);
+    } catch (error) {
+      if (!(error instanceof CaptchaRequiredError)) {
         throw error as Error;
       }
-      // 2.0.2：WebVPN 下「明确凭据拒绝 / 网络 / 超时 / 上游不可用」整链重试一次。
-      // 重试前必须丢掉旧准备页 —— 复用已提交的 execution 一定被判无效。
-      Logger.warn('WebVPN 登录失败，整链重试一次：' + (error as Error).message);
-      LocalAuthService.prepared = null;
-      return await LocalAuthService.loginOnce(username, password, '');
+      const auto: LoginResponse | null =
+        await LocalAuthService.loginWithAutoCaptcha(username, password);
+      if (auto !== null) {
+        return auto;
+      }
+      throw error as Error;
     }
+  }
+
+  /** 是否为「webflow 执行上下文失效」类错误（据此自动换新页面重试）。 */
+  private static isFlowExpired(error: Object): boolean {
+    return error instanceof ApiError && (error as ApiError).code === CAS_FLOW_EXPIRED;
+  }
+
+  /** 准备页是否超过客户端可用期（服务端大概率也已回收该 `execution`）。 */
+  private static isStale(prepared: PreparedLogin): boolean {
+    if (prepared.preparedAt <= 0) {
+      return true;
+    }
+    return Date.now() - prepared.preparedAt > PREPARED_TTL_MS;
   }
 
   /** 是否要按 2.0.2 的 WebVPN 口径整链重试一次（交互验证不自动重放）。 */
@@ -313,14 +545,21 @@ export class LocalAuthService {
   /**
    * 普通（无验证码）登录。
    *
-   * 🔴 **准备页存在时不再 GET**：重新取页会轮换 execution，等于把手中令牌作废。
+   * 🔴 **准备页存在且未过期时不再 GET**：重新取页会轮换 execution，等于把手中令牌作废。
+   * 反之，准备页一旦过期就必须先换页 —— 死令牌提交上去只会换回
+   * 「Error decoding flow execution」，而这正是「过夜后第一次点登录必失败」的成因。
    */
   private static async loginOnce(
     username: string,
-    password: string,
-    execution: string
+    password: string
   ): Promise<LoginResponse> {
-    let prepared: PreparedLogin | null = LocalAuthService.prepared;
+    let prepared: PreparedLogin | null = LocalAuthService.preparedFor(RouteScope.mode());
+    if (prepared !== null && LocalAuthService.isStale(prepared)) {
+      Logger.info('登录准备页已过期（持有 ' +
+        Math.round((Date.now() - prepared.preparedAt) / 1000) + 's），重新取登录页');
+      prepared = null;
+      LocalAuthService.prepared = null;
+    }
     if (prepared === null) {
       const page = await UpstreamClient.get(CAS_LOGIN_URL, false);
       if (page.isRedirect()) {
@@ -349,11 +588,12 @@ export class LocalAuthService {
       );
     }
 
-    const actualExecution: string = execution.length > 0 ? execution : prepared.execution;
+    // 页面里的令牌是唯一权威来源：它来自刚刚登记的准备页（比调用方手里任何
+    // 缓存值都新）。旧实现优先用调用方传进来的 execution，过夜后传的是隔夜死令牌。
     const form: string = CasParser.buildLoginBody(prepared.html, username, password,
-      actualExecution, '');
+      prepared.execution, '');
     Logger.info('提交 CAS 凭据：账号 ' + username + '，模式 ' +
-      TokenStore.getConnectionMode() + '，目标 ' + CAS_LOGIN_URL);
+      RouteScope.mode() + '，目标 ' + CAS_LOGIN_URL);
     const submit = await UpstreamClient.postForm(CAS_LOGIN_URL, form, false);
     Logger.info('CAS 提交响应：状态 ' + submit.status.toString() +
       '，Location ' + submit.location + '，最终地址 ' + submit.url);
@@ -375,13 +615,20 @@ export class LocalAuthService {
     captcha: string,
     execution: string
   ): Promise<LoginResponse> {
-    const prepared: PreparedLogin | null = LocalAuthService.prepared;
+    const prepared: PreparedLogin | null = LocalAuthService.preparedFor(RouteScope.mode());
     // 调用方没带 execution 时用准备页自己的（UI 失败后可能已清空变量）
     const expected: string = execution.length > 0 ? execution :
       (prepared === null ? '' : prepared.execution);
-    if (prepared === null || prepared.captchaId.length === 0 || prepared.execution !== expected) {
-      // 状态已被换掉（重新预热 / 换路线 / 进程重启）：重新取一份挑战交给 UI
+    if (prepared === null || LocalAuthService.isStale(prepared) ||
+      prepared.captchaId.length === 0 || prepared.execution !== expected) {
+      // 状态已被换掉（重新预热 / 换路线 / 进程重启 / 令牌过夜过期）：
+      // 重新取一份挑战交给 UI —— 旧图与旧令牌是一对，已一起作废。
       const fresh: PreparedLogin = await LocalAuthService.reprepare();
+      if (fresh.captchaId.length === 0) {
+        // 新页面不再要验证码：用户手上那张图连同旧令牌一起作废，直接按普通登录走
+        Logger.info('新准备的登录页不再要求验证码，改走普通登录');
+        return await LocalAuthService.loginOnce(username, password);
+      }
       throw new CaptchaRequiredError(
         await LocalAuthService.hydrateCaptcha(fresh.captchaId),
         fresh.execution,
@@ -411,6 +658,53 @@ export class LocalAuthService {
     await LocalAuthService.followAndCheck(submit);
     await LocalAuthService.activateGateway();
     return await LocalAuthService.finishLogin();
+  }
+
+  /**
+   * 自动识别验证码并登录（最多 `AUTO_CAPTCHA_ATTEMPTS` 次）。
+   *
+   * 每次都用**当前准备页**的 captchaId 取图、本地识别、按八字段表单提交；
+   * 被拒时服务端会同时下发新的 captchaId 与 execution（页面里就带着），
+   * 解析出来接着试下一张。
+   *
+   * @returns 成功返回登录结果；识别不出 / 次数用尽返回 `null`（调用方转人工）
+   */
+  private static async loginWithAutoCaptcha(
+    username: string,
+    password: string
+  ): Promise<LoginResponse | null> {
+    for (let attempt = 0; attempt < AUTO_CAPTCHA_ATTEMPTS; attempt++) {
+      const prepared: PreparedLogin | null = LocalAuthService.preparedFor(RouteScope.mode());
+      if (prepared === null || prepared.captchaId.length === 0) {
+        return null;
+      }
+      const bytes: Uint8Array | null = await LocalAuthService.fetchCaptchaBytes(prepared.captchaId);
+      if (bytes === null) {
+        return null;
+      }
+      const answer: string = await CaptchaRecognizer.recognizeImage(bytes);
+      if (answer.length !== 6) {
+        Logger.warn('验证码自动识别未收敛（第 ' + (attempt + 1) + ' 次），转人工输入');
+        return null;
+      }
+      Logger.info('验证码自动识别：' + answer + '（第 ' + (attempt + 1) + ' 次）');
+
+      const form: string = CasParser.buildCaptchaLoginBody(username, password, answer,
+        prepared.execution);
+      const submit = await UpstreamClient.postForm(CAS_LOGIN_URL, form, false);
+      const body: string = submit.body;
+      // 验证码被拒：服务端在同一响应里给了新的挑战，解析出来再试一次
+      if (submit.status === 401 && CasParser.findLoginError(body).length > 0 &&
+        CasParser.captchaType(body) === 'image') {
+        LocalAuthService.parsePage(body);
+        continue;
+      }
+      await LocalAuthService.followAndCheck(submit);
+      await LocalAuthService.activateGateway();
+      return await LocalAuthService.finishLogin();
+    }
+    Logger.warn('验证码自动识别已用尽 ' + AUTO_CAPTCHA_ATTEMPTS + ' 次，转人工输入');
+    return null;
   }
 
   /** 重新取一次登录页并登记为当前准备页。 */
@@ -447,6 +741,9 @@ export class LocalAuthService {
     prepared.execution = execution;
     const captcha: CaptchaInfo | null = CasParser.detectCaptcha(html, CAS_CAPTCHA_URL);
     prepared.captchaId = captcha === null ? '' : captcha.id;
+    prepared.mode = RouteScope.mode();
+    // 记下取页时刻：`execution` 的寿命跟服务端 webflow 会话走，客户端只能按时间判旧
+    prepared.preparedAt = Date.now();
     LocalAuthService.prepared = prepared;
     return prepared;
   }
@@ -459,7 +756,7 @@ export class LocalAuthService {
     const validation = await LocalAuthService.validate();
     if (validation.state === LocalSessionState.VALID && validation.session !== null) {
       const session = validation.session;
-      TokenStore.saveLocalSession(session);
+      TokenStore.saveLocalSession(session, RouteScope.mode());
       LocalAuthService.prepared = null;
       Logger.info('本地模式登录成功：' + session.userName + ' / ' + session.schoolId);
       return {
@@ -573,7 +870,7 @@ export class LocalAuthService {
       [] : attributes.name;
     const userName: string = names.length === 1 ? names[0].trim() : '';
 
-    const previous = TokenStore.getLocalSession();
+    const previous = TokenStore.getLocalSession(RouteScope.mode());
     const session: LocalAuthSession = {
       username: rawUser,
       userName: userName,
@@ -591,14 +888,14 @@ export class LocalAuthService {
 
   /** 查询登录状态（Index 恢复会话 / 设置页展示用）。 */
   static async status(): Promise<SessionStatusResponse> {
-    const stored = TokenStore.getLocalSession();
+    const stored = TokenStore.getLocalSession(RouteScope.mode());
     if (stored === null) {
       throw ApiError.unauthorized();
     }
     const validation = await LocalAuthService.validate();
     if (validation.state === LocalSessionState.VALID && validation.session !== null) {
       const session = validation.session;
-      TokenStore.saveLocalSession(session);
+      TokenStore.saveLocalSession(session, RouteScope.mode());
       return {
         user: toUserData(session),
         lastActivity: session.lastActivity,
@@ -608,16 +905,33 @@ export class LocalAuthService {
     if (validation.state === LocalSessionState.TRANSIENT) {
       throw new ApiError(503, 'auth_upstream_timeout', '统一认证服务响应超时，请稍后重试');
     }
-    TokenStore.clearLocalSession();
+    TokenStore.clearLocalSession(RouteScope.mode());
     throw ApiError.unauthorized();
   }
 
-  /** 注销：尽力通知上游退出，随后无条件清空本地登录态。 */
+  /**
+   * 注销：尽力通知上游退出，随后无条件清空本地登录态。
+   *
+   * 两条路线各有一套 CAS 会话（Cookie 罐隔离），只销一条会留下另一个仍然有效的
+   * 上游会话 —— 对齐上游 `logout` 对两个 runtime 各调一次 `remote_logout`。
+   * 只对**确实有会话**的路线发请求，不必多打一次。
+   */
   static async logout(): Promise<void> {
-    try {
-      await LocalAuthService.followTo(CAS_LOGOUT_URL);
-    } catch (error) {
-      Logger.warn('上游注销失败，本地登录态仍会清除：' + (error as Error).message);
+    const routes: ConnectionMode[] = [ConnectionMode.DIRECT, ConnectionMode.WEBVPN];
+    for (let i = 0; i < routes.length; i++) {
+      const route: ConnectionMode = routes[i];
+      if (!TokenStore.hasLocalSession(route)) {
+        continue;
+      }
+      RouteScope.enter(route);
+      try {
+        await LocalAuthService.followTo(CAS_LOGOUT_URL);
+      } catch (error) {
+        Logger.warn('上游注销失败（' + route + '），本地登录态仍会清除：' +
+          (error as Error).message);
+      } finally {
+        RouteScope.exit();
+      }
     }
     LocalAuthService.prepared = null;
     TokenStore.clearAllLocalSessions();
@@ -625,16 +939,41 @@ export class LocalAuthService {
 
   /* ============================ 用户信息 ============================ */
 
-  /** 从校内用户中心读取个人信息（本地模式下这是唯一可用的用户信息源）。 */
+  /**
+   * 从校内用户中心读取个人信息（本地模式下这是唯一可用的用户信息源）。
+   *
+   * 2026-11-22 修复「个人资料始终获取失败」：UC 会话与 SSO 会话是**两套**，
+   * `activateUcLogin()` 原本只在 `finishLogin()` 里调一次；换网 / 自动切路线 /
+   * 冷启动后 UC 那枚 cookie 掉了，而 SSO 仍有效 —— 此时 userinfo 返回 200 +
+   * `{"code":10600,"data":null}`（实测未登录态就是这个结构），不是 302，
+   * 于是旧代码直接抛 `user_info_failed`，页面永远显示「获取失败」。
+   *
+   * 修法：识别 10600 时用**现有 SSO 会话**重建一次 UC 会话（`activateUcLogin`
+   * 会带 ticket 跳回 UC，幂等），再重试一次读取。SSO 也失效时重建会抛 CAS 错误，
+   * 交给上层的 SessionGuard / 重新登录处理，不在本方法里死循环。
+   */
   static async fetchUserInfo(): Promise<UserInfo> {
     const response = await UpstreamClient.get(UC_USERINFO_URL, false, {
       'X-Requested-With': 'XMLHttpRequest'
     });
+    // 非 2xx / 非 JSON：会话级失败（大概率 302 到 SSO），沿用原来的 unauthorized 语义
     if (!response.isOk() || !response.body.trimStart().startsWith('{')) {
       throw ApiError.unauthorized();
     }
-    const envelope = JSON.parse(response.body) as UcEnvelope;
-    const code = envelope.code === undefined ? -1 : envelope.code;
+    let envelope = JSON.parse(response.body) as UcEnvelope;
+    let code: number = envelope.code === undefined ? -1 : envelope.code;
+    // 10600 = UC 会话未激活/已失效，但 SSO 多半还有效 —— 重建一次再读
+    if (code === UC_NOT_ACTIVATED) {
+      Logger.info('UC 会话未激活（code=10600），用现有 SSO 会话重建后重试');
+      await LocalAuthService.activateUcLogin();
+      const retry = await UpstreamClient.get(UC_USERINFO_URL, false, {
+        'X-Requested-With': 'XMLHttpRequest'
+      });
+      if (retry.isOk() && retry.body.trimStart().startsWith('{')) {
+        envelope = JSON.parse(retry.body) as UcEnvelope;
+        code = envelope.code === undefined ? -1 : envelope.code;
+      }
+    }
     if (code !== 0 || envelope.data === undefined || envelope.data === null) {
       throw new ApiError(500, 'user_info_failed', '个人信息获取失败，请稍后重试');
     }
@@ -662,16 +1001,35 @@ export class LocalAuthService {
       // 随机参数只用于绕过上游/网关的图片缓存，不参与业务语义
       imageUrl: CAS_CAPTCHA_URL + '?captchaId=' + captchaId + '&r=' + salt.toString()
     };
+    const bytes: Uint8Array | null = await LocalAuthService.fetchCaptchaBytes(captchaId);
+    if (bytes !== null) {
+      const helper = new util.Base64Helper();
+      captcha.base64Image = 'data:image/jpeg;base64,' + helper.encodeToStringSync(bytes);
+    }
+    return captcha;
+  }
+
+  /**
+   * 取验证码图片的原始字节（自动识别与内联展示共用这一次请求）。
+   *
+   * 必须与登录页走同一条路线（WebVPN 下经网关）：验证码是按会话下发的，
+   * 换个域名去取会拿到与当前会话无关的图。
+   */
+  private static async fetchCaptchaBytes(captchaId: string): Promise<Uint8Array | null> {
+    if (captchaId.length === 0) {
+      return null;
+    }
+    const url: string = CAS_CAPTCHA_URL + '?captchaId=' + captchaId +
+      '&r=' + Date.now().toString();
     try {
-      const response = await UpstreamClient.getBinary(captcha.imageUrl);
+      const response = await UpstreamClient.getBinary(url);
       if (response.isOk() && response.bytes !== null && response.bytes.length > 0) {
-        const helper = new util.Base64Helper();
-        captcha.base64Image = 'data:image/jpeg;base64,' + helper.encodeToStringSync(response.bytes);
+        return response.bytes;
       }
     } catch (error) {
       Logger.warn('验证码图片获取失败：' + (error as Error).message);
     }
-    return captcha;
+    return null;
   }
 
   /**
@@ -693,6 +1051,10 @@ export class LocalAuthService {
         response.url.substring(markerIndex + 'exception.message='.length)
       ));
     }
+    // 令牌随服务端 webflow 会话超时而作废：交由 login() 换新页面整轮重试
+    if (CasParser.isFlowExecutionExpired(body)) {
+      throw new ApiError(400, CAS_FLOW_EXPIRED, 'CAS 登录流程上下文已失效（execution 已过期）');
+    }
     const loginError: string = CasParser.findLoginError(body);
     if (response.status === 401 || loginError.length > 0) {
       throw new ApiError(401, 'cas_login_failed',
@@ -712,9 +1074,21 @@ export class LocalAuthService {
    * 非 WebVPN 模式直接返回。
    */
   private static async activateGateway(): Promise<void> {
-    if (TokenStore.getConnectionMode() !== ConnectionMode.WEBVPN) {
+    if (RouteScope.mode() !== ConnectionMode.WEBVPN) {
       return;
     }
+    try {
+      await LocalAuthService.runGatewayActivation();
+    } catch (error) {
+      // 网关激活只是「加分项」：这一步失败**不能**把已经建立的 CAS 会话判成登录失败。
+      // 实测踩过：握手链末尾停在被代理的业务页（200），被当成失败 →
+      // 用户「第一次点登录报错、再点一次才成功」。
+      Logger.warn('WebVPN 网关激活未完成（不影响登录）：' + (error as Error).message);
+    }
+  }
+
+  /** 真正的网关握手（成功/失败由调用方决定如何处置）。 */
+  private static async runGatewayActivation(): Promise<void> {
     let current: string = GATEWAY_LOGIN_URL;
     for (let hop = 0; hop < MAX_REDIRECT_HOPS; hop++) {
       const response = await UpstreamClient.get(current, false);
@@ -729,15 +1103,21 @@ export class LocalAuthService {
         const target: string = await LocalWebVpn.fromWebVpnUrl(resolved);
         const targetHost: string = hostOfUrl(target);
         if (targetHost !== SSO_HOST && targetHost !== GATEWAY_HOST) {
-          throw new ApiError(500, 'cas_page_failed', 'WebVPN 网关认证跳转到未预期服务');
+          // 已经跳到业务站点 → 网关放行了（票据被接受）
+          Logger.info('WebVPN 网关已放行到业务站点：' + target);
+          return;
         }
         // 网关自指回调必须保留**包装地址**参与票据交换；其余用解包后的逻辑地址
         current = targetHost === GATEWAY_HOST ? resolved : target;
         continue;
       }
-      if (response.status === 200 && direct === GATEWAY_ROOT &&
-        CasParser.extractExecution(response.body).length === 0) {
-        Logger.info('WebVPN 网关会话已激活');
+      if (response.status === 200) {
+        // 只要不是「仍要求统一认证的登录页」，就说明网关已经带着票据走完了流程。
+        // ⚠️ 不能要求落地地址等于网关根：实测会直接落到被代理的业务页。
+        if (CasParser.extractExecution(response.body).length > 0) {
+          throw new ApiError(500, 'cas_page_failed', '网关仍要求统一认证');
+        }
+        Logger.info('WebVPN 网关会话已激活：' + direct);
         return;
       }
       throw new ApiError(500, 'cas_page_failed',
@@ -790,6 +1170,16 @@ export class LocalAuthService {
       }
 
       const body = current.body;
+
+      /**
+       * webflow 执行上下文失效（`execution` 过期 / 被服务端回收）。
+       *
+       * 必须排在「凭据错误」之前判：这张错误页既不含登录表单，也不含 tip-text，
+       * 落到后面的分支只会被泛化成「账号或密码验证未通过」，把用户引去改密码。
+       */
+      if (CasParser.isFlowExecutionExpired(body)) {
+        throw new ApiError(400, CAS_FLOW_EXPIRED, 'CAS 登录流程上下文已失效（execution 已过期）');
+      }
 
       // 「密码过期 / 账号风险」不是失败，是要求确认一次「继续」
       if (CasParser.isIgnorablePasswordExpiryPage(body)) {

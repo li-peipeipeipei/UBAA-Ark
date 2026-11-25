@@ -52,6 +52,32 @@ export class DateUtil {
     return new Date(year, month - 1, day);
   }
 
+  /**
+   * 解析 `yyyy-MM-dd HH:mm[:ss]`（课表上下课时间就是这种格式）。
+   *
+   * 只有日期没有时间时按当天 00:00 返回 —— 调用方是拿它和「现在」比大小，
+   * 日期部分必须真实，时间部分缺了就该落到当天零点而不是丢掉整个解析结果。
+   */
+  static parseDateTime(text: string): Date | null {
+    const day: Date | null = DateUtil.parse(text);
+    if (day === null) {
+      return null;
+    }
+    const timeMatched: RegExpMatchArray | null = text.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (timeMatched === null) {
+      return day;
+    }
+    const hour: number = Number.parseInt(timeMatched[1], 10);
+    const minute: number = Number.parseInt(timeMatched[2], 10);
+    const second: number = Number.parseInt(timeMatched[3] ?? '0', 10);
+    if (Number.isNaN(hour) || hour > 23 || Number.isNaN(minute) || minute > 59 ||
+      Number.isNaN(second) || second > 59) {
+      return day;
+    }
+    day.setHours(hour, minute, second, 0);
+    return day;
+  }
+
   /** 距离目标日期还有几天（负数表示已过去）。 */
   static daysUntil(text: string): number | null {
     const target = DateUtil.parse(text);

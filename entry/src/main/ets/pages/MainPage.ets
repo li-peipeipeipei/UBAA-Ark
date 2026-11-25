@@ -15,13 +15,13 @@ import {
   hdsMaterial
 } from '@kit.UIDesignKit';
 import { KEY_BOTTOM_SAFE_HEIGHT, topSafeInsetVp, systemBarStyleFor } from '../common/ImmersiveUtil';
-import { webview } from '@kit.ArkWeb';
 import { Logger } from '../common/Logger';
 import { ImmersiveUtil } from '../common/ImmersiveUtil';
 import { AppColor, AppFont, AppSize, HERO_EXPAND_MS, HERO_LAND_BOUNCE, heroExpandCurve, heroShrinkCurve } from '../components/AppTheme';
 import { ScheduleDayHeader, ScheduleHeaderModel, ScheduleTermChip, ScheduleWeekChips } from '../components/ScheduleHeader';
 import { nativeFeatureRoute, routeBuilder } from './RouteBuilder';
 import { HomePage } from './home/HomePage';
+import { AppRouter } from '../common/AppRouter';
 import { SchedulePage } from './academic/SchedulePage';
 import { FeaturePage } from './home/FeaturePage';
 import { MinePage } from './mine/MinePage';
@@ -210,6 +210,13 @@ export struct MainPage {
   /** 收起收尾只做一次（onFinish 与兜底定时器都会调）。 */
   private shrinkDone: boolean = false;
   /**
+   * POP 兜底的轮次号：每次 POP 接管转场时 +1，延时回调带着自己的号回来。
+   *
+   * 防止「上一次 POP 的兜底定时器」在用户已经重新点开一张卡之后才触发 ——
+   * 那一发会把新一轮的转场 proxy 提前放掉。
+   */
+  private popGuardToken: number = 0;
+  /**
    * 转场序号：每开一轮（EXPAND / SHRINK）+1。
    *
    * 定时器必须带着自己那一轮的序号回来 —— 否则「展开还没播完就按了返回」时，
@@ -241,6 +248,23 @@ export struct MainPage {
    * 时序（收起）：几何 450ms 固定时长（弹簧的 onFinish 比视觉停稳晚很多，会显得回弹滞后）；
    *   颜色 100ms 起 160ms（260ms 盖满）；几何 onFinish 收尾（兜底 530ms）。
    */
+  /**
+   * 骨架里返回箭头的路径（px 坐标），与 HeroDetailLayer.arrowPath() 完全一致。
+   *
+   * 展开动画期间屏幕上显示的是本页自绘的「页面骨架」，不是真实目的页；
+   * 所以骨架里的返回钮也必须画出同一支箭头，否则放大过程中只有一个空圆圈，
+   * 等骨架淡出、真实页接管时才突然冒出箭头（用户看到的「快照没有返回箭头」）。
+   */
+  private morphArrowPath(): string {
+    const k: number = this.getUIContext().vp2px(1);
+    const x0: string = (0.715 * k).toFixed(1);
+    const x1: string = (7.855 * k).toFixed(1);
+    const y0: string = (0.715 * k).toFixed(1);
+    const ym: string = (8.285 * k).toFixed(1);
+    const y1: string = (15.855 * k).toFixed(1);
+    return 'M ' + x1 + ' ' + y0 + ' L ' + x0 + ' ' + ym + ' L ' + x1 + ' ' + y1;
+  }
+
   onMorphTick(): void {
     const phase: MorphPhase = HeroMorph.getPhase();
     if (phase === MorphPhase.IDLE) {
@@ -250,12 +274,25 @@ export struct MainPage {
     const navW: number = this.sideNavLayout() ? sideNavWidthOf(this.bp) : 0;
     const winW: number = AppStorage.get<number>(KEY_WINDOW_WIDTH_VP) ?? 375;
     const winH: number = AppStorage.get<number>(KEY_WINDOW_HEIGHT_VP) ?? 800;
-    // 页面骨架按整页尺寸排布（宽随块的换算基准）
-    this.morphPageW = winW;
+    // 内容区宽度 = 整窗宽 - 侧栏宽，横屏分栏下这才是二页的真实宽度。
+    const fullW: number = winW - navW;
+    /**
+     * 页面骨架必须按**内容区**尺寸（fullW × winH）排布，而不是整窗宽 winW。
+     *
+     * 骨架末尾会统一乘 `scale = morphW / morphPageW`（见下方 build 里的页面骨架），
+     * 这个 scale 默认以**中心**为原点。此前 morphPageW 写的是 winW：
+     *   - 竖屏 navW=0 → fullW=winW、scale=1，看不出问题；
+     *   - 横屏分栏 navW>0 → 终态 scale=fullW/winW<1，骨架虽然被缩回 fullW 宽，
+     *     但高度 winH 也一起被缩，且中心缩放把顶边往下推了 winH*(1-scale)/2。
+     *     真机表现：动画里的标题（含加载圈）比最终页面低几十 vp，溶接时跳一下。
+     *
+     * 改成 fullW 后终态 scale=1，骨架与真实页面逐像素重合；
+     * 中途帧仍按「宽随块、上下裁」等比缩放，观感不变。
+     */
+    this.morphPageW = fullW;
     this.morphPageH = winH;
     // card.x / card.y 是卡片的**屏幕坐标**（FeatureTile 上报），所以直接用
     const card: MorphRect = HeroMorph.getCard();
-    const fullW: number = winW - navW;
     // 图标 / 文字按宽度比例放大：色块长到全屏时它们也长到对应倍数，始终「长在一块上」
     const endScale: number = card.w > 0 ? fullW / card.w : 1;
 
@@ -530,31 +567,6 @@ export struct MainPage {
     }
   }
 
-  /* 站内网页提交浮层（覆盖底栏，全屏） */
-  @StorageProp('spocWebOpen') @Watch('onSpocWebOpenChange') private spocWebOpen: boolean = false;
-  @StorageProp('spocWebLogin') private spocWebLogin: string = '';
-  @StorageProp('spocWebDetail') private spocWebDetail: string = '';
-  private mainWebCtrl: webview.WebviewController = new webview.WebviewController();
-  private mainWebLoaded: boolean = false;
-
-  /**
-   * 网页提交浮层（盖在整个应用上，含底部页签）的开关。
-   *
-   * **返回键优先级由这里登记，不由 SpocPage 登记**：浮层是 MainPage 渲染的，
-   * 渲染方登记才不会在页面销毁时留下指向死实例的闭包。只要 `spocWebOpen` 变 true，
-   * 不论从哪个入口打开，返回键都能先关掉这一层。
-   */
-  onSpocWebOpenChange(): void {
-    // 全屏模态一定是最上面一层，先清掉可能残留的旧登记
-    BackGuard.clear();
-    if (this.spocWebOpen) {
-      this.mainWebLoaded = false;
-      BackGuard.register(() => {
-        AppStorage.setOrCreate('spocWebOpen', false);
-        return true;
-      });
-    }
-  }
   // 四个栈是模块级单例（common/NavStacks）：横竖屏切换重建组件时栈与栈里的页面都还在。
   private homeStack: NavPathStack = HOME_STACK;
   private scheduleStack: NavPathStack = SCHEDULE_STACK;
@@ -620,7 +632,8 @@ export struct MainPage {
     this.currentIndex = index;
     this.controller.changeIndex(index);
     if (index === 2 && page.length > 0) {
-      this.featureStack.pushPath({ name: page });
+      // 卡片深链也算一次「使用」（走 open 才会记进最近使用）
+      AppRouter.open(this.featureStack, page);
     }
   }
 
@@ -632,33 +645,42 @@ export struct MainPage {
    */
   @State private scheduleHeader: ScheduleHeaderModel = new ScheduleHeaderModel();
 
-  /** 四个页签共用同一张路由表，各自跳转互不干扰。 */
   /**
-   * 当前生效的导航栈 —— 由 `routeMap` 在被调用时按**当前页签**决定。
+   * 四个页签**各自一张固定栈的路由表**，互不干扰。
    *
-   * ## 为什么需要这个间接层
+   * ## 为什么不用一张 routeMap 按 currentIndex 猜栈（重要）
    *
-   * `navDestination` 要的是 **@Builder**（组件装饰器），不能传普通函数 ——
-   * 传了普通函数（第一版我写成 `routeMapOf(stack)` 返回闭包），
-   * 路由表**根本挂不上**，所有二级页全黑（真机实测）。
+   * `navDestination` 的回调签名只有 `(name, param)`，拿不到栈 —— 曾经用一张
+   * `routeMap` 按 `currentIndex` 间接取栈（`stackOf(this.currentIndex)`）。
+   * 但 `currentIndex` 是「界面当前显示的页签」，**不一定等于本次 push 用的栈**：
+   * 桌面卡片深链（下一节课）会在冷启动时改 `currentIndex` / 界面停在别处，
+   * 此时从主页「最近使用」push 到 homeStack，目的地却按错位的 currentIndex
+   * 绑到空栈（scheduleStack）—— 页面正常显示、能滑动，但 `onBackPressed`
+   * 弹的是空栈，返回直接卡死（真机复现，日志 push size=1 / back size=0）。
    *
-   * 而 `navDestination` 的回调签名只有 `(name, param)`，**拿不到栈**。
-   * 于是用一个 `@State` 记住「当前是哪个页签」，在 `@Builder routeMap` 里
-   * 按它取对应的栈：
-   *
-   * ```
-   * MainPage.routeMap（@Builder）
-   *   → 按 currentIndex 取 stackOf(index)
-   *   → routeBuilder(name, param, stack)
-   *   → DestShell({ stack })
-   *   → 子页组件
-   * ```
+   * 治本：让每个 Navigation 的 `navDestination` 用**固定绑定自己栈**的 @Builder，
+   * 目的地里的 `stack` 与 push 时用的栈恒为同一实例，与 `currentIndex` 彻底解耦。
+   * 各 Navigation 本就显式绑定了各自的栈（`HdsNavigation(this.homeStack)` 等），
+   * 路由表跟着固定下来只是让这条约束显式化。
    */
   @Builder
-  routeMap(name: string, param: object) {
-    // `currentIndex` 由 HdsTabs 的 onChange 维护 —— 就是当前页签序号，
-    // 用它取对应的栈（栈的内容与页签一一对应，见 stackOf）。
-    routeBuilder(name, param, this.stackOf(this.currentIndex));
+  homeRouteMap(name: string, param: object) {
+    routeBuilder(name, param, this.homeStack);
+  }
+
+  @Builder
+  scheduleRouteMap(name: string, param: object) {
+    routeBuilder(name, param, this.scheduleStack);
+  }
+
+  @Builder
+  featureRouteMap(name: string, param: object) {
+    routeBuilder(name, param, this.featureStack);
+  }
+
+  @Builder
+  mineRouteMap(name: string, param: object) {
+    routeBuilder(name, param, this.mineStack);
   }
 
   /** 功能页签的原生路由表（`Navigation` 专用，见 RouteBuilder.nativeFeatureRoute）。 */
@@ -734,6 +756,8 @@ export struct MainPage {
       const push: NavigationAnimatedTransition = {
         timeout: 900,
         transition: (proxy: NavigationTransitionProxy) => {
+          // 作废上一轮 POP 的兜底定时器：那一发会把本轮 proxy 提前放掉（画面无动画直接切）
+          this.popGuardToken = this.popGuardToken + 1;
           NavHero.holdProxy(proxy);
           // ⚠️ 这里**绝对不能**调 componentSnapshot（或其它强制定格的手段）：
           // 实测在 PUSH 的 hold 期间拍一次图，系统会把自己的默认「右侧滑入」放出来，
@@ -745,12 +769,51 @@ export struct MainPage {
     }
     if (operation === NavigationOperation.POP) {
       if (!NavHero.isTopHero()) {
+        /**
+         * 不接管转场（博雅 → 我的课程、成绩 → 详情 这类页内二级页都走系统默认）。
+         *
+         * 但**必须兜底放开原卡片**：正常路径下原卡片是 `finishShrink()` 放回来的，
+         * 这条分支没有收缩动画、`finishShrink` 不会执行。于是「卡片展开页 → 页内二级页
+         * → 一路返回功能页」时，如果「展开页 → 功能页」那一次 POP 也被判成非 hero
+         * （二级页的 shell 还没出栈、或展开页内容被系统回收导致 close 收不到），
+         * 就再没有任何地方发 `KEY_HERO_TILE_SHOW`，功能页那张卡**永远保持隐藏**。
+         * 真机表现：功能块消失，但位置上仍能点进去，再进出一次才恢复
+         * （2026-11-22 博雅 → 我的课程 → 返回，复现）。
+         *
+         * 判据用「pop 之后栈是否回到根」而不是 `to.name`：`NavContentInfo.name` 在
+         * 根页面上填什么没有文档保证，栈深是确定的。延时是因为回调里栈还没 pop 完。
+         */
+        setTimeout(() => {
+          if (this.featureStack.size() === 0) {
+            NavHero.notifyTileShow();
+            Logger.info('HERO 回到功能页但未走收缩转场，兜底放开原卡片');
+          }
+        }, 60);
         return undefined;
       }
       // ⚠️ 这个回调是在**渲染管线里同步调用**的，此处直接改 AppStorage / @State 会抛
       // JS Error（实测：点返回直接崩进程，exit 254，栈顶就落在这一行）。
       // 所以状态改动统统延后一帧。
       this.expandDone = false;
+      // 本轮收缩标记先归零：下面那个兜底要判断「这一轮到底有没有演过收缩」
+      this.shrinkDone = false;
+      const guard: number = this.popGuardToken + 1;
+      this.popGuardToken = guard;
+      /**
+       * 收缩信号兜底（1200ms）。
+       *
+       * 接管了转场，但目的地可能在这个期间被系统回收/重建，`KEY_HERO_CLOSE` 的
+       * @Watch 收不到 → `startShrink()` 从不执行 → 900ms 转场超时后 proxy 被释放，
+       * 而 `finishShrink()` 没跑过 → 原卡片一直隐藏（与上面那条同样的症状）。
+       * 超时后强制收尾：放开卡片 + 结束转场，避免卡在「转场中」。
+       */
+      setTimeout(() => {
+        if (guard !== this.popGuardToken || this.shrinkDone) {
+          return;
+        }
+        Logger.warn('HERO 收缩未开始（1200ms），强制收尾并放开原卡片');
+        this.finishShrink();
+      }, 1200);
       setTimeout(() => {
         // 收起前先给目的页拍一张**整页快照**：遮罩里缩的是页面本身（含内容），
         // 才有「页面在缩小」的观感（只缩空壳 = 先变黑再缩，看不出缩小 —— 用户实测）。
@@ -954,54 +1017,6 @@ export struct MainPage {
     };
   }
 
-  /** 站内网页提交：覆盖整个屏幕（含底部页签），先登录再跳作业详情。 */
-  @Builder
-  spocWebOverlay() {
-    Column() {
-      Row() {
-        Text('网页提交')
-          .fontSize(AppFont.title)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(AppColor.textPrimary)
-        Blank()
-        Button('关闭')
-          .height(32)
-          .fontSize(AppFont.body)
-          .fontColor(AppColor.brand)
-          .backgroundColor(AppColor.brandContainer)
-          .onClick(() => {
-            AppStorage.setOrCreate('spocWebOpen', false);
-          })
-      }
-      .width('100%')
-      .height(56)
-      .padding({ left: AppSize.pagePadding, right: AppSize.pagePadding })
-      .alignItems(VerticalAlign.Center)
-      .backgroundColor(AppColor.pageBackground)
-
-      Web({ src: this.spocWebLogin, controller: this.mainWebCtrl })
-        .width('100%')
-        .layoutWeight(1)
-        .domStorageAccess(true)
-        .javaScriptAccess(true)
-        .mixedMode(MixedMode.All)
-        .metaViewport(true)
-        .zoomAccess(false)
-        .onPageEnd(() => {
-          if (!this.mainWebLoaded) {
-            this.mainWebLoaded = true;
-            if (this.spocWebDetail.length > 0) {
-              this.mainWebCtrl.loadUrl(this.spocWebDetail);
-            }
-          }
-        })
-    }
-    .width('100%')
-    .height('100%')
-    // 顶部让开「状态栏 + MINI 标题栏」，保留 SPOC 作业那一行；底部一直铺到屏幕底，盖住页签栏
-    .padding({ top: topSafeInsetVp() + AppSize.navTitleBarMiniHeight })
-  }
-
   /** 手机端原布局：整段逐字保留，零回归。 */
   @Builder
   narrowTabs() {
@@ -1014,7 +1029,7 @@ export struct MainPage {
             })
           }
         }
-        .navDestination(this.routeMap)
+        .navDestination(this.homeRouteMap)
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
@@ -1032,7 +1047,7 @@ export struct MainPage {
             SchedulePage({ stack: this.scheduleStack, header: this.scheduleHeader })
           }
         }
-        .navDestination(this.routeMap)
+        .navDestination(this.scheduleRouteMap)
         .titleBar(this.scheduleTitleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
@@ -1080,7 +1095,7 @@ export struct MainPage {
             })
           }
         }
-        .navDestination(this.routeMap)
+        .navDestination(this.mineRouteMap)
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
@@ -1191,7 +1206,7 @@ export struct MainPage {
             })
           }
         }
-        .navDestination(this.routeMap)
+        .navDestination(this.homeRouteMap)
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
@@ -1208,7 +1223,7 @@ export struct MainPage {
             SchedulePage({ stack: this.scheduleStack, header: this.scheduleHeader })
           }
         }
-        .navDestination(this.routeMap)
+        .navDestination(this.scheduleRouteMap)
         .titleBar(this.scheduleTitleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
@@ -1225,7 +1240,7 @@ export struct MainPage {
             })
           }
         }
-        .navDestination(this.routeMap)
+        .navDestination(this.featureRouteMap)
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
@@ -1247,7 +1262,7 @@ export struct MainPage {
             })
           }
         }
-        .navDestination(this.routeMap)
+        .navDestination(this.mineRouteMap)
         .titleBar(this.titleBar())
         .titleMode(HdsNavigationTitleMode.MINI)
         .hideBackButton(true)
@@ -1301,12 +1316,30 @@ export struct MainPage {
             // 收起方向页面 opacity=1，快照照常能拍，仍然叠在骨架上（能拍到就盖住它）。
             Column() {
               Row({ space: 8 }) {
-                // 返回钮占位（与 HeroDetailLayer 的圆形返回钮同尺寸同底色）
-                Column()
-                  .width(40)
-                  .height(40)
-                  .borderRadius(20)
-                  .backgroundColor(AppColor.circleButtonSurface)
+                // 返回钮：与 HeroDetailLayer 同构（40vp 圆钮 + 自绘箭头）。
+                // 之前这里只有纯色圆圈占位、没有箭头 —— 放大过程中显示的就是这套骨架，
+                // 所以看起来「快照里没有返回箭头」，等真页接管才突然出现。现补齐同款箭头。
+                Stack() {
+                  Column()
+                    .width(40)
+                    .height(40)
+                    .borderRadius(20)
+                    .backgroundColor(AppColor.circleButtonSurface)
+                  Path()
+                    .commands(this.morphArrowPath())
+                    // commands 是 px、width/height 是 vp（靠 morphArrowPath 内 vp2px 换算）。
+                    // 显式给尺寸，否则本机按内容算成 0×0 箭头不显示（同 HeroDetailLayer 踩坑）。
+                    .width(8.57)
+                    .height(16.57)
+                    .stroke(AppColor.textPrimary)
+                    .strokeWidth(1.43)
+                    .strokeLineCap(LineCapStyle.Round)
+                    .strokeLineJoin(LineJoinStyle.Round)
+                    .fill(Color.Transparent)
+                    .translate({ x: -1.42, y: -0.29 })
+                }
+                .width(40)
+                .height(40)
 
                 Text(this.morphTitle)
                   .fontSize(AppFont.title)
@@ -1408,10 +1441,6 @@ export struct MainPage {
 
       if (this.sideNavLayout()) {
         this.sideNavOverlay()
-      }
-
-      if (this.spocWebOpen) {
-        this.spocWebOverlay()
       }
     }
     .width('100%')

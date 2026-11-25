@@ -58,6 +58,8 @@ export interface LoginPreloadRequest {
 export interface LoginPreloadResponse {
   captchaRequired: boolean;
   captcha?: CaptchaInfo;
+  /** 本地自动识别出的验证码（6 位，空串表示没识别出来）。 */
+  captchaAnswer?: string;
   execution?: string;
   clientId?: string;
   accessToken?: string;

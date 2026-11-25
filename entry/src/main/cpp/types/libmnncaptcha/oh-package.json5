@@ -1,0 +1,6 @@
+{
+  "name": "libmnncaptcha.so",
+  "types": "./index.d.ts",
+  "version": "1.0.0",
+  "description": "验证码识别（MNN 本地推理）"
+}

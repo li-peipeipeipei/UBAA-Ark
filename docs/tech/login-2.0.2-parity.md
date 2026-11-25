@@ -81,6 +81,54 @@ GET  sso/login                          → 准备页：execution + 可选 captc
 | 保留 UC 会话激活（2.0.2 已移除） | 「个人信息」页直接读 `uc/api/uc/userinfo`，去掉会让资料页 401 |
 | 登录成功后不缓存登录页，也不做「自动登录静默重试」编排 | 属于 App 层（Flutter bridge）职责，本工程登录页已是单入口 |
 | 会话校验没有「身份代次」编号 | 单账号客户端，无并发路线编排需求 |
+| **网关激活降级为「尽力而为」** | 原版把阶梯末尾的落地地址判为合同的一部分；实测网关会直接落到被代理的业务页（HTTP 200），严格判定会误杀已成功的登录（表现为「第一次点登录报错、再点一次才成功」）。现只把「仍返回统一认证登录页」视为失败，且不外抛 |
+
+> 网关激活的验收口径：**不能要求落地地址等于 `https://d.buaa.edu.cn/`**。
+> 判据改为「HTTP 200 且响应不是带 `execution` 的登录页」，或「重定向落到业务站点」。
+
+## 5.1 登录页预加载与选路的竞态（2026-11-18 修复）
+
+现象：自动模式下明明判定「校内直连」，登录页却弹验证码。
+
+根因：`LoginPage.aboutToAppear` 里的 `RouteEngine.prepareForLogin()` 是**异步**的，
+而 `warmUp()` 紧接着同步发起，用的是 `TokenStore` 里**上一次记住的路线**（通常是
+WebVPN）去取登录页 —— 校外网关那张页面**必然带验证码**（直连页 4/4 次探测均无）。
+
+修法：`warmUp()` 在自动策略下先 `await RouteEngine.prepareForLogin()` 再预加载。
+教训：**任何依赖「当前路线」的网络请求，都不能假设选路已经完成**。
+
+## 5.2 过夜后第一次点登录必失败（2026-11-22 修复）
+
+现象：晚上不登录，第二天打开直接点「登录」，提示 `Error decoding flow execution`；
+再点一次就能登进去。真机（PLR-AL50）14:35 截图复现。
+
+根因：`execution` 的生命周期属于**服务端的 webflow 会话**，不是客户端。应用被冻结在
+后台过夜后 `aboutToAppear` 不会重跑，`LoginPage.execution` 与 `LocalAuthService.prepared`
+都还是隔夜那份；服务端会话早已超时回收，于是提交上去的令牌解不出来，Spring Webflow
+改返回 `Error decoding flow execution` 错误页。
+
+两个放大因素：
+
+1. `loginOnce()` 里 `actualExecution = execution.length > 0 ? execution : prepared.execution`
+   —— **调用方手里的旧令牌优先于刚取到的新页面**，方向正好反了；
+2. 该错误页既没有登录表单也没有 `tip-text`，落到 `followAndCheck` 后面的分支只会被
+   泛化成「账号或密码验证未通过」，把用户引去改密码。
+
+修法（三层，任一单独成立都能挡住这次失败）：
+
+| 层 | 位置 | 动作 |
+|---|---|---|
+| 时间判旧 | `LoginPage.doLogin()` | 令牌空置超过 `LOGIN_PREPARED_TTL_MS`(5 min) 就先 `warmUp()` 再提交 |
+| 时间判旧 | `LocalAuthService.loginOnce()` | `PreparedLogin.preparedAt` 超期 → 丢掉准备页、重新 GET |
+| 自愈重试 | `LocalAuthService.login()` | 识别到 `cas_flow_expired` → 清准备页、整轮重试一次（含自动验证码） |
+
+配套：`CasParser.isFlowExecutionExpired()` 认 Spring Webflow 的固定英文标记
+（`error decoding flow execution` / `flow execution has expired` / `no flow execution could be found` …），
+在 `followAndCheck` 与 `activateUcLogin` 里**排在凭据错误判定之前**。
+验证码路径同步处理：准备页过期时 `submitCaptcha` 重新取挑战（新页面不再要验证码就直接普通登录）。
+
+教训：**一次性令牌的有效期由对端会话决定，客户端不能假设「上次取到的还能用」**；
+凡是带着令牌跨前后台切换的流程，都要么记时间戳，要么能从错误页反推重来。
 
 ## 6. 主页版式（同一轮）
 

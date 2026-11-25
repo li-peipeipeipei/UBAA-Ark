@@ -25,6 +25,14 @@
       "value": "#99E3F0FC"
     },
     {
+      "name": "side_nav_selected_glass",
+      "value": "#B385B9E8"
+    },
+    {
+      "name": "multi_course_block",
+      "value": "#FFA7CCED"
+    },
+    {
       "name": "page_background",
       "value": "#F1F3F5"
     },
@@ -93,6 +101,10 @@
       "value": "#E84026"
     },
     {
+      "name": "signin_missed",
+      "value": "#E60012"
+    },
+    {
       "name": "success",
       "value": "#3F9C35"
     },
@@ -127,6 +139,10 @@
     {
       "name": "accent_pink",
       "value": "#E64A7B"
+    },
+    {
+      "name": "accent_teal",
+      "value": "#00897B"
     },
     {
       "name": "card_accent",

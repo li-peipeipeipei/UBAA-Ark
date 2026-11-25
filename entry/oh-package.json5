@@ -5,5 +5,7 @@
   "main": "",
   "author": "li-peipeipeipei",
   "license": "MIT",
-  "dependencies": {}
+  "dependencies": {
+    "libmnncaptcha.so": "file:./src/main/cpp/types/libmnncaptcha"
+  }
 }

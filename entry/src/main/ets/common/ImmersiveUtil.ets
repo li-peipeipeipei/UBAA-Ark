@@ -131,6 +131,58 @@ export function surfaceArgbHex(isDark: boolean): string {
   return hex;
 }
 
+let pageArgbCache: string = '';
+let pageArgbCacheDark: boolean | null = null;
+
+/**
+ * 页面底色（`app.color.page_background`）的 `#AARRGGBB` 值。
+ *
+ * 横向胶囊行两侧的「渐隐遮罩」必须用**与页面底色同 RGB、只降 alpha** 的颜色，
+ * 和 `surfaceArgbHex` 是同一个道理：RGB 不一致就会糊出一条灰带。
+ * 取资源真值（不写死），深色主题自动跟随。
+ */
+export function pageBackgroundArgbHex(isDark: boolean): string {
+  if (pageArgbCacheDark === isDark && pageArgbCache.length === 9) {
+    return pageArgbCache;
+  }
+  // 兜底值与 color.json 保持一致（深色 #000000 / 浅色 #F1F3F5）
+  let hex: string = isDark ? '#FF000000' : '#FFF1F3F5';
+  try {
+    hex = toArgbHex(GlobalContext.getContext().resourceManager.getColorSync($r('app.color.page_background').id));
+  } catch (err) {
+    Logger.warn('解析 page_background 颜色失败，用兜底值：' + (err as Error).message);
+  }
+  pageArgbCache = hex;
+  pageArgbCacheDark = isDark;
+  return hex;
+}
+
+let maskArgbCache: string = '';
+let maskArgbCacheDark: boolean | null = null;
+
+/**
+ * 悬浮底栏/顶部对称蒙层色（`app.color.tab_bar_mask`）的 `#AARRGGBB` 值。
+ *
+ * 底部 `HdsTabs.barFloatingStyle.gradientMask` 用的就是它（浅 #66F1F3F5 / 深 #CC000000）。
+ * 功能页顶部的对称蒙层要用**同一个色**（渐隐端配 `transparentOf()` 取同 RGB 的 alpha=0），
+ * 才和底部完全对称、深浅色都不渗灰带。取资源真值，深浅色自动跟随。
+ */
+export function tabBarMaskArgbHex(isDark: boolean): string {
+  if (maskArgbCacheDark === isDark && maskArgbCache.length === 9) {
+    return maskArgbCache;
+  }
+  // 兜底值与 color.json 保持一致（深色 #CC000000 / 浅色 #66F1F3F5）
+  let hex: string = isDark ? '#CC000000' : '#66F1F3F5';
+  try {
+    hex = toArgbHex(GlobalContext.getContext().resourceManager.getColorSync($r('app.color.tab_bar_mask').id));
+  } catch (err) {
+    Logger.warn('解析 tab_bar_mask 颜色失败，用兜底值：' + (err as Error).message);
+  }
+  maskArgbCache = hex;
+  maskArgbCacheDark = isDark;
+  return hex;
+}
+
 // 同色相的完全透明版本：#AARRGGBB 转成 #00RRGGBB
 export function transparentOf(argbHex: string): string {
   return argbHex.length === 9 ? '#00' + argbHex.substring(3) : '#00000000';

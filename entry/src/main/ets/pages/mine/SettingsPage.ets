@@ -9,6 +9,7 @@ import {
 } from '../../common/AppConfig';
 import { Logger } from '../../common/Logger';
 import { Toast } from '../../common/Toast';
+import { AccountEvents } from '../../common/AccountEvents';
 import { ApiService } from '../../network/ApiService';
 import { DiagnosticResult, NetworkDiagnostics } from '../../network/NetworkDiagnostics';
 import { RouteEngine } from '../../network/RouteEngine';
@@ -270,6 +271,10 @@ export struct SettingsPage {
                 .onChange((isOn: boolean) => {
                   this.demoMode = isOn;
                   TokenStore.setDemoMode(isOn);
+                  // 数据源整体切换（真实 ↔ 示例）：常驻页签里已有的数据全部作废重拉。
+                  // 不清的话课表会一直显示切换前的旧数据（开关不经过 persistLogin）。
+                  ApiService.invalidateAccountData();
+                  AccountEvents.notifyChanged();
                   Toast.show(isOn ? '示例数据已开启' : '示例数据已关闭');
                 })
             }

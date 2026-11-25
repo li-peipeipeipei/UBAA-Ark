@@ -8,6 +8,13 @@ import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { EmptyView, ErrorView, LoadingView } from '../../components/CommonViews';
 import { JudgeAssignmentSummary, JudgeStatus } from '../../model/ApiTypes';
+import { PageCache } from '../../common/PageCache';
+import { OfflineKey } from '../../common/OfflineCache';
+
+/** 希冀作业首帧缓存内容。visible / query / onlyUnfinished 等 UI 态不缓存。 */
+interface JudgeCache {
+  assignments: JudgeAssignmentSummary[];
+}
 
 function pad2(value: number): string {
   return value < 10 ? '0' + value.toString() : value.toString();
@@ -77,8 +84,23 @@ export struct JudgePage {
     this.load();
   }
 
+  /** 列表缓存 key：两种模式的数据不同，分开存。 */
+  private cacheKey(): string {
+    return OfflineKey.JUDGE_PREFIX + (this.includeExpired ? 'all' : 'active');
+  }
+
   private async load(): Promise<void> {
-    this.loadState = LoadState.LOADING;
+    // 冷启动首帧：先同步读上次缓存，命中就直接进 SUCCESS
+    const cached: JudgeCache | null = PageCache.load<JudgeCache>(this.cacheKey(), PageCache.TTL_HALF_DAY);
+    if (cached !== null && cached.assignments.length > 0) {
+      this.assignments = cached.assignments;
+      // visible 是派生 UI 态，不缓存：按当前筛选 / 关键词重算
+      this.rebuild();
+      this.loadState = LoadState.SUCCESS;
+    }
+    if (this.loadState !== LoadState.SUCCESS) {
+      this.loadState = LoadState.LOADING;
+    }
     this.loadingHint = this.includeExpired
       ? '正在获取全部作业（含已截止）…' : '正在获取希冀作业…';
     try {
@@ -86,10 +108,15 @@ export struct JudgePage {
       this.assignments = response.assignments;
       this.rebuild();
       this.loadState = LoadState.SUCCESS;
+      // 动态 key，登记以便换账号清理
+      PageCache.save(this.cacheKey(), { assignments: this.assignments } as JudgeCache, true);
     } catch (error) {
       this.errorMessage = error instanceof ApiError
         ? (error as ApiError).friendlyMessage() : '希冀作业加载失败';
-      this.loadState = LoadState.ERROR;
+      // 缓存命中过时失败不切 ERROR，保留已渲染的本地内容
+      if (this.loadState !== LoadState.SUCCESS) {
+        this.loadState = LoadState.ERROR;
+      }
       Logger.error('希冀作业加载失败：' + (error as Error).message);
     }
   }

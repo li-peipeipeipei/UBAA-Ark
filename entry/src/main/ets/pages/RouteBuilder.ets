@@ -12,7 +12,7 @@ import { FeatureHero } from '../common/FeatureHero';
 import { KEY_HERO_PAGE_OPACITY } from '../common/HeroMorph';
 import curves from '@ohos.curves';
 import { Logger } from '../common/Logger';
-import { GradeHeaderModel, GradeTermTitle } from '../components/GradeHeader';
+import { GradeHeaderModel } from '../components/GradeHeader';
 import { ExamPage } from './academic/ExamPage';
 import { GradePage } from './academic/GradePage';
 import { ClassroomPage } from './academic/ClassroomPage';
@@ -23,6 +23,7 @@ import { JudgeDetailPage } from './evaluation/JudgeDetailPage';
 import { IhomePage } from './ihome/IhomePage';
 import { IhomeDetailPage } from './ihome/IhomeDetailPage';
 import { SpocPage } from './spoc/SpocPage';
+import { SpocWebPage } from './spoc/SpocWebPage';
 import { FinancePage } from './finance/FinancePage';
 import { NetworkPage } from './campus/NetworkPage';
 import { CloudPrintPage } from './campus/CloudPrintPage';
@@ -38,67 +39,28 @@ import { LibBookBookingsPage } from './library/LibBookBookingsPage';
 import { UserInfoPage } from './mine/UserInfoPage';
 import { SettingsPage } from './mine/SettingsPage';
 import { AboutPage } from './mine/AboutPage';
+import { IconSwitchPage } from './mine/IconSwitchPage';
 import { PrivacyPage } from './mine/PrivacyPage';
 import { LicensePage } from './mine/LicensePage';
+import { ScanWebPage } from './scan/ScanWebPage';
 import { WidePlaceholder } from '../components/WidePlaceholder';
 import { WIDE_PLACEHOLDER_ROUTE } from '../common/AppRouter';
 
 /**
- * 成绩页的 NavDestination 外壳（**必须**做成组件）。
+ * 成绩页的 NavDestination 外壳。
  *
- * ## 为什么不能像其它二级页那样在 routeBuilder 里直接写
+ * 标题栏与**功能页入口完全同款**：只显示「成绩查询」四个字，走与其它二级页
+ * 相同的 `destTitleBar`。学期切换器已移进页面内的「本学期」卡片，不再占标题栏。
  *
- * 成绩页的标题栏要放「学期名 + ← →」，而 HDS 的 `content.stackBuilder` 是由
- * 原生侧（hdsBaseComponent.js）回调执行的。回调里的 @Builder 依赖
- * `this.observeComponentCreation2`：
- *
- * - 在**普通函数**里写箭头函数 → `this` 是 undefined → 闪退；
- * - 在 routeBuilder（全局 @Builder）里包一层全局 @Builder → 同样没有组件实例 →
- *   `Cannot read property observeComponentCreation2 of undefined`。
- *
- * 真机实测两种写法都会在点「成绩查询」时必现。把整个 destination 收进一个
- * @Component，让箭头函数捕获组件实例（与 MainPage.scheduleTitleBar 同一套写法），
- * 标题栏里的 @Builder 才能正常创建组件。
+ * 仍做成独立组件：GradePage 需要共享的 `GradeHeaderModel`（页面内部用它驱动
+ * 学期切换与加载），全局 @Builder 里没有组件实例可持有，所以放在这里用 @State。
  */
 @Component
 struct GradeDestination {
   stack: NavPathStack = new NavPathStack();
 
-  /** 标题栏与页面共用同一个 @Observed 实例（换学期时两边一起刷新）。 */
+  /** 页面内部的学期状态（标题栏不再展示学期，仅供 GradePage 使用）。 */
   @State private header: GradeHeaderModel = new GradeHeaderModel();
-
-  @Builder
-  termTitle() {
-    GradeTermTitle({ model: this.header });
-  }
-
-  private titleBarOptions(): HdsNavigationTitleBarOptions {
-    return {
-      avoidLayoutSafeArea: true,
-      enableComponentSafeArea: true,
-      style: {
-        originalStyle: {
-          backgroundStyle: {
-            backgroundColor: Color.Transparent
-          }
-        },
-        scrollEffectOpts: {
-          enableScrollEffect: true,
-          scrollEffectType: ScrollEffectType.GRADIENT_BLUR
-        },
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.ADAPTIVE,
-          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
-        }
-      },
-      content: {
-        // 箭头函数捕获本组件实例，HDS 原生回调时 @Builder 仍在实例上执行
-        stackBuilder: (): void => {
-          this.termTitle();
-        }
-      }
-    };
-  }
 
   build() {
     HdsNavDestination() {
@@ -106,18 +68,19 @@ struct GradeDestination {
         GradePage({ header: this.header })
       }
     }
-    .titleBar(this.titleBarOptions())
-    // 同上：状态栏内容色显式托管给 HDS（否则下拉滚动时被默认白覆盖）
+    // 与功能页（nativeRouteBuilder 的 GradeNativeDestination）显示同一标题内容。
+    .titleBar(destTitleBar('成绩查询'))
+    // 状态栏内容色显式托管给 HDS（否则下拉滚动时被默认白覆盖）
     .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
-    // 显式接管返回：分栏下 HDS 自己画的返回按钮不一定能弹栈（实测无效），
-    // 由目的地主动 pop 才可靠；返回 true 表示事件已消费、不再冒泡到系统。
+    // 显式接管返回：由目的地主动 pop 才可靠；返回 true 表示事件已消费、不再冒泡到系统。
     .onBackPressed(() => {
       AppRouter.back(this.stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面。
+    .backgroundColor(AppColor.pageBackground)
   }
 }
 
@@ -224,6 +187,13 @@ struct DestShell {
     }
     .width('100%')
     .height('100%')
+    // ⚠️ 内容外壳本身必须铺不透明底色，不能只靠 HdsNavDestination 的 backgroundColor。
+    // 转场时系统渲染的是 destination 的内容树；底色若只在外壳（destination）上、
+    // 不在参与平移的内容上，新页面从右滑入尚未落位时左缘那一段就是透明的 ——
+    // 横屏下它正好落在「侧栏右边 ↔ 新页面左缘」之间，露出底下的旧页面一条，
+    // 落位后底色生效就「闪一下又消失」（竖屏从 x=0 起、无侧栏参照故看不出）。
+    // 底色铺在这层内容上，随页面一起平移，任何一帧都不透。
+    .backgroundColor(AppColor.pageBackground)
     .opacity(this.pageOpacity)
   }
 }
@@ -244,9 +214,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.GRADE) {
     GradeDestination({ stack: stack })
   } else if (name === RouteName.CLASSROOM) {
@@ -263,9 +236,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.IHOME) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -280,9 +256,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.IHOME_DETAIL) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -297,9 +276,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.JUDGE) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -314,9 +296,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.JUDGE_DETAIL) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -331,9 +316,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.EVALUATION) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -348,9 +336,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.SIGNIN) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -365,13 +356,16 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.SPOC) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
-        SpocPage()
+        SpocPage({ stack: stack })
       }
     }
     .titleBar(destTitleBar('SPOC 作业'))
@@ -382,9 +376,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.FINANCE) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -397,7 +394,7 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor(Color.Transparent)
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.CLOUD_PRINT) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -410,7 +407,7 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor(Color.Transparent)
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.NETWORK) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -423,7 +420,7 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    .backgroundColor(Color.Transparent)
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.YGDK) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -438,9 +435,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.BYKC) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -455,9 +455,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.BYKC_COURSES) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -472,9 +475,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.BYKC_CHOSEN) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -489,9 +495,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.BYKC_STATISTICS) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -506,9 +515,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.BYKC_DETAIL) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -523,9 +535,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.LIBBOOK_HOME) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -540,9 +555,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.LIBBOOK_RESERVE) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -557,9 +575,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.LIBBOOK_BOOKINGS) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -574,9 +595,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.USER_INFO) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -591,9 +615,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.SETTINGS) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -608,9 +635,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.ABOUT) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -625,9 +655,25 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
+  } else if (name === RouteName.ICON_SWITCH) {
+    HdsNavDestination() {
+      DestShell({ stack: stack }) {
+        IconSwitchPage({ stack: stack })
+      }
+    }
+    .titleBar(destTitleBar('切换图标'))
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.PRIVACY) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -642,9 +688,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === RouteName.LICENSE) {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -659,9 +708,44 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
+  } else if (name === RouteName.SCAN_WEB) {
+    // 扫一扫打开的网页：标题栏沿用 HDS 官方沉浸光感（含系统返回按钮），
+    // 内容区交给 Web 铺满。手机全屏；平板横屏的左侧导航避让由 MainPage 的
+    // HdsTabs padding 统一处理，这里不重复留白。
+    HdsNavDestination() {
+      DestShell({ stack: stack }) {
+        ScanWebPage()
+      }
+    }
+    .titleBar(destTitleBar('扫一扫'))
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(AppColor.pageBackground)
+  } else if (name === RouteName.SPOC_WEB) {
+    // SPOC 网页提交：与扫一扫网页完全同构——HDS 官方标题栏（含系统返回键），
+    // 进出走 AppRouter.push/back 的系统右滑入/右滑出。平板横屏的左侧导航避让
+    // 由 MainPage 的 HdsTabs padding 统一处理，这里不重复留白。
+    HdsNavDestination() {
+      DestShell({ stack: stack }) {
+        SpocWebPage({ stack: stack })
+      }
+    }
+    .titleBar(destTitleBar('网页提交'))
+    .systemBarStyle(systemBarStyleFor(currentIsDark()), systemBarStyleFor(currentIsDark()))
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(AppColor.pageBackground)
   } else if (name === WIDE_PLACEHOLDER_ROUTE) {
     // Split 右栏栈空时的占位页；非分栏形态从不 push 这个名字。
     // hideBackButton：占位页不是真实页面，给它一个「返回」按钮没有语义，
@@ -680,9 +764,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       return true;
     })
     .hideBackButton(true)
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   } else {
     HdsNavDestination() {
       DestShell({ stack: stack }) {
@@ -704,9 +791,12 @@ export function routeBuilder(name: string, param: object, stack: NavPathStack) {
       AppRouter.back(stack);
       return true;
     })
-    // 背景交给页面自己的根容器（每个二级页都铺了 pageBackground）——
-    // 目的地容器保持透明，「卡片放大 / 缩回」时下层功能页网格才透得出来。
-    .backgroundColor(Color.Transparent)
+    // 目的地**必须铺本页底色**（不能留透明）：
+    // HDS 标题栏的材质是半透明玻璃，转场收尾那一帧它会重新采样背后内容 ——
+    // 目的地透明时采到的是**下层旧页面**，标题栏那一条就会闪一帧上一页的画面
+    // （真机实测：转场动画结束时闪一下即消失）。底色压在标题栏之下、内容之上，
+    // 既不挡内容穿入标题栏，又保证任何一帧的采样源都是本页自己的底色。
+    .backgroundColor(AppColor.pageBackground)
   }
 }
 
@@ -888,6 +978,28 @@ export function nativeFeatureRoute(name: string, param: object, stack: NavPathSt
     }
     .hideTitleBar(true)
     // 原生 Navigation/NavDestination 的 systemBarStyle 只收一个参数
+    .systemBarStyle(systemBarStyleFor(currentIsDark()))
+    .onBackPressed(() => {
+      AppRouter.back(stack);
+      return true;
+    })
+    .backgroundColor(Color.Transparent)
+  } else if (name === RouteName.SPOC_WEB) {
+    // SPOC 网页提交（窄屏功能页签的原生导航分支）：hero:false 表示这是页内二级页，
+    // 不走「缩回卡片」动画，POP 时由系统默认右滑出，与扫一扫网页观感一致。
+    // 内容由 FeatureDestBody 的 SPOC_WEB 分支渲染 SpocWebPage。
+    NavDestination() {
+      NativeHeroDest({
+        title: '网页提交',
+        hero: false,
+        routeName: RouteName.SPOC_WEB,
+        stack: stack,
+        onBack: () => {
+          AppRouter.back(stack);
+        }
+      })
+    }
+    .hideTitleBar(true)
     .systemBarStyle(systemBarStyleFor(currentIsDark()))
     .onBackPressed(() => {
       AppRouter.back(stack);

@@ -90,11 +90,24 @@ struct Index {
       }
       const apiError = error as ApiError;
       if (apiError instanceof ApiError && apiError.status === 401) {
+        // 会话失效 ≠ 必须手输密码：已保存凭据时先在后台补登一次
+        // （换网后旧路线的会话失效是最常见的场景，原版在这里是完全无感的）
+        // 上游已明确 401：这是用户需要的恢复动作，跳过补登冷却窗口
+        const restored: boolean = await ApiService.ensureSession(undefined, true);
+        if (seq !== this.verifySeq) {
+          return;
+        }
+        if (restored) {
+          Logger.info('会话已用已保存凭据静默恢复');
+          lastVerifiedAt = Date.now();
+          return;
+        }
         TokenStore.clear();
-        TokenStore.clearAllLocalSessions();
+        // ⚠️ 只清当前路线：另一条路线的槽位可能还活着，清全量会让下次换网白白重登
+        TokenStore.clearLocalSession();
         // 已确认失效：清掉时间戳，下次进主页（重新登录后）立刻再校验一次
         lastVerifiedAt = 0;
-        Logger.warn('会话已失效，需要重新登录');
+        Logger.warn('会话已失效且无法静默恢复，需要重新登录');
         this.loggedIn = false;
       } else {
         // 网络抖动：不打扰用户，数据页自己会重试

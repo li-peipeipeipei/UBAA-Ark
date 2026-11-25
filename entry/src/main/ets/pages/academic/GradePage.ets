@@ -13,6 +13,8 @@ import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { ErrorView, LoadingView } from '../../components/CommonViews';
 import { GradeSummaryCard } from '../../components/GradeSummaryCard';import { GradeHeaderModel } from '../../components/GradeHeader';
 import { Grade, GradeData, Term } from '../../model/ApiTypes';
+import { isTwoPane, KEY_BREAKPOINT } from '../../common/Breakpoint';
+import { PullToRefresh } from '../../components/PullToRefresh';
 
 /** 离线缓存里的成绩（对象字面量不能赋给 Record，须有具名 interface）。 */
 interface GradeOffline {
@@ -106,6 +108,14 @@ export struct GradePage {
   private termGrades: Map<string, Grade[]> = new Map<string, Grade[]>();
   /** 后台补齐全学期成绩的开关，防止重复起。 */
   private allLoading: boolean = false;
+
+  /**
+   * 当前宽度断点：决定两张概览卡是否并排、课程卡一行放几门。
+   *
+   * 用断点而不是量自身宽度：课程卡是等宽栅格（12 栅格），lg 半宽 / xxl 三分之一，
+   * 与容器宽度的关系是线性的，不需要逐帧测量。
+   */
+  @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
 
   aboutToAppear(): void {
     // 顶栏箭头 → 切学期（回调挂在共享模型上，标题栏与页面拿到的是同一个实例）
@@ -383,6 +393,49 @@ export struct GradePage {
 
   /* ------------------------------ 视图 ------------------------------ */
 
+  /** 是否并排（lg / xxl）—— 平板竖屏与手机仍单列。 */
+  private twoPaneMode(): boolean {
+    return isTwoPane(this.bp);
+  }
+
+  /**
+   * 「全部成绩」（跨学期汇总）—— **单列形态**用，三行指标（与原版一致）。
+   *
+   * 平板并排形态不走这里：那张要补显示课程数 / 总学分才能与「本学期」等高，
+   * 见 `build` 两栏分支里的内联构造。
+   */
+  @Builder
+  allSummaryCard() {
+    GradeSummaryCard({
+      title: '全部成绩',
+      showCourseAndCredits: false,
+      loading: this.summaryLoading,
+      courseCountText: '',
+      creditsText: '',
+      gpaText: this.allSummary.gpa,
+      weightedText: this.allSummary.weighted,
+      arithmeticText: this.allSummary.arithmetic
+    })
+  }
+
+  /** 「本学期」（右上角挂学期切换：学期名 + 前后箭头）。 */
+  @Builder
+  termSummaryCard() {
+    GradeSummaryCard({
+      title: '本学期',
+      showCourseAndCredits: true,
+      loading: false,
+      courseCountText: this.termSummary.courseCount,
+      creditsText: this.termSummary.credits,
+      gpaText: this.termSummary.gpa,
+      weightedText: this.termSummary.weighted,
+      arithmeticText: this.termSummary.arithmetic,
+      trailing: (): void => {
+        this.termSwitch();
+      }
+    })
+  }
+
   /** 课程卡右上角的成绩徽章（★ + 分数）。 */
   @Builder
   gradeBadge(item: Grade) {
@@ -503,6 +556,8 @@ export struct GradePage {
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
+          // 标题固定占两行：两列并排时，一行标题的卡不会比两行标题的卡矮一截
+          .constraintSize({ minHeight: AppSize.cardTitleTwoLines(AppFont.subtitle) })
         this.gradeBadge(item)
       }
       .width('100%')
@@ -542,7 +597,9 @@ export struct GradePage {
     return '';
   }
 
-  build() {
+  /** 原页面内容。下拉刷新由外层 `build()` 的 PullToRefresh 提供。 */
+  @Builder
+  pageContent() {
     Scroll() {
       Column({ space: AppSize.gap }) {
         if (this.offlineNote.length > 0) {
@@ -561,31 +618,45 @@ export struct GradePage {
             }
           })
         } else {
-          // 全部成绩（跨学期汇总）
-          GradeSummaryCard({
-            title: '全部成绩',
-            showCourseAndCredits: false,
-            loading: this.summaryLoading,
-            courseCountText: '',
-            creditsText: '',
-            gpaText: this.allSummary.gpa,
-            weightedText: this.allSummary.weighted,
-            arithmeticText: this.allSummary.arithmetic
-          })
-          // 本学期（右上角挂学期切换：学期名 + 前后箭头）
-          GradeSummaryCard({
-            title: '本学期',
-            showCourseAndCredits: true,
-            loading: false,
-            courseCountText: this.termSummary.courseCount,
-            creditsText: this.termSummary.credits,
-            gpaText: this.termSummary.gpa,
-            weightedText: this.termSummary.weighted,
-            arithmeticText: this.termSummary.arithmetic,
-            trailing: (): void => {
-              this.termSwitch();
+          if (this.twoPaneMode()) {
+            // 平板横屏：两张概览卡并排 —— 「全部」与「本学期」是同一层级的两组数，
+            // 上下堆叠时每张都占满 965vp，数字之间的关联反而看不出来。
+            Row({ space: AppSize.gap }) {
+              Column() {
+                /**
+                 * 「全部成绩」的并排版本：**内联构造**并显式 `showCourseAndCredits: true`。
+                 *
+                 * 为什么不复用 `allSummaryCard()`：那个 Builder 是单列版（三行），
+                 * 靠断点判断要不要多一行的话，构造参数写在 `@Builder` 内部会有
+                 * 「不随断点重新求值」的风险 —— 两张卡就会差一整行。这里写死五格，
+                 * 与隔壁「本学期」行数完全一致。
+                 */
+                GradeSummaryCard({
+                  title: '全部成绩',
+                  showCourseAndCredits: true,
+                  loading: this.summaryLoading,
+                  courseCountText: this.allSummary.courseCount,
+                  creditsText: this.allSummary.credits,
+                  gpaText: this.allSummary.gpa,
+                  weightedText: this.allSummary.weighted,
+                  arithmeticText: this.allSummary.arithmetic
+                })
+              }
+              .layoutWeight(1)
+
+              Column() {
+                this.termSummaryCard()
+              }
+              .layoutWeight(1)
             }
-          })
+            .width('100%')
+            .alignItems(VerticalAlign.Top)
+          } else {
+            // 全部成绩（跨学期汇总）
+            this.allSummaryCard()
+            // 本学期（右上角挂学期切换：学期名 + 前后箭头）
+            this.termSummaryCard()
+          }
 
           if (this.grades.length === 0) {
             Text('暂无成绩')
@@ -593,9 +664,20 @@ export struct GradePage {
               .fontColor(AppColor.textTertiary)
               .padding({ top: AppSize.gapLarge, bottom: AppSize.gapLarge })
           } else {
-            ForEach(this.grades, (item: Grade, index: number) => {
-              this.gradeCard(item)
-            }, (item: Grade, index: number) => this.courseKey(item) + '-' + index.toString())
+            /**
+             * 课程卡按 12 栅格排：手机 / 平板竖屏整行一门，lg 两门，xxl 三门。
+             *
+             * 用 `GridRow`（流式容器）而不是 `Grid`：`Grid` 放进 `Scroll` 必须给定高度，
+             * 否则只按首行高度布局；`GridRow` 的高度由内容撑开，接下一页无需另算。
+             */
+            GridRow({ columns: 12, gutter: { x: AppSize.gap, y: AppSize.gap } }) {
+              ForEach(this.grades, (item: Grade, index: number) => {
+                GridCol({ span: { xs: 12, sm: 12, md: 12, lg: 6, xl: 6, xxl: 4 } }) {
+                  this.gradeCard(item)
+                }
+              }, (item: Grade, index: number) => this.courseKey(item) + '-' + index.toString())
+            }
+            .width('100%')
           }
         }
 
@@ -634,5 +716,14 @@ export struct GradePage {
     return this.courseCode(item) + '-' + this.courseName(item) + '-' +
       (item.XF !== undefined ? item.XF.toString() : '') + '-' +
       (item.XSZCJ !== undefined ? item.XSZCJ : '');
+  }
+
+  build() {
+    PullToRefresh({
+      onRefresh: () => this.load(),
+      contentBuilder: () => {
+        this.pageContent();
+      }
+    })
   }
 }

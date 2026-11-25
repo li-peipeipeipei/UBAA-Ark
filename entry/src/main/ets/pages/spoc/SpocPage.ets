@@ -1,7 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { webview } from '@kit.ArkWeb';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { LoadState } from '../../common/AppRouter';
+import { AppRouter, LoadState, RouteName } from '../../common/AppRouter';
 import { Logger } from '../../common/Logger';
 import { Toast } from '../../common/Toast';
 import { GlobalContext } from '../../common/GlobalContext';
@@ -11,11 +11,27 @@ import { ApiService } from '../../network/ApiService';
 import { LocalSpocService } from '../../network/LocalSpocService';
 import { AppColor, AppFont, AppMaterial, AppSize } from '../../components/AppTheme';
 import { MaterialCardLayer } from '../../components/MaterialCardLayer';
+import { ChipsEdgeFade } from '../../components/ChipsEdgeFade';
+import { FilterChip } from '../../components/FilterChip';
 import { immersiveMaterialActive } from '../../common/SystemMaterial';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { EmptyView, ErrorView, LoadingView } from '../../components/CommonViews';
 import { SpocAssignment, SpocAssignmentDetail } from '../../model/ApiTypes';
+import { PageCache } from '../../common/PageCache';
+import { OfflineKey } from '../../common/OfflineCache';
+import { PullToRefresh } from '../../components/PullToRefresh';
 
+/** SPOC 首帧缓存内容。纯数据，可 JSON 序列化。 */
+interface SpocCache {
+  termName: string;
+  assignments: SpocAssignment[];
+}
+
+/** 作业筛选维度（列表标题下方的筛选胶囊，两组内互斥、组间可叠加）。 */
+const SPOC_FILTER_DONE: string = '已提交';
+const SPOC_FILTER_UNDONE: string = '未提交';
+const SPOC_FILTER_EXPIRED: string = '已过期';
+const SPOC_FILTER_ACTIVE: string = '未过期';
 function pad2(value: number): string {
   return value < 10 ? '0' + value.toString() : value.toString();
 }
@@ -249,6 +265,15 @@ export struct SpocPage {
   @State private detail: SpocAssignmentDetail = emptyDetail();
   /** 被点开的作业所属课程名。详情接口不返回课程名，从列表项带过来。 */
   @State private detailCourse: string = '';
+  /**
+   * 选中的筛选维度（空 = 不筛选）。
+   *
+   * 四项常驻，取消选中只回落到未选中态。组内互斥：「已提交 / 未提交」二选一、
+   * 「已过期 / 未过期」二选一；两组之间仍按「与」叠加。
+   */
+  @State private spocFilters: string[] = [];
+  /** 筛选胶囊行的实测高度（两侧渐隐遮罩据此定高）。 */
+  @State private chipsRowH: number = 33;
   /** 宽屏分支（键名与 common/Breakpoint.ets 的 KEY_IS_WIDE_SCREEN 一致）。 */
   @StorageProp('isWideScreen') private isWide: boolean = false;
 
@@ -266,16 +291,31 @@ export struct SpocPage {
   }
 
   private async load(): Promise<void> {
-    this.loadState = LoadState.LOADING;
+    // 冷启动首帧：先同步读上次缓存，命中就直接进 SUCCESS，首帧渲染真实数据
+    const cached: SpocCache | null = PageCache.load<SpocCache>(OfflineKey.SPOC, PageCache.TTL_HALF_DAY);
+    if (cached !== null && cached.assignments.length > 0) {
+      this.termName = cached.termName;
+      this.assignments = cached.assignments;
+      this.loadState = LoadState.SUCCESS;
+    }
+    if (this.loadState !== LoadState.SUCCESS) {
+      this.loadState = LoadState.LOADING;
+    }
     try {
       const data = await ApiService.fetchSpocAssignments();
       this.termName = data.termName;
       this.assignments = data.assignments;
       this.loadState = LoadState.SUCCESS;
+      // 拉新成功：写回缓存，下次冷启动首帧就是它
+      PageCache.save(OfflineKey.SPOC,
+        { termName: this.termName, assignments: this.assignments } as SpocCache);
     } catch (error) {
       this.errorMessage = error instanceof ApiError ?
         (error as ApiError).friendlyMessage() : 'SPOC 作业加载失败';
-      this.loadState = LoadState.ERROR;
+      // 缓存命中过时失败不切 ERROR，保留已渲染的本地内容
+      if (this.loadState !== LoadState.SUCCESS) {
+        this.loadState = LoadState.ERROR;
+      }
       Logger.error('SPOC 作业加载失败：' + (error as Error).message);
     }
   }
@@ -352,6 +392,169 @@ export struct SpocPage {
     return item.dueTime !== undefined && item.dueTime.length > 0 && item.dueTime < nowText();
   }
 
+  /** 某一维度是否已被选中。 */
+  private hasSpocFilter(label: string): boolean {
+    return this.spocFilters.indexOf(label) >= 0;
+  }
+
+  /**
+   * 点一下切换某个维度（整体替换数组，保证 @State 变更可观察）。
+   *
+   * 新选中时先清掉同组的另一项：已提交 ⇄ 未提交、已过期 ⇄ 未过期。
+   * 再点当前项则只取消自己，不会连另一项一起选上。
+   */
+  private toggleSpocFilter(label: string): void {
+    const next: string[] = [];
+    let found: boolean = false;
+    for (let i = 0; i < this.spocFilters.length; i++) {
+      if (this.spocFilters[i] === label) {
+        found = true;
+      } else {
+        next.push(this.spocFilters[i]);
+      }
+    }
+    if (!found) {
+      const rival: string = label === SPOC_FILTER_DONE ? SPOC_FILTER_UNDONE :
+        (label === SPOC_FILTER_UNDONE ? SPOC_FILTER_DONE :
+          (label === SPOC_FILTER_EXPIRED ? SPOC_FILTER_ACTIVE : SPOC_FILTER_EXPIRED));
+      for (let i = next.length - 1; i >= 0; i--) {
+        if (next[i] === rival) {
+          next.splice(i, 1);
+        }
+      }
+      next.push(label);
+    }
+    this.spocFilters = next;
+  }
+
+  /**
+   * 单个作业是否命中当前筛选。
+   *
+   * 组内互斥、组间「与」组合：
+   * 「已提交 + 未过期」= 已提交且尚未到期；两组都不选即全部。
+   */
+  private matchesSpocFilters(item: SpocAssignment): boolean {
+    const overdue: boolean = this.isOverdue(item);
+    for (let i = 0; i < this.spocFilters.length; i++) {
+      const key: string = this.spocFilters[i];
+      if (key === SPOC_FILTER_DONE && !item.submitted) {
+        return false;
+      }
+      if (key === SPOC_FILTER_UNDONE && item.submitted) {
+        return false;
+      }
+      if (key === SPOC_FILTER_EXPIRED && !overdue) {
+        return false;
+      }
+      if (key === SPOC_FILTER_ACTIVE && overdue) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** 实际渲染的作业列表（筛选条件为空时原样返回）。 */
+  private visibleAssignments(): SpocAssignment[] {
+    if (this.spocFilters.length === 0) {
+      return this.assignments;
+    }
+    const out: SpocAssignment[] = [];
+    for (let i = 0; i < this.assignments.length; i++) {
+      if (this.matchesSpocFilters(this.assignments[i])) {
+        out.push(this.assignments[i]);
+      }
+    }
+    return out;
+  }
+
+  /* ------------------------------ 筛选胶囊 ------------------------------ */
+
+  /** 胶囊行两侧渐隐（高度由该行 onAreaChange 上报，见 components/ChipsEdgeFade）。 */
+  @Builder
+  chipsEdgeFade() {
+    // ⚠️ `hitTestBehavior` 必须**同时**在调用处再设一遍：自定义组件节点自己也是
+    // 一层参与触摸测试的节点，只在组件内部给根容器设 None 时，
+    // 组件节点仍会吃掉整条胶囊行的点击（表现为「胶囊点不动」）。
+    ChipsEdgeFade({ fadeHeight: this.chipsRowH })
+      .hitTestBehavior(HitTestMode.None)
+  }
+
+  /**
+   * 「共 N 次作业」下面一行的筛选胶囊。
+   *
+   * 样式、✓、弹簧动画全部复用 `components/FilterChip`（博雅课程同款）；
+   * 四项**常驻**不随选中态增删，因此不加任何 `transition`。
+   *
+   * ⚠️ 这里必须铺开写、不能用 `ForEach(SPOC_FILTERS, ...)`：
+   * ForEach 的 itemGenerator 只在键集合变化时重跑，固定四项传 `@Prop active`
+   * 会停在首帧；且组内互斥时另一个胶囊的选中态不会刷新（项目踩过）。
+   * 四张胶囊都用 `controlled: true`，选中态完全由 `spocFilters` 决定。
+   */
+  @Builder
+  assignmentFilterBar() {
+    Scroll() {
+      Row() {
+        FilterChip({
+          label: SPOC_FILTER_DONE,
+          controlled: true,
+          active: this.hasSpocFilter(SPOC_FILTER_DONE),
+          onTap: () => {
+            animateTo({ curve: curves.responsiveSpringMotion(0.25, 0.7) }, () => {
+              this.toggleSpocFilter(SPOC_FILTER_DONE);
+            });
+          }
+        })
+        FilterChip({
+          label: SPOC_FILTER_UNDONE,
+          controlled: true,
+          active: this.hasSpocFilter(SPOC_FILTER_UNDONE),
+          onTap: () => {
+            animateTo({ curve: curves.responsiveSpringMotion(0.25, 0.7) }, () => {
+              this.toggleSpocFilter(SPOC_FILTER_UNDONE);
+            });
+          }
+        })
+        FilterChip({
+          label: SPOC_FILTER_EXPIRED,
+          controlled: true,
+          active: this.hasSpocFilter(SPOC_FILTER_EXPIRED),
+          onTap: () => {
+            animateTo({ curve: curves.responsiveSpringMotion(0.25, 0.7) }, () => {
+              this.toggleSpocFilter(SPOC_FILTER_EXPIRED);
+            });
+          }
+        })
+        FilterChip({
+          label: SPOC_FILTER_ACTIVE,
+          controlled: true,
+          active: this.hasSpocFilter(SPOC_FILTER_ACTIVE),
+          onTap: () => {
+            animateTo({ curve: curves.responsiveSpringMotion(0.25, 0.7) }, () => {
+              this.toggleSpocFilter(SPOC_FILTER_ACTIVE);
+            });
+          }
+        })
+      }
+      // 默认缩进放在**滚动内容**里：静止时首尾胶囊与上方文字对齐，
+      // 滑动时这段留白跟着滚走，胶囊能真正贴到屏幕边缘
+      .padding({ left: AppSize.pagePadding, right: AppSize.pagePadding })
+    }
+    .width('100%')
+    .scrollBar(BarState.Off)
+    .scrollable(ScrollDirection.Horizontal)
+    .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+    // 胶囊整体居中（六处胶囊行统一要求）
+    .align(Alignment.Center)
+    .clip(false)
+    .onAreaChange((_old: Area, now: Area) => {
+      const height: number = Number(now.height);
+      if (height > 0 && Math.abs(height - this.chipsRowH) > 0.5) {
+        this.chipsRowH = height;
+      }
+    })
+    .overlay(this.chipsEdgeFade(), { align: Alignment.Center })
+  }
+
   /** 列表项。 */
   @Builder
   assignmentItem(item: SpocAssignment) {
@@ -414,9 +617,11 @@ export struct SpocPage {
         await LocalSpocService.assignmentWebUrl(assignmentId) : '';
       AppStorage.setOrCreate('spocWebLogin', loginUrl);
       AppStorage.setOrCreate('spocWebDetail', detailUrl);
-      // 只需把状态打开；返回键优先级由真正渲染这层浮层的 MainPage 负责登记
-      // （见 MainPage.onSpocWebOpenChange）——页面这边登记会在自身销毁时悬空。
-      AppStorage.setOrCreate('spocWebOpen', true);
+      // 走真实导航压栈：新页由 HdsNavDestination 渲染，进出是系统右滑入/右滑出，
+      // 与扫一扫网页同一种动画（不再是 MainPage 浮层的组件 transition）。
+      // 用 push 而非 open —— 与「博雅课程列表→详情」一致，不污染「最近使用」。
+      // this.stack 由 RouteBuilder / FeatureDestBody 两处创建点透传（见 SpocPage.stack）。
+      AppRouter.push(this.stack, RouteName.SPOC_WEB);
     } catch (error) {
       Logger.warn('准备 SPOC 网页失败：' + (error as Error).message);
       Toast.show('打开 SPOC 网页失败，请稍后重试');
@@ -745,9 +950,13 @@ export struct SpocPage {
     .backgroundColor(AppColor.pageBackground)
   }
 
-  build() {
+  /** 原页面内容。下拉刷新由外层 `build()` 的 PullToRefresh 提供。 */
+  @Builder
+  pageContent() {
     Stack({ alignContent: Alignment.Center }) {
     Scroll() {
+      // ⚠️ **这一层不能有左右 padding**：胶囊行要做成「0 → 屏幕宽」的全出血，
+      // 全靠它是 Scroll 的直接父级。左右留白下放到各子块（见 ChipsEdgeFade 文档）。
       Column({ space: AppSize.gap }) {
         if (this.loadState === LoadState.LOADING) {
           LoadingView({ message: '正在获取 SPOC 作业…' })
@@ -766,10 +975,22 @@ export struct SpocPage {
               .fontSize(AppFont.caption)
               .fontColor(AppColor.textTertiary)
               .width('100%')
+              .padding({ left: AppSize.pagePadding, right: AppSize.pagePadding })
           }
-          ForEach(this.assignments, (item: SpocAssignment) => {
-            this.assignmentItem(item)
-          }, (item: SpocAssignment) => item.assignmentId + item.title)
+          // 标题下一行的筛选胶囊（已提交 / 未提交 / 已过期 / 未过期）：全出血
+          this.assignmentFilterBar()
+          if (this.visibleAssignments().length === 0) {
+            EmptyView({ message: '没有符合筛选条件的作业' })
+          } else {
+            ForEach(this.visibleAssignments(), (item: SpocAssignment) => {
+              // 卡片自己带左右留白（父级已经没有 padding 了）
+              Column() {
+                this.assignmentItem(item)
+              }
+              .width('100%')
+              .padding({ left: AppSize.pagePadding, right: AppSize.pagePadding })
+            }, (item: SpocAssignment) => item.assignmentId + item.title)
+          }
         }
 
         Blank()
@@ -777,8 +998,6 @@ export struct SpocPage {
       }
       .width('100%')
       .padding({
-        left: AppSize.pagePadding,
-        right: AppSize.pagePadding,
         // 顶部不用再避让「状态栏 + 标题栏」—— HDS 的组件安全区已整块扣掉
         top: AppSize.destTopInset(topSafeInsetVp()),
         bottom: 0
@@ -796,5 +1015,14 @@ export struct SpocPage {
     }
     .width('100%')
     .height('100%')
+  }
+
+  build() {
+    PullToRefresh({
+      onRefresh: () => this.load(),
+      contentBuilder: () => {
+        this.pageContent();
+      }
+    })
   }
 }

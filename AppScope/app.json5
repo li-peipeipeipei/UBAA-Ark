@@ -13,6 +13,29 @@
     // 单层 app_icon 仍保留，供应用内 Image 组件展示（分层资源是 JSON，无法直接作位图显示）。
     "icon": "$media:layered_image",
     "label": "$string:app_name",
+    // 备用图标（应用内「我的 → 关于 → 切换图标」运行时切换）。
+    // API 26.0.0+ 生效：bundleManager.setAlternateIcon(name) 按 name 启用其一；
+    // 传空字符串恢复上面的默认分层图标。四个均为单层满幅 PNG（1024×1024，
+    // 不裁圆角、不留内边距），与默认分层图标的应用内展示图视觉一致。
+    // 注意：分身应用不支持设置/查询备用图标；API < 26 的设备设忽略此标签。
+    "alternateIcons": [
+      {
+        "name": "ark_light",
+        "icon": "$media:icon_ark_light"
+      },
+      {
+        "name": "ark_dark",
+        "icon": "$media:icon_ark_dark"
+      },
+      {
+        "name": "classic_light",
+        "icon": "$media:icon_ubaa_light"
+      },
+      {
+        "name": "classic_dark",
+        "icon": "$media:icon_ubaa_dark"
+      }
+    ],
     "minAPIVersion": 23,
     "targetAPIVersion": 23
   }

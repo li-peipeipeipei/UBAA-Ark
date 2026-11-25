@@ -3,6 +3,8 @@ import { Logger } from '../../common/Logger';
 import { ApiError } from '../../network/ApiError';
 import { LocalFinanceService } from '../../network/LocalFinanceService';
 import { AppColor, AppFont, AppMaterial, AppSize } from '../../components/AppTheme';
+import { ChipsEdgeFade } from '../../components/ChipsEdgeFade';
+import curves from '@ohos.curves';
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import {
   ErrorView, InfoRow, LoadingView, SectionCard
@@ -282,6 +284,8 @@ struct FinanceYearChip {
       .padding({ left: 12, right: 12, top: 6, bottom: 6 })
       .backgroundColor(this.active ? AppColor.brand : AppColor.surfaceSubtle)
       .borderRadius(999)
+      // 切换年份时底色 / 文字色做弹簧过渡（与博雅课程胶囊同一曲线）
+      .animation({ curve: curves.responsiveSpringMotion(0.25, 0.7) })
       .onClick(() => {
         this.onTap();
       })
@@ -303,6 +307,8 @@ export struct FinancePage {
   @State private offlineNote: string = '';
   /** 详情弹窗（每次点击新建一个，关闭后置空）。 */
   @State private dialogCtrl: CustomDialogController | null = null;
+  /** 年份胶囊行的实测高度（两侧渐隐遮罩据此定高，见 components/ChipsEdgeFade）。 */
+  @State private chipRowH: number = 29;
 
   aboutToAppear(): void {
     // 先渲染本地记录（离线优先），再后台刷新
@@ -587,22 +593,36 @@ export struct FinancePage {
     .alignItems(HorizontalAlign.Start)
   }
 
+  /** 年份胶囊行的两侧渐隐（高度由该行 onAreaChange 上报）。 */
+  @Builder
+  chipsEdgeFade() {
+    // ⚠️ 调用处必须再设一次 `hitTestBehavior(None)`（与 SPOC / 图书馆座位同款）：
+    // 自定义组件节点自身参与触摸测试，只在组件内部设 None 不够，会吞掉整行点击。
+    ChipsEdgeFade({ fadeHeight: this.chipRowH })
+      .hitTestBehavior(HitTestMode.None)
+  }
+
   /** 搜索框 + 年份筛选。 */
   @Builder
   filterBar() {
     Column({ space: 10 }) {
-      // 双向绑定：单向绑定在每次 onChange 后重绘会让输入光标跳到行首
-      TextInput({ text: $$this.query, placeholder: '搜索项目或摘要' })
-        .height(40)
-        .fontSize(AppFont.body)
-        .fontColor(AppColor.textPrimary)
-        .backgroundColor(AppColor.surface)
-        .borderRadius(12)
-        .placeholderColor(AppColor.textTertiary)
-        .enterKeyType(EnterKeyType.Search)
-        .onChange((value: string) => {
-          this.query = value;
-        })
+      // 搜索框单独缩进（父级为胶囊行做了全出血，详见 build 里的说明）
+      Column() {
+        // 双向绑定：单向绑定在每次 onChange 后重绘会让输入光标跳到行首
+        TextInput({ text: $$this.query, placeholder: '搜索项目或摘要' })
+          .height(40)
+          .fontSize(AppFont.body)
+          .fontColor(AppColor.textPrimary)
+          .backgroundColor(AppColor.surface)
+          .borderRadius(12)
+          .placeholderColor(AppColor.textTertiary)
+          .enterKeyType(EnterKeyType.Search)
+          .onChange((value: string) => {
+            this.query = value;
+          })
+      }
+      .width('100%')
+      .padding({ left: AppSize.pagePadding, right: AppSize.pagePadding })
 
       Scroll() {
         Row({ space: 8 }) {
@@ -623,10 +643,23 @@ export struct FinancePage {
             })
           }, (year: string) => 'year-' + year)
         }
+        // 默认缩进放在滚动内容里：滑动时跟着滚走，胶囊能贴到屏幕边缘
+        .padding({ left: AppSize.pagePadding, right: AppSize.pagePadding })
       }
       .scrollBar(BarState.Off)
+      .scrollable(ScrollDirection.Horizontal)
       .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
       .width('100%')
+      // 胶囊整体居中（用户要求：六处胶囊行统一居中）
+      .align(Alignment.Center)
+      .clip(false)
+      .onAreaChange((_old: Area, now: Area) => {
+        const height: number = Number(now.height);
+        if (height > 0 && Math.abs(height - this.chipRowH) > 0.5) {
+          this.chipRowH = height;
+        }
+      })
+      .overlay(this.chipsEdgeFade(), { align: Alignment.Center })
     }
     .width('100%')
   }
@@ -730,56 +763,80 @@ export struct FinancePage {
       Scroll() {
         Column({ space: AppSize.gapLarge }) {
           if (this.loadState === LoadState.LOADING) {
-            LoadingView({ message: '正在查询收入记录…' })
-          } else if (this.loadState === LoadState.ERROR) {
-            ErrorView({
-              message: this.errorMessage,
-              onRetry: () => {
-                this.load();
-              }
-            })
-          } else {
-        if (this.offlineNote.length > 0) {
-          Text(this.offlineNote)
-            .fontSize(AppFont.caption)
-            .fontColor(AppColor.textTertiary)
+            Column() {
+              LoadingView({ message: '正在查询收入记录…' })
+            }
             .width('100%')
-        }
+            .padding({ left: AppSize.pagePadding, right: AppSize.pagePadding })
+          } else if (this.loadState === LoadState.ERROR) {
+            Column() {
+              ErrorView({
+                message: this.errorMessage,
+                onRetry: () => {
+                  this.load();
+                }
+              })
+            }
+            .width('100%')
+            .padding({ left: AppSize.pagePadding, right: AppSize.pagePadding })
+          } else {
+            if (this.offlineNote.length > 0) {
+              Text(this.offlineNote)
+                .fontSize(AppFont.caption)
+                .fontColor(AppColor.textTertiary)
+                .width('100%')
+                .padding({ left: AppSize.pagePadding, right: AppSize.pagePadding })
+            }
             this.filterBar()
 
             if (this.visible().length === 0) {
-              SectionCard({ title: '收入记录', showAction: false }) {
-                Column() {
-                  InfoRow({
-                    label: '暂无记录',
-                    value: this.query.trim().length > 0 || this.yearFilter.length > 0 ?
-                      '没有符合当前筛选条件的记录' : '本学期没有可展示的收入',
-                    showDivider: false
-                  })
+              Column() {
+                SectionCard({ title: '收入记录', showAction: false }) {
+                  Column() {
+                    InfoRow({
+                      label: '暂无记录',
+                      value: this.query.trim().length > 0 || this.yearFilter.length > 0 ?
+                        '没有符合当前筛选条件的记录' : '本学期没有可展示的收入',
+                      showDivider: false
+                    })
+                  }
+                  .width('100%')
                 }
-                .width('100%')
               }
+              .width('100%')
+              .padding({ left: AppSize.pagePadding, right: AppSize.pagePadding })
             } else {
-              this.summaryCard(this.summarize(this.visible()))
+              Column() {
+                this.summaryCard(this.summarize(this.visible()))
+              }
+              .width('100%')
+              .padding({ left: AppSize.pagePadding, right: AppSize.pagePadding })
 
               ForEach(this.groupByMonth(this.visible()), (group: MonthGroup) => {
-                this.monthGroupCard(group)
+                Column() {
+                  this.monthGroupCard(group)
+                }
+                .width('100%')
+                .padding({ left: AppSize.pagePadding, right: AppSize.pagePadding })
               }, (group: MonthGroup) => 'group-' + group.key)
 
               Text('数据来源于学校财务查询系统，仅供本人查阅；如与财务系统不一致，以财务系统为准。到账以银行记录为准。')
                 .fontSize(AppFont.caption)
                 .fontColor(AppColor.textTertiary)
                 .width('100%')
-                .padding({ left: 4, right: 4 })
+                .padding({
+                  left: AppSize.pagePadding + 4,
+                  right: AppSize.pagePadding + 4
+                })
             }
           }
 
           Blank().height(AppSize.gapLarge)
         }
         .width('100%')
+        // ⚠️ 不能有左右 padding：胶囊行要做成「0 → 屏幕宽」的全出血，
+        // 渐隐遮罩才会落在真正的屏幕边缘（对齐 SPOC，详见 ChipsEdgeFade 文档）。
         .padding({
-          left: AppSize.pagePadding,
-          right: AppSize.pagePadding,
           top: AppSize.destTopInset(topSafeInsetVp()),
           bottom: AppSize.contentBottomInset
         })

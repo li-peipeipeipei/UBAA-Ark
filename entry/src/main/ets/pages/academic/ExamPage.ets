@@ -12,6 +12,7 @@ import { AppColor, AppFont, AppMaterial, AppSize } from '../../components/AppThe
 import { topSafeInsetVp } from '../../common/ImmersiveUtil';
 import { EmptyView, ErrorView, LoadingView, SectionCard } from '../../components/CommonViews';
 import { Exam, ExamArrangementData, Term } from '../../model/ApiTypes';
+import { PullToRefresh } from '../../components/PullToRefresh';
 
 
 /** 离线缓存里的考试安排（对象字面量不能赋给 Record）。 */
@@ -390,7 +391,9 @@ export struct ExamPage {
     .padding({ top: 10, bottom: 10 })
   }
 
-  build() {
+  /** 原页面内容。下拉刷新由外层 `build()` 的 PullToRefresh 提供。 */
+  @Builder
+  pageContent() {
     Scroll() {
       Column({ space: AppSize.gapLarge }) {
         // 顶部右侧学期切换栏（常驻，可在加载/错误态也切换学期）
@@ -482,5 +485,14 @@ export struct ExamPage {
     .width('100%')
     .height('100%')
     .backgroundColor(AppColor.pageBackground)
+  }
+
+  build() {
+    PullToRefresh({
+      onRefresh: () => this.load(),
+      contentBuilder: () => {
+        this.pageContent();
+      }
+    })
   }
 }

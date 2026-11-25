@@ -1,6 +1,8 @@
+import { connection } from '@kit.NetworkKit';
 import { ConnectionMode, RoutePolicy } from '../common/AppConfig';
 import { Logger } from '../common/Logger';
 import { CampusProbe, NetworkState } from './CampusProbe';
+import { SessionGuard } from './SessionGuard';
 import { TokenStore } from './TokenStore';
 
 /**
@@ -37,7 +39,12 @@ export enum RouteAdapt {
   NEED_RELOGIN = 'NEED_RELOGIN'
 }
 
+/** 网络从「无」恢复为「有」时广播的 AppStorage 键；错误页订阅后自动重试。 */
+export const NETWORK_BACK_TICK_KEY: string = 'networkBackTick';
+
 export class RouteEngine {
+  /** 上一次观察到的网络可用性。初值取真实状态，断网启动也能识别「恢复」。 */
+  private static lastOnline: boolean = RouteEngine.isOnline();
   /**
    * 登录前选路：探测一次，把 AUTO 的目标路线定下来。
    *
@@ -56,6 +63,36 @@ export class RouteEngine {
     RouteEngine.pin(target);
     Logger.info('登录选路：探测' + RouteEngine.stateName(state) + ' → ' + target);
     return target;
+  }
+
+  /**
+   * 登录该认证哪几条路线（对齐上游路由合同「Auto 登录与会话恢复」）。
+   *
+   * - 显式策略：只认证那一条；
+   * - Auto + 校园网：只认证 Direct（WebVPN 在校内没有意义，少一次 CAS）；
+   * - Auto + 校外/未知：**主路线在前**，再补另一条。
+   *
+   * 补另一条不是「多此一举」：登录态是按路线隔离的 Cookie 罐，只登一条的话，
+   * 下次换网（宿舍 Wi-Fi ↔ 流量）就必须重新输密码 —— 原版能无感换网，
+   * 靠的正是登录时把两条路都灌上。
+   */
+  static async loginRoutes(): Promise<ConnectionMode[]> {
+    const policy: RoutePolicy = TokenStore.getRoutePolicy();
+    if (policy === RoutePolicy.DIRECT) {
+      return [ConnectionMode.DIRECT];
+    }
+    if (policy === RoutePolicy.WEBVPN) {
+      return [ConnectionMode.WEBVPN];
+    }
+    const state: NetworkState = await CampusProbe.probe();
+    if (state === NetworkState.CAMPUS) {
+      return [ConnectionMode.DIRECT];
+    }
+    const primary: ConnectionMode = TokenStore.getConnectionMode();
+    const routes: ConnectionMode[] = [primary];
+    routes.push(primary === ConnectionMode.DIRECT ?
+      ConnectionMode.WEBVPN : ConnectionMode.DIRECT);
+    return routes;
   }
 
   /**
@@ -93,11 +130,20 @@ export class RouteEngine {
       // 回到校园网但直连没会话（用户一直是 WebVPN）：保持现状，不打断
       return RouteAdapt.KEEP;
     }
-    // 当前路线下探不到它的网络，且目标路线没会话 —— 现有路线已经走不通了，
-    // 停在原地只会反复超时。切过去并要求重新登录（上游此处返回 authentication_required）。
-    RouteEngine.pin(target);
-    Logger.warn('网络层失败且目标路线无会话，切换到 ' + target + ' 并要求重新登录');
-    return RouteAdapt.NEED_RELOGIN;
+    // 目标路线没有会话：先试着用已保存凭据静默补一次（对齐上游换路恢复），
+    // 补上了就和「会话已就绪」等价。
+    const recovered: boolean = await SessionGuard.ensure(target);
+    if (recovered) {
+      RouteEngine.pin(target);
+      Logger.warn('网络层失败，已切到 ' + target + ' 并静默补登成功');
+      return RouteAdapt.SWITCHED;
+    }
+    // 🔴 补登失败时**不能**把路线钉到空通道：
+    // 页面侧的 localMode()/ensureLogin() 是同步判据，看到「当前路没会话」会立刻报
+    // 「仅支持本地模式 / 请先登录」，即便另一条路上的会话还活着（校内登录→切流量
+    // 时 WebVPN 槽为空，正是这个场景）。保持原路线，让同步判据还能借回活会话。
+    Logger.warn('网络层失败，目标路线 ' + target + ' 无会话且补登未成功，保持 ' + current);
+    return TokenStore.hasLocalSession(current) ? RouteAdapt.KEEP : RouteAdapt.NEED_RELOGIN;
   }
 
   /**
@@ -109,15 +155,50 @@ export class RouteEngine {
    */
   static async onNetworkChanged(): Promise<void> {
     CampusProbe.invalidate();
+    // 断网启动时 onNetworkChanged 也会被 netLost 触发：那时不探测、不补登，
+    // 更不能在无网的 CAS 上留下失败冷却，拖慢真正联网后的恢复。
+    const online: boolean = RouteEngine.isOnline();
+    const justBack: boolean = online && !RouteEngine.lastOnline;
+    RouteEngine.lastOnline = online;
+    if (!online) {
+      return;
+    }
+    if (justBack) {
+      // 断网期间打开过的页面已经停在 ERROR 状态；发一次全局信号让它们各自重试，
+      // 否则用户只能手动逐页点「重新加载」。
+      AppStorage.setOrCreate<number>(NETWORK_BACK_TICK_KEY, Date.now());
+      Logger.info('网络已恢复，通知错误页自动重试');
+    }
     if (TokenStore.getRoutePolicy() !== RoutePolicy.AUTO) {
+      // 显式路线下没有自动选路可做，但断网启动时被打断的静默补登仍要补一次
+      if (justBack) {
+        void SessionGuard.ensure(TokenStore.getConnectionMode(), true);
+      }
       return;
     }
     const state: NetworkState = await CampusProbe.probe();
     const target: ConnectionMode = RouteEngine.targetFor(state);
     const current: ConnectionMode = TokenStore.getConnectionMode();
-    if (target !== current && TokenStore.hasLocalSession(target)) {
+    if (target === current) {
+      return;
+    }
+    if (TokenStore.hasLocalSession(target)) {
       RouteEngine.pin(target);
       Logger.info('网络变化后自动切换路线 ' + current + ' → ' + target);
+      return;
+    }
+    // 两条路都没会话 = 还没登录过（登录页会自己处理），这里不抢跑，
+    // 否则用户的输入与静默补登会各自跑一遍 CAS。
+    if (!TokenStore.hasLocalSession(current)) {
+      return;
+    }
+    // 目标路线没有会话：后台静默补一次，成功才切。
+    // 换网/联网恢复是「条件真的变了」，跳过补登冷却（断网启动时的那次失败
+    // 不该拖住联网后的第一次恢复）；节流仍由读请求失败路径保留。
+    const recovered: boolean = await SessionGuard.ensure(target, true);
+    if (recovered) {
+      RouteEngine.pin(target);
+      Logger.info('网络变化后已切到 ' + target + '（静默补登成功）');
     }
   }
 
@@ -158,8 +239,10 @@ export class RouteEngine {
    * 再打开时若网络已经回来，钉的却还是那条没会话的路 —— 登录页会平白出现，
    * 而**另一条路上的会话其实还活着**。
    *
-   * 这里不探测网络、不发请求，纯粹是「别把活会话当没有」，同步完成，
-   * 调用方（Index 的登录判定）可以立刻相信结果。
+   * 这里不探测网络、不发请求，纯粹是「别把活会话当没有」，同步完成。
+   * 除启动判定外，**所有本地业务请求的入口**（`ApiService.localMode()`、
+   * `UpstreamClient.sendOnce()`、图书馆座位会话检查）都会调用它，
+   * 这样换网后即使路线暂时钉错，也不会出现「全服务加载不出来」。
    */
   static ensureSessionRoute(): void {
     if (TokenStore.getRoutePolicy() !== RoutePolicy.AUTO) {
@@ -185,6 +268,20 @@ export class RouteEngine {
   /** 落盘当前实际模式（重启沿用，避免冷启动必探一次）。 */
   private static pin(mode: ConnectionMode): void {
     TokenStore.setAutoPinnedMode(mode);
+  }
+
+  /**
+   * 系统层面是否有可用默认网络。官方约定：无网络时 `getDefaultNetSync()` 的 netId 为 0。
+   * 这里必须是**系统网络可用性**，不能拿 `CampusProbe` 的结果代替 —— 后者在
+   * 「校外但联网」和「完全断网」两种情况下都返回 OFF_CAMPUS。
+   */
+  private static isOnline(): boolean {
+    try {
+      return connection.getDefaultNetSync().netId !== 0;
+    } catch (error) {
+      // 权限/系统异常时按在线处理，避免把真实的网络恢复误判掉
+      return true;
+    }
   }
 
   private static stateName(state: NetworkState): string {

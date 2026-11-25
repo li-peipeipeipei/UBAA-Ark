@@ -1,17 +1,7 @@
 import { AppColor, AppFont, AppSize, tilePressCurve } from './AppTheme';
-import { MaterialCardLayer } from './MaterialCardLayer';
-import { immersiveMaterialActive } from '../common/SystemMaterial';
+import { KEY_IS_DARK } from '../common/ImmersiveUtil';
+import { ScheduleColors } from '../common/ScheduleColors';
 import curves from '@ohos.curves';
-
-/**
- * 材质层之上那层主色的不透明度。
- *
- * 太低（0.62）时真机上看得出两个问题：色相被材质压暗、按钮像蒙了一层灰；
- * 太高又看不见材质的通透感。0.82 是「色相鲜亮 + 边缘与高光仍透出材质」的折中点。
- */
-// 卡片色块的透明度。真机实测：深色下紫色卡片像素 (136,119,215) ≈ 主色 #9E8AFF × 0.86，
-// 之前取 0.82 会让转场遮罩比卡片暗一档。
-const FEATURE_TILE_COLOR_ALPHA: number = 0.86;
 
 /**
  * 功能按钮圆角的默认值（vp）：还没量到块宽时的兜底。
@@ -76,6 +66,17 @@ export struct LoadingView {
 export struct ErrorView {
   message: string = '加载失败';
   onRetry: () => void = () => {};
+  /**
+   * 断网期间打开过的页面会停在 ERROR 状态。RouteEngine 在检测到「无 → 有」时
+   * 写这个键，所有仍在屏幕上的错误页各自重试一次（所有 onRetry 都是读操作）。
+   */
+  @StorageLink('networkBackTick') @Watch('onNetworkBack') private networkBackTick: number = 0;
+
+  private onNetworkBack(): void {
+    if (this.networkBackTick > 0) {
+      this.onRetry();
+    }
+  }
 
   build() {
     Column({ space: AppSize.gapLarge }) {
@@ -206,15 +207,38 @@ export struct SectionCard {
 export struct FeatureTile {
   title: string = '';
   icon: Resource = $r('app.media.ic_apps');
-  /** 整块主色（每个功能一种强调色）。 */
-  color: Resource = $r('app.color.brand');
+  /**
+   * 课表色表槽位。底色、图标/文字色全部由它从 `ScheduleColors` 派生，
+   * 与课表课程块共用同一套莫奈色板（浅=叠白派生实色、深=暗调预混实色）。
+   */
+  slot: number = 0;
+  /** 深浅色主题（底部图标/文字色随它切换），与课表页同源订阅。 */
+  @StorageProp(KEY_IS_DARK) private isDark: boolean = false;
+  /** 图标是否自带配色（多色素材），为 true 时不再染色。 */
+  colorful: boolean = false;
+  /**
+   * 图标是位图（PNG）而非矢量（SVG）。
+   *
+   * `Image.fillColor()` 官方只对 SVG 生效，PNG 必须走 colorFilter；这里用官方
+   * 推荐的 `SRC_IN`（保留透明度、只换颜色）。SVG 继续走 fillColor —— 文档明确
+   * colorFilter 对 SVG 受限（API21 以下需 supportSvg2），两条分支不能统一。
+   */
+  bitmapIcon: boolean = false;
   /**
    * 圆角半径（vp），由父级按「块宽 × 固定比例」算好传入。
    *
    * 不能写死：块的宽度随设备 / 横竖屏变化（横屏 5 列、竖屏 3 列），圆角固定的话
    * 大块看着「角很锐」、小块看着「角很圆」。按比例走，视觉一致。
+   *
+   * ⚠️ **必须是 `@Prop`**：这个值会随列数变化（父级的 `tileRadius` 由实测宽度算出），
+   * 而普通成员只在**初始化**时赋值一次、父级后续更新不会同步，也不会触发重绘 ——
+   * 卡片的圆角会永远停在兜底值 28，与父级上报给转场的实测值对不上。
+   *
+   * 这正好解释了「只有平板竖屏看得出圆角突变」：md 断点的兜底列数是 **6**，
+   * 实测只有 **4**（块宽 118 → 183），圆角差 **10vp**；手机与横屏的兜底列数
+   * 与实测基本一致，差值落在 1~2vp 以内，肉眼看不出来。
    */
-  radius: number = FEATURE_TILE_RADIUS_FALLBACK;
+  @Prop radius: number = FEATURE_TILE_RADIUS_FALLBACK;
   /** 本卡片在网格中的序号，父级用它决定「回来的那张要回弹」。 */
   @Prop index: number = -1;
   /**
@@ -236,8 +260,14 @@ export struct FeatureTile {
    *
    * 用 `onAreaChange` 的 `globalPosition` 而不是父级按列宽推算 —— 推算会跟真实
    * 布局差几个像素，放大初始帧就看得出来是「错位」的。
+   *
+   * ⚠️ 圆角必须**由本组件上报它自己正在用的值**，不能让父级另算一份：
+   * 父级的 `tileRadius` 是随宽度重算的 @State，而本组件拿到新 `radius` 属性是下一帧 ——
+   * 布局回调（本方法）发生在两者之间，父级此时读自己的状态会拿到「卡片还没换上的新圆角」。
+   * 平板竖屏首次布局正好踩在这个窗口上（列数从兜底翻到实测），表现为
+   * 「收起落地后圆角跳一下」。
    */
-  onBounds: (x: number, y: number, w: number, h: number) => void = () => {};
+  onBounds: (x: number, y: number, w: number, h: number, radius: number) => void = () => {};
 
   /** 是否处于按下态（0.955）。 */
   @State private pressed: boolean = false;
@@ -263,47 +293,50 @@ export struct FeatureTile {
     }, 16);
   }
 
-  /** 沉浸材质是否可用（只查一次；不可用时退化为不透明纯色）。 */
-  private readonly materialActive: boolean = immersiveMaterialActive(false);
-
   build() {
-    // 三层叠放：系统材质（底） → 半透明主色层 → 图标与文字。
+    // 两层叠放：课表色块（不透明实色） → 图标与文字。
     //
-    // 为什么底色必须分层、不能直接给内容容器上色：沉浸光感的视觉层级在
-    // `backgroundColor` **之下**，容器一旦有不透明底色就把材质整块盖死。这里把
-    // 「颜色」单独拎成一层、用 opacity 让它半透明，材质才透得出来 —— 观感是彩色玻璃，
-    // 而不是「彩色卡纸上贴了一层灰」。
+    // 2026-11-24 起磁贴配色与课表课程块统一走 `ScheduleColors`：浅色=文字色叠白派生的
+    // 淡实色 + 同色系彩字，深色=暗调预混实色 + 白字。底色既然是**预混实色**，就不能再叠
+    // 真 opacity（否则显示色与课表块对不上），材质层也失去透色意义 —— 故去掉材质层，
+    // 底色直接铺满。转场遮罩同步改为不透明（见 featureTileAlpha）。
     Stack() {
-      if (this.materialActive) {
-        MaterialCardLayer({ layerRadius: this.radius, layerShadow: false })
-      }
-
       // ⚠️ 尺寸一律用 `LayoutPolicy.matchParent`，不能写 '100%'：
       // Stack 子节点的百分比按**父级可用尺寸**解析，而本按钮的高度是由 aspectRatio 算出来的，
       // 可用尺寸就是「网格那一格的剩余空间」—— 写百分比会把按钮自己顶大。
-      // 同层的 MaterialCardLayer 用的也是 matchParent，兄弟层必须同一种写法。
       Column()
         .width(LayoutPolicy.matchParent)
         .height(LayoutPolicy.matchParent)
         .borderRadius(this.radius)
-        .backgroundColor(this.color)
-        // 材质可用时留出通透感；不可用（低版本 / 应用级关闭）时退成不透明纯色，
-        // 否则会直接漏出页面背景，按钮的色相就没了。
-        .opacity(this.materialActive ? FEATURE_TILE_COLOR_ALPHA : 1)
+        .backgroundColor(ScheduleColors.forFeatureTile(this.slot, this.isDark))
 
       Column({ space: 12 }) {
-        Image(this.icon)
-          .width(40)
-          .height(40)
-          .fillColor(Color.White)
-          .opacity(0.9)
-          .draggable(false)
+        if (this.colorful) {
+          // 多色素材：保留原配色（染色会把内部结构糊掉）
+          Image(this.icon)
+            .width(40)
+            .height(40)
+            .draggable(false)
+        } else if (this.bitmapIcon) {
+          // 位图：fillColor 对 PNG 无效，必须走 colorFilter（官方推荐 SRC_IN 染色）
+          Image(this.icon)
+            .width(40)
+            .height(40)
+            .colorFilter(ScheduleColors.iconTintFilter(this.slot, this.isDark))
+            .draggable(false)
+        } else {
+          // 矢量：fillColor 只对 SVG 生效，与位图分支不能统一
+          Image(this.icon)
+            .width(40)
+            .height(40)
+            .fillColor(ScheduleColors.textForSlot(this.slot, this.isDark))
+            .draggable(false)
+        }
 
         Text(this.title)
           .fontSize(AppFont.subtitle)
           .fontWeight(FontWeight.Medium)
-          .fontColor(Color.White)
-          .opacity(0.95)
+          .fontColor(ScheduleColors.textForSlot(this.slot, this.isDark))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
       }
@@ -353,7 +386,7 @@ export struct FeatureTile {
       const y: number = now.globalPosition.y as number;
       const w: number = now.width as number;
       const h: number = now.height as number;
-      this.onBounds(x, y, w, h);
+      this.onBounds(x, y, w, h, this.radius);
     })
   }
 }
@@ -361,12 +394,11 @@ export struct FeatureTile {
 /**
  * 卡片色块**实际使用的透明度**。
  *
- * 与 `FeatureTile` 内部完全同源：材质可用时用 `FEATURE_TILE_COLOR_ALPHA`（0.86），
- * 不可用时退成 1（不透明纯色）。转场遮罩必须用同一个值，否则起点颜色和卡片对不上
- * （用户反馈的「略有差别」就是这里）。
+ * 2026-11-24 起磁贴底色改用课表色表的预混实色（不透明），与 `FeatureTile` 的
+ * `backgroundColor` 完全同源 —— 转场遮罩必须也是不透明（1），否则起点颜色和卡片对不上。
  */
 export function featureTileAlpha(): number {
-  return immersiveMaterialActive(false) ? FEATURE_TILE_COLOR_ALPHA : 1;
+  return 1;
 }
 
 /** 键值信息行（「我的」页 / 详情页复用）。 */

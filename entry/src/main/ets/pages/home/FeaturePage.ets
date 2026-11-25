@@ -5,7 +5,7 @@ import curves from '@ohos.curves';
 import { Toast } from '../../common/Toast';
 import { Logger } from '../../common/Logger';
 import { AppColor, AppFont, AppSize } from '../../components/AppTheme';
-import { topSafeInsetVp, currentIsDark } from '../../common/ImmersiveUtil';
+import { topSafeInsetVp, currentIsDark, KEY_IS_DARK, tabBarMaskArgbHex, transparentOf } from '../../common/ImmersiveUtil';
 import { FeatureTile, featureTileAlpha } from '../../components/CommonViews';
 import { RouteName } from '../../common/AppRouter';
 import { BackGuard } from '../../common/BackGuard';
@@ -46,6 +46,15 @@ const TILE_ASPECT_RATIO: number = 0.8;
 const FEATURE_GRID_TOP_LIFT: number = 12;
 
 /**
+ * 顶部渐变蒙层底边与第一行卡片上边的间隙（vp）。
+ *
+ * 蒙层高度不再写死 92vp —— 那样底边会压到第一行卡片上（卡片顶约在 59.7vp）。
+ * 改为跟随「卡片顶部位置」动态计算，再退这个间隙，保证蒙层最下边严格落在
+ * 第一行卡片上边以上（用户要求），不再遮住任何一张卡片。
+ */
+const TOP_MASK_CLEARANCE: number = 2;
+
+/**
  * 功能页：一层平铺的功能按钮网格。
  *
  * ## 2026-11-11 改版
@@ -67,6 +76,8 @@ export struct FeaturePage {
   stack: NavPathStack = new NavPathStack();
 
   @StorageProp(KEY_BREAKPOINT) private bp: string = 'sm';
+  /** 深浅色主题（顶部蒙层色随主题切换，与底部 tab_bar_mask 同源）。 */
+  @StorageProp(KEY_IS_DARK) private isDark: boolean = false;
   /** 实测可用宽度换算出的列数（0 = 还没量到，按窗口断点兜底）。 */
   @State private columns: number = 0;
   /** 块的圆角（vp）：块宽 × TILE_CORNER_SCALE，与列数同一帧算出，同源。 */
@@ -110,12 +121,14 @@ export struct FeaturePage {
   /** 每张卡片在屏幕坐标系里的矩形（由 FeatureTile 的 onAreaChange 上报）。 */
   private tileBounds: Map<number, number[]> = new Map();
 
-  private onTileBounds(index: number, x: number, y: number, w: number, h: number): void {
-    this.tileBounds.set(index, [x, y, w, h]);
+  private onTileBounds(index: number, x: number, y: number, w: number, h: number,
+    radius: number): void {
+    this.tileBounds.set(index, [x, y, w, h, radius]);
     // 同一张卡的**实时**矩形也交给 HeroMorph：收起落点用它。
     // 点开时存的是快照，展开期间网格若因内容加载位移几 vp，旧坐标会让落点偏掉
     // （真机实测：最后一帧尺寸正确、整体下移 19px）。序号不匹配会被内部丢弃。
-    const live: MorphRect = { x: x, y: y, w: w, h: h, radius: this.tileRadius };
+    // 圆角用卡片上报值（与它此刻渲染的一致），落地才不会跳。
+    const live: MorphRect = { x: x, y: y, w: w, h: h, radius: radius };
     HeroMorph.noteLiveCard(index, live);
   }
 
@@ -135,7 +148,10 @@ export struct FeaturePage {
       y: bounds[1],
       w: bounds[2],
       h: bounds[3],
-      radius: this.tileRadius
+      // 圆角优先用卡片**自己上报**的值（它正在渲染的那个），
+      // 不能回读 `this.tileRadius`：布局回调早于子组件拿到新属性，
+      // 平板竖屏首次布局（列数由兜底翻成实测算出的值）会正好落在这一帧里。
+      radius: bounds.length > 4 ? bounds[4] : this.tileRadius
     };
   }
 
@@ -152,8 +168,8 @@ export struct FeaturePage {
         // 键名曾误写 'isDarkMode'（写入方是 'isDark'）→ 深色下取不到值，
         // 转场起点固定用浅色色板。统一走 currentIsDark()。
         const dark: boolean = currentIsDark();
-        // ⚠️ 传**基础色**而不是预先混合好的色值：遮罩用「基础色 + 与卡片相同的透明度」
-        // 自己叠出来，混合方式与卡片完全一致，起点颜色才不会有色差。
+        // 传与磁贴**完全相同的课表实色**：底色已是预混不透明色（`ScheduleColors.forFeatureTile`），
+        // 遮罩也用不透明（`featureTileAlpha()` 恒为 1），起点颜色才不会有色差。
         const base: string = dark ? item.colorDark : item.colorValue;
         // 记两处：NavHero 给目的地（序号），HeroMorph 给 MainPage 的遮罩（矩形 + 图标文字 + 透明度）
         NavHero.setCard({
@@ -178,7 +194,8 @@ export struct FeaturePage {
       }
       // ⚠️ 必须 animated = true：`false` 时系统不播转场，
       // `customNavContentTransition` 不会被调用（踩过，会误以为链路不通）。
-      AppRouter.push(this.stack, item.route, undefined, true);
+      // 走 open 而不是 push：open 会顺手记一次「最近使用」，push 不会。
+      AppRouter.open(this.stack, item.route, undefined, true);
       return;
     }
     AppRouter.open(this.stack, item.route, undefined, true);
@@ -204,6 +221,27 @@ export struct FeaturePage {
     return templateOfColumns(columns);
   }
 
+  /**
+   * 顶部蒙层的渐变色：顶实底透，`angle: 180` 表示 colors[0] 在顶、colors[1] 在底。
+   * 两端同 RGB（都取自 `tab_bar_mask` 真值），透明端只把 alpha 降到 0 —— 不写
+   * `Color.Transparent`，避免浅色底上插值渗出灰黑脏带（项目既有红线）。
+   */
+  private topMaskColors(): [ResourceColor, number][] {
+    const solid: string = tabBarMaskArgbHex(this.isDark);
+    return [[solid, 0], [transparentOf(solid), 1]];
+  }
+
+  /**
+   * 顶部蒙层高度 = 第一行卡片顶部位置 - 间隙。
+   * 与 Scroll 内容 Column 的 `padding.top` 用完全相同的量，保证蒙层底边随卡片上边走；
+   * 减去 TOP_MASK_CLEARANCE 让底边停在卡片上边「以上」，不压住卡片。
+   */
+  private topMaskHeight(): number {
+    const cardTop: number = topSafeInsetVp() + AppSize.navTitleBarMiniHeight
+      - AppSize.contentTopLift - FEATURE_GRID_TOP_LIFT;
+    return Math.max(0, cardTop - TOP_MASK_CLEARANCE);
+  }
+
   build() {
     Stack() {
     Scroll() {
@@ -214,13 +252,15 @@ export struct FeaturePage {
               FeatureTile({
                 title: item.title,
                 icon: item.icon,
-                color: item.color,
+                slot: item.slot,
+                colorful: item.colorful === true,
+                bitmapIcon: item.bitmapIcon === true,
                 radius: this.tileRadius,
                 index: index,
                 bounceTick: this.bounceIndex === index ? this.bounceTick : 0,
                 hidden: this.heroHideTile && this.heroIndex === index,
-                onBounds: (x: number, y: number, w: number, h: number) => {
-                  this.onTileBounds(index, x, y, w, h);
+                onBounds: (x: number, y: number, w: number, h: number, radius: number) => {
+                  this.onTileBounds(index, x, y, w, h, radius);
                 },
                 onTileClick: () => {
                   this.open(item, index);
@@ -301,6 +341,20 @@ export struct FeaturePage {
     // 顶部留白不写在 Scroll 上 —— ArkUI 会把 Scroll 的 padding 当 contentInset，
     // 把滚动内容整体上移（实测反而顶到时钟上）；留白写在滚动内容的内边距里。
     .backgroundColor(AppColor.pageBackground)
+
+    // 顶部渐变蒙层：色取底部同一个 tab_bar_mask（深浅色自动跟随），顶实底透
+    // （angle 180 = colors[0] 在顶）。高度不再固定 92vp，而是按「第一行卡片顶部位置」
+    // 动态算 —— 让蒙层最下边恰好停在卡片上边以上 TOP_MASK_CLEARANCE，不再罩住卡片。
+    // 这个值与 Scroll 内容 Column 的 padding.top 同源（同一组量），卡片上移/换设备也跟着走。
+    // ⚠️ 两处不可省：
+    //   - `position({x:0,y:0})`：Stack 默认居中对齐，不定位这条带会浮到屏幕中间；
+    //   - `hitTestBehavior(None)`：绝不能吞掉第一行功能块的点击（与 overlay 吞点击同一个坑）。
+    Column()
+      .width('100%')
+      .height(this.topMaskHeight())
+      .linearGradient({ angle: 180, colors: this.topMaskColors() })
+      .position({ x: 0, y: 0 })
+      .hitTestBehavior(HitTestMode.None)
 
     }
     .width('100%')
