@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="AppScope/resources/base/media/app_icon.png" width="112" alt="UBAA Ark 图标">
+<img src="docs/deploy/app-icon-readme.png" width="112" alt="UBAA Ark 图标">
 
 # UBAA Ark
 
@@ -15,8 +15,7 @@
 
 ![ArkTS](https://img.shields.io/badge/ArkTS-6.1-blue.svg?style=flat&logo=typescript)
 ![ArkUI](https://img.shields.io/badge/ArkUI-HDS-purple.svg?style=flat)
-![Platform](https://img.shields.io/badge/Platform-HarmonyOS%20NEXT-2fb67c.svg?style=flat)
-![上游](https://img.shields.io/badge/Upstream-v2.x%20Rust%20%2B%20Flutter-orange.svg?style=flat)
+![Platform](https://img.shields.io/badge/Platform-HarmonyOS-2fb67c.svg?style=flat)
 
 [**下载安装与使用指南**](https://github.com/li-peipeipeipei/UBAA-Ark/releases) · [功能一览](#已实现功能) · [问题反馈](https://github.com/li-peipeipeipei/UBAA-Ark/issues)
 
